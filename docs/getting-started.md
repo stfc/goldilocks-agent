@@ -31,8 +31,19 @@ git clone <this-repo> && cd 1-goldilocks-agent
 docker compose up
 ```
 
-The first run pulls the `ollama/ollama` image and downloads the local chat
-model (`qwen3.8`, ~16GB) in the background -- this can take a while
+`docker compose up` pulls the `agent` image from `ghcr.io/junwen94/goldilocks-agent`
+(built and published automatically on every push to `main` -- see
+`.github/workflows/docker-publish.yml`) instead of building it locally, so
+this is fast even on a machine with no Python/Node toolchain at all.
+**You don't even need the full clone** -- if a colleague just wants to run
+it, sending them `docker-compose.yml` on its own (same directory, same
+command) is enough; the only thing the full repo adds is the source you'd
+need to modify the app itself. `build: .` is kept in the compose file purely
+as a local-dev fallback (`docker compose up --build` forces a rebuild from
+source instead of pulling).
+
+The first run also pulls the `ollama/ollama` image and downloads the local
+chat model (`qwen3.8`, ~16GB) in the background -- this can take a while
 depending on your connection. Once it's done, open
 <http://localhost:8080>.
 

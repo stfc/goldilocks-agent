@@ -816,6 +816,36 @@ git 历史/commit message。
 > 分配调到 ~20GB+；裸机路径需要系统整体有对应的空闲内存），1.1 节当初
 > "Q4 量化约 15-18GB"的预判现在有了真实复现验证，不再只是理论推算。
 
+> ✅ **2026-09-16 晚：`agent` 镜像发布到 GHCR，`docker compose up` 从"本地构建"
+> 变成"直接拉预构建镜像"**——用户明确"现阶段专心 deliver docker"、决定不做
+> desktop app 之后提的需求："整理出一个能直接 `docker pull` 或者给同事一条
+> 命令就能跑起来的正式版本"。新增 `.github/workflows/docker-publish.yml`：
+> `test` job（`uv run poe lint`/`poe test` + `npm run lint`/`build`，跟
+> `AGENTS.md` 的本地 pre-PR 门禁同一套检查）先过，`docker` job 才用
+> `docker/build-push-action` 建 `linux/amd64,linux/arm64` 双架构镜像推到
+> `ghcr.io/junwen94/goldilocks-agent`——push 到 `main` 打 `latest`，
+> push `v*.*.*` 标签打对应 semver 标签，PR 只跑 `test` 不推镜像。
+> `docker-compose.yml` 的 `agent` service 加了 `image:`
+> （指向上面那个 GHCR 地址）+ `pull_policy: always`，`build: .` 保留作本地
+> 开发的手动回退（`docker compose up --build` 强制本地重建）。
+>
+> **可见性决定**：这个仓库 GitHub 上目前是 private，问过用户后确认——
+> "这个仓库以后会公开的"，所以镜像发布定成**公开**（不是照搬仓库当前的
+> private 状态）。⚠️ **一个手动步骤还没做**：用 `GITHUB_TOKEN` 从 CI 推的
+> GHCR package 首次创建时默认是 private，需要人工去 GitHub 网页的
+> package 设置里手动切成 Public 一次（`gh` 当前登录的 token 没有
+> `write:packages` scope，API 也做不了，且"设为公开"这类动作本来就不该
+> 由自动化脚本代劳）——**这一步是发布正式生效前的最后一个手动 gate**，
+> 第一次真实 push 触发 workflow 之后需要单独去做。
+>
+> **验证现状（如实记录，还没端到端跑完）**：`docker compose config` 本地
+> 跑通确认新 `docker-compose.yml` 语法合法；workflow 的 YAML 语法本地过了
+> `yaml.safe_load`；**但 workflow 本身还没有被真实触发过一次**（要等这次
+> 改动被推到 GitHub 才会跑），所以"镜像真的能被 `docker pull`/
+> `docker compose up` 拉下来跑起来"这条现在还是**推测，不是已验证的事实**，
+> 需要推送之后看一次真实的 Actions 运行结果、再手动确认包可见性，才能算
+> 这条真的做完。
+
 ---
 
 ## 五、已知但还没排进上面步骤里的缺口
@@ -836,6 +866,7 @@ git 历史/commit message。
 | `call_tool` 每个 call 的处理体里，除了 `await fn(**call["args"])` 外没有其它 try/except——确认文案函数、`model_dump()`、`json.dumps()`任一处抛异常都会让整个节点崩溃且不返回，产生跟"确认未答完"完全相同的孤儿`tool_calls`永久损坏（已实测确认）。现在靠`_repair_orphaned_tool_calls`兜底不至于死循环，但没有从根上堵住 | 2026-09-16，同上举一反三验证到 | 影响面小（目前唯一一处`CONFIRMATION_LABELS`实现恰好用`.get()`兜底躲过了），先记录，等下次新增 tool 或再出事故时一起处理，不值得现在单独起一轮改动 |
 | 没有独立于"发消息/resume"之外的方式查"这条线程是否还卡在待确认的 interrupt 上"；同一 `thread_id` 被多标签页/并发请求同时命中时会发生什么完全没分析/没测试 | 2026-09-16，同上举一反三，推理得出、未实测 | 都是"客户端与图对轮次是否完成的判断不一致"这同一类风险的推论，没有具体触发场景报告之前不值得花时间验证 |
 | ⚠️ **模型对 app 自身状态"失明"**——用户问"你知道我本地有哪些 projects 吗"，模型完全不知道，给了一个查文件系统的通用答案。根因：`call_llm` 没有系统提示词、没有 tool 节点，模型能看到的只有用户在输入框里打的文字，`projects`/`conversations` 这两张表的数据完全没有任何路径能进到模型的上下文里 | 2026-09-15，用户问答中发现；本质是第 3 步"tool 节点"缺失的一个具体表现 | 用户在两个方案（① 给模型挂 `list_projects`/`list_conversations` 这类真工具，走 LangGraph tool 节点，跟以后接 core 工具复用同一套机制；② 每次调用前把项目列表轻量塞进 system message，不涉及 tool-calling）里选了"先不做，记录下来，以后再决定" |
+| ⚠️⚠️ **三个真实 Tool 的产物完全没有持久化——"工作目录"这条已定决策（§十.2）从未落地**——核实 `dft_workspace/client.py`/`mlip_playground/client.py`：每个函数都是 `with tempfile.TemporaryDirectory() as tmp:` 模式，请求一结束这个目录就被整个删除，包括从没被读进任何 Pydantic 模型字段的二进制/中间产物（`*-force_constants.hdf5`、`*-phonopy.yml`、janus 写的原始 extxyz 里模型没解析的额外列）——这些是**真正、永久、无法补救的数据丢失**，不只是"没地方点下载"。前端零散补了几个客户端 Blob 下载按钮（EOS 重建的 CSV、NEB 的 `.extxyz` 轨迹、phonons 的 SVG+band.yaml），但覆盖不全（geomopt 弛豫出的结构只有"Import"没有下载按钮，NEB 的能量图 SVG 没有下载），而且这些按钮吃的是前端本地 `result.raw` state——重开一个旧会话不会被重新水合（只有聊天文字/图片走了 `GET /api/chat/{thread_id}` 的重新水合逻辑），数据其实还原样躺在 checkpointer 里那条 tool 消息的 JSON 里，但没有任何代码把它解析回下载按钮，等于**跨会话就彻底拿不到**。DFT Workspace 是三者里覆盖最好的（`run_bundle()` 触发真实的浏览器 zip 下载），但那是重新跑一次 `goldilocks run` 现生成的，不是"把已经生成的产物存起来" | 十.2/十.2.4（"工作目录"——安全边界+产物落点，已定但从未实现），也是十六节 `bundles.bundle_path` 未来要指向的东西 | 2026-09-16，用户指出后经代码核实确认——不是设计阶段就决定往后放的，是三个 Tool 各自"先做通面板/API"这一步时，`tempfile.TemporaryDirectory()` 是最省事的临时选择，写完之后没人回头把它和已经定好的"工作目录"概念对上。优先级应该提前：往后接 AiiDA sink B、往 `structures`/`bundles` 表填真实数据，都需要先有一个真实存在的落盘位置，建议跟第 4 步（六张表）一起做，不要等到那之后 |
 
 ---
 
