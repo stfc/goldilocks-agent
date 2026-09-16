@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goldilocks-agent"
+version = "0.1.0"
+description = "LLM orchestration, scientific workflow, and AiiDA execution layer for goldilocks-core."
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    # Placeholders reflecting decisions already made in docs/goldilocks-agent-design.md
+    # (十七: LangGraph not LangChain · 十四之三: MCP client to core · 十七之六①: litellm
+    # for the cloud/local conversation engine). Not yet resolved against a real
+    # implementation -- refine bounds once code is written against them.
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=3.1,<4",
+    "langchain-core>=1.0",
+    "aiosqlite>=0.20",
+    "litellm>=1.0",
+    "mcp>=1.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "pydantic>=2.12",
+    "tomli-w>=1.0",
+    "httpx>=0.28",
+    "mp-api>=0.41",
+    # MLIP Playground (tools/mlip_playground/client.py) shells out to
+    # janus-core's own `janus` CLI (isolated in ./mlip-cli, torch/mace kept
+    # out of this env) and parses back its plain-text/extxyz/YAML output
+    # files -- ase reads the extxyz results reliably (it's the library that
+    # wrote them), pyyaml reads the phonon thermal-properties file. Neither
+    # pulls in torch/mace itself, unlike janus-core.
+    "ase>=3.23",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+goldilocks-agent = "goldilocks_agent.cli:main"
+
+[tool.poe.tasks.fmt]
+help = "Format src and tests with ruff"
+cmd = "ruff format src tests"
+
+[tool.poe.tasks.serve]
+help = "Run the agent's local HTTP/SSE server on :8080 (127.0.0.1 only)"
+cmd = "uvicorn goldilocks_agent.server:app --host 127.0.0.1 --port 8080"
+
+[tool.poe.tasks.fetch-jarvis-cache]
+help = "One-time download of the JARVIS DFT-3D dataset to ~/.cache/goldilocks (needed for Find in Databases' JARVIS results)"
+cmd = "python -c \"import asyncio; from goldilocks_agent.tools.structure_search.jarvis_cache import download_cache; asyncio.run(download_cache())\""
+
+[tool.poe.tasks.lint]
+help = "Check style, matching the CI gate"
+sequence = [
+    { cmd = "ruff check src tests" },
+    { cmd = "ruff format --check src tests" },
+]
+
+[tool.poe.tasks.test]
+help = "Run the pytest suite"
+cmd = "pytest"
+
+[tool.poe.tasks.check]
+help = "Lint and test, the local pre-PR gate"
+sequence = [
+    { ref = "lint" },
+    { ref = "test" },
+]
+
+[tool.poe.tasks.web-check]
+help = "Lint and build the agent frontend"
+shell = "cd app && npm run lint && npm run build"
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.35",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.11",
+]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+addopts = ["--strict-markers", "-ra"]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "unit: isolated behavior with controlled collaborators",
+    "integration: workflows crossing real package boundaries (core MCP, AiiDA)",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", # baseline
+    "B",            # bugbear: real footguns
+    "UP",           # modern python; ceremony prevention
+    "C4",           # comprehensions over loops
+    "SIM",          # collapse ceremony
+    "RET",          # return discipline
+    "PIE",          # useless constructs
+    "TID",          # import hygiene, banned modules
+    "RUF",          # ruff-specific: noqa discipline, mutable defaults
+    "BLE",          # no blind exception catches
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

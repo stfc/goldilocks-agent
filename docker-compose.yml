@@ -1,0 +1,50 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # One-shot: waits for `ollama` to answer, pulls the model the chat
+  # engine expects (graph.py's LOCAL_MODEL), then exits. Re-running is a
+  # cheap no-op once the model is already pulled.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        until ollama list >/dev/null 2>&1; do sleep 1; done;
+        ollama pull qwen3.8
+    restart: "no"
+
+  agent:
+    build: .
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_API_BASE: http://ollama:11434
+      # Optional -- uncomment/set to enable the matching feature:
+      # ANTHROPIC_API_KEY:
+      # OPENAI_API_KEY:
+      # GEMINI_API_KEY:
+      # MP_API_KEY:
+      GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
+      # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/getting-started.md
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - goldilocks_home:/home/goldilocks
+      - mlip_cli_venv:/app/mlip-cli/.venv
+      # Optional, for DFT Workspace -- mount your own goldilocks-core
+      # checkout and set GOLDILOCKS_CORE_PATH above to match:
+      # - /path/to/your/goldilocks-core:/goldilocks-core
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  goldilocks_home:
+  mlip_cli_venv:

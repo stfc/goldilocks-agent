@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Frontend
+node_modules/
+app/dist/
+app/design.md
+
+# Local runtime state (agent server, checkpointer db, config)
+.goldilocks/
+*.db
+
+# macOS
+.DS_Store
+
+# Built docs site (mkdocs output)
+site/
+
+# Stray planning scratch files
+plan-*.md
+
+# Claude Code local tooling (personal skills library + scratch state) --
+# not part of this project's own source, not shared between contributors.
+.claude/

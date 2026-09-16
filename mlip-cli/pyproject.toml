@@ -1,0 +1,16 @@
+[project]
+name = "goldilocks-mlip-cli"
+version = "0.0.1"
+description = "Isolated environment for janus-core's `janus` CLI (MACE) -- keeps torch/mace/phonopy out of goldilocks-agent's own env. Not a package of its own code, just a dependency pin; see tools/mlip_playground/client.py for the one thing that calls into it."
+requires-python = ">=3.10"
+dependencies = [
+    # `[mace]` extra: MACE is the only architecture MLIP Playground wires up
+    # so far (2026-09-15 scope decision, see mlip_playground/tool.py).
+    "janus-core[mace]",
+]
+
+[tool.uv]
+# This directory has no Python package of its own -- it exists purely so
+# `uv run --project mlip-cli janus ...` resolves `janus-core[mace]` into its
+# own `.venv`, isolated from goldilocks-agent's own dependencies.
+package = false
