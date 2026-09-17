@@ -22,8 +22,9 @@ submission).
 
 ```
 src/goldilocks_agent/   Python package (LangGraph orchestration, local HTTP/SSE server, Tools)
-app/                    React/Vite frontend (chat + tool-box panel) -- not "web": see design doc §13,
-                        this is a different kind of product from goldilocks-core/web
+app/                    React/Vite frontend (chat + tool-box panel, plus an embedded
+                        Workbench tab published from goldilocks-core/web -- see issue #1)
+                        -- not "web": see design doc §13
 mlip-cli/               Own project (own pyproject.toml), just a `janus-core[mace]` dependency pin --
                         keeps torch/mace out of goldilocks-agent's own env; MLIP Playground shells
                         out to `janus` (janus-core's own CLI) inside it, see tools/mlip_playground/
@@ -117,6 +118,24 @@ background download of the JARVIS DFT-3D dataset (~200MB, needed for Find
 in Databases' JARVIS results) -- the app is usable immediately, JARVIS
 results just start working once it finishes. Run it manually ahead of
 time with `uv run poe fetch-jarvis-cache` if you'd rather not wait.
+
+**Workbench tab**: the app's "Workbench" tab embeds goldilocks-core's own
+Workbench UI, published as an npm package and installed into `app/`'s
+dependencies (see [issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)).
+It talks to core's HTTP server directly, not via the CLI path
+`GOLDILOCKS_CORE_PATH` configures above -- start that server too:
+
+```bash
+cd /path/to/goldilocks-core && uv run poe serve   # core backend on http://127.0.0.1:8000
+```
+
+`app/vite.config.js` proxies `/capabilities`, `/run`, `/explain`, etc. to
+that port; without it running, the Workbench tab still renders but shows a
+"Request failed" banner instead of real data. The published-package
+pipeline is currently a local tarball
+(`app/vendor/goldilocks-workbench-0.0.0.tgz`, rebuilt from `core/web` via
+`npm run build:lib && npm pack`) rather than a real registry -- see issue #1
+for the GitHub Packages follow-up.
 
 ## Usage
 

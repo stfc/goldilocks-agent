@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  HttpCoreClient,
+  MantineProvider,
+  WorkbenchContent as CoreWorkbenchContent,
+  WorkspaceProvider as CoreWorkspaceProvider,
+  colorSchemeManager as coreColorSchemeManager,
+  createWorkspace as createCoreWorkspace,
+  workbenchTheme,
+} from "goldilocks-workbench";
+import "goldilocks-workbench/style.css";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
   WEAS_SUPPORTED_EXTS,
@@ -1427,6 +1437,12 @@ export default function App() {
   // separate elements, so hover state is lifted here and applied via a
   // shared class.
   const [hoveredHandle, setHoveredHandle] = useState(null);
+  // "chat" is the existing sidebar/chat/tools layout; "workbench" swaps the
+  // same row for the embedded goldilocks-workbench package (see
+  // junwen94/goldilocks-agent#1). One workspace/client instance per app
+  // lifetime -- recreating it on every toggle would drop in-progress state.
+  const [viewMode, setViewMode] = useState("chat");
+  const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
   const [view, setView] = useState("chats");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
@@ -4319,6 +4335,13 @@ export default function App() {
         }
 
         .top-header {
+          position: relative;
+          /* .top-header-center's own children (the pill, the theme button)
+             are both position: absolute now, so it has no normal-flow
+             content left to size the row by -- pin a height explicitly
+             instead of leaving it to collapse to whatever .top-header-left/
+             -right's content happens to be. */
+          min-height: 64px;
           flex-shrink: 0;
           display: flex;
           align-items: stretch;
@@ -4346,6 +4369,17 @@ export default function App() {
         .top-header-right {
           justify-content: space-between;
           border-left: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        /* Workbench mode has no sidebar/tools panel to resize, so these
+           dividers (normally paired with the resize handles right next to
+           them) would imply a draggable boundary that isn't there. */
+        .top-header-workbench .top-header-left {
+          border-right: none;
+        }
+
+        .top-header-workbench .top-header-right {
+          border-left: none;
         }
 
         .top-header-center {
@@ -4470,6 +4504,13 @@ export default function App() {
           align-items: center;
           gap: 10px;
           flex-wrap: nowrap;
+          /* Without min-width: 0, a flex item's minimum size defaults to its
+             content's intrinsic width -- with the nowrap text below, that's
+             the full, untruncated label, which at a small dragged-down
+             sidebar width pushed the collapse button in .top-header-left
+             outside the visible box entirely instead of the text truncating. */
+          min-width: 0;
+          flex: 1 1 auto;
         }
 
         .brand-icon {
@@ -4495,6 +4536,8 @@ export default function App() {
           font-size: 16px;
           line-height: 1.2;
           white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .brand-ink {
@@ -4508,6 +4551,8 @@ export default function App() {
           letter-spacing: 0.01em;
           line-height: 1.2;
           white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .logo-image {
@@ -4823,23 +4868,6 @@ export default function App() {
           position: relative;
         }
 
-        .floating-pane-btn {
-          position: absolute;
-          top: 14px;
-          z-index: 20;
-          background: var(--bg-elev);
-          border: 1px solid var(--border);
-          box-shadow: var(--shadow);
-        }
-
-        .floating-pane-btn-left {
-          left: 14px;
-        }
-
-        .floating-pane-btn-right {
-          right: 14px;
-        }
-
         .tool-chip,
         .theme-chip,
         .status-chip {
@@ -4910,6 +4938,14 @@ export default function App() {
         }
 
         .chat-mode-toggle {
+          /* Centered on the whole header (not .top-header-center), so it
+             doesn't shift when the left/right section widths differ between
+             chat and workbench mode -- see the comment at its JSX. */
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 7;
           display: inline-flex;
           align-items: center;
           gap: 2px;
@@ -4939,19 +4975,73 @@ export default function App() {
           color: var(--brand-header);
         }
 
-        .chat-mode-toggle-btn.disabled {
-          cursor: not-allowed;
-          opacity: 0.65;
+        .workbench-embed {
+          /* .app-row is a row flex container for the chat layout's sidebar
+             + main + tools; WorkbenchContent expects normal top-to-bottom
+             document flow (status banner, then the grid), so override to a
+             column here rather than letting each child stretch full-height
+             as a row item. */
+          flex-direction: column;
+          overflow: auto;
+          background: var(--bg);
         }
 
-        .coming-soon-badge {
-          font-size: 9px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          background: rgba(255, 255, 255, 0.2);
-          padding: 2px 6px;
-          border-radius: 999px;
+        /* Same @layer problem as the font-family fix below, but for the
+           global universal-selector margin/padding reset at the top of this
+           stylesheet: it's unlayered, so it beats every layered Mantine rule
+           that sets spacing for its own components (Accordion rows, form
+           field gaps, etc.), flattening them all to 0 and making Calculation's
+           list rows look cramped compared to Structure/Generation, which
+           don't lean on that spacing as much. revert (not unset -- margin/
+           padding aren't inherited properties, so unset would just reapply
+           the initial 0 value) hands the property back to the normal
+           cascade, i.e. Mantine's own layered rules or the UA default. */
+        .workbench-embed * {
+          margin: revert;
+          padding: revert;
+        }
+
+        /* goldilocks-workbench ships all of its CSS inside @layer mantine
+           (see @mantine/core/styles.layer.css) so host apps can layer their
+           own overrides on top -- but a *layered* rule always loses to an
+           *unlayered* one of any specificity, so the plain reset above
+           (also unlayered) was winning here regardless of its low
+           specificity. This rule is unlayered too, just more specific, so
+           it wins over that reset inside the embed and lets Mantine's own
+           layered font-family rules apply as designed. */
+        .workbench-embed button,
+        .workbench-embed input,
+        .workbench-embed textarea,
+        .workbench-embed select {
+          font-family: unset;
+        }
+
+        /* core/web's own .workbench-grid sizes itself as
+           calc(100dvh - var(--app-header-height)), assuming its own
+           sticky AppHeader sits above it (see goldilocks-core/web/src/App.css).
+           WorkbenchContent renders without that header here, so that calc
+           budgets space for a header that doesn't exist and the grid ends up
+           taller than the actual remaining row height, forcing a scroll.
+           .workbench-embed is already a flex column (see above) and
+           .workbench-grid is its direct child, so sizing it via flex instead
+           lets it fill exactly what's left after the status/failure banners
+           -- fixed here rather than in core/web's own CSS since that file is
+           shared with core's real standalone deployment, which does have the
+           header the calc assumes. */
+        .workbench-embed .workbench-grid {
+          height: auto;
+          flex: 1;
+          min-height: 0;
+          /* .workbench-grid's own max-width + margin-inline: auto is meant
+             to center it once the row is wider than 100rem, but auto-margin
+             centering on a flex item only kicks in when the item isn't
+             being stretched to fill the cross axis -- align-items: stretch
+             is the default here and it was winning, so the grid just filled
+             the full row width up to max-width from the left instead of
+             centering. align-self: center opts this item out of stretch
+             explicitly instead of relying on margin: auto to imply it. */
+          align-self: center;
+          width: 100%;
         }
 
         .chat-area {
@@ -8068,29 +8158,36 @@ export default function App() {
         }
       `}</style>
 
-      <header className="top-header">
-        <div className="top-header-left" style={{ width: sbOpen ? sidebarWidth : 64 }}>
+      <header className={`top-header${viewMode === "workbench" ? " top-header-workbench" : ""}`}>
+        <div
+          className="top-header-left"
+          style={{ width: viewMode === "workbench" ? sidebarWidth : sbOpen ? sidebarWidth : 100 }}
+        >
           <div className="brand">
             <div className="brand-icon">
               <LogoImage alt="Goldilocks logo" />
             </div>
-            {sbOpen && (
+            {(viewMode === "workbench" || sbOpen) && (
               <div className="brand-copy">
                 <span className="brand-name brand-ink">Goldilocks</span>
                 <span className="brand-slogan">Towards Greener Computation</span>
               </div>
             )}
           </div>
-          <button
-            className="icon-btn"
-            onClick={() => setSbOpen((open) => !open)}
-            title={sbOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            <MenuIcon />
-          </button>
+          {/* Sidebar collapse only means something in chat mode -- Workbench
+              doesn't have a sidebar of its own to toggle. */}
+          {viewMode === "chat" && (
+            <button
+              className="icon-btn"
+              onClick={() => setSbOpen((open) => !open)}
+              title={sbOpen ? "Collapse sidebar" : "Expand sidebar"}
+            >
+              <MenuIcon />
+            </button>
+          )}
         </div>
 
-        {sbOpen && (
+        {viewMode === "chat" && sbOpen && (
           <div
             className={`resize-handle${hoveredHandle === "sidebar" || resizingPane === "sidebar" ? " handle-active" : ""}`}
             onMouseEnter={() => setHoveredHandle("sidebar")}
@@ -8109,22 +8206,33 @@ export default function App() {
           />
         )}
 
+        {/* Anchored to <header> itself (not .top-header-center) so it stays
+            in the exact same spot regardless of how wide the left/right
+            sections are -- .top-header-center's width (and therefore its
+            own centerpoint) shifts with sidebar/tools width and with
+            viewMode, which made the pill visibly jump when switching tabs. */}
+        <div className="chat-mode-toggle" role="tablist" aria-label="View">
+          <button
+            type="button"
+            className={`chat-mode-toggle-btn${viewMode === "chat" ? " active" : ""}`}
+            role="tab"
+            aria-selected={viewMode === "chat"}
+            onClick={() => setViewMode("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={`chat-mode-toggle-btn${viewMode === "workbench" ? " active" : ""}`}
+            role="tab"
+            aria-selected={viewMode === "workbench"}
+            onClick={() => setViewMode("workbench")}
+          >
+            Workbench
+          </button>
+        </div>
+
         <div className="top-header-center">
-          <div className="chat-mode-toggle" role="tablist" aria-label="View">
-            <button type="button" className="chat-mode-toggle-btn active" role="tab" aria-selected="true">
-              Chat
-            </button>
-            <button
-              type="button"
-              className="chat-mode-toggle-btn disabled"
-              role="tab"
-              aria-selected="false"
-              disabled
-              title="Workbench view — coming soon"
-            >
-              Workbench <span className="coming-soon-badge">Soon</span>
-            </button>
-          </div>
           <button
             className="top-header-theme-btn"
             onClick={() => updateTheme(resolvedTheme === "light" ? "dark" : "light")}
@@ -8133,7 +8241,7 @@ export default function App() {
           </button>
         </div>
 
-        {toolsOpen && (
+        {viewMode === "chat" && toolsOpen && (
           <div
             className={`resize-handle${hoveredHandle === "tools" || resizingPane === "tools" ? " handle-active" : ""}`}
             onMouseEnter={() => setHoveredHandle("tools")}
@@ -8152,18 +8260,38 @@ export default function App() {
           />
         )}
 
-        <div className="top-header-right" style={{ width: toolsOpen ? toolsWidth : 64 }}>
-          {toolsOpen && <span className="brand-ink">Tools</span>}
-          <button
-            className="icon-btn"
-            onClick={() => setToolsOpen((open) => !open)}
-            title={toolsOpen ? "Collapse tools" : "Expand tools"}
-          >
-            <MenuIcon />
-          </button>
+        {/* Tools panel only exists in chat mode -- collapse this section to
+            its minimal width instead of showing controls for a panel that
+            isn't there in Workbench mode. */}
+        <div className="top-header-right" style={{ width: viewMode === "workbench" ? 64 : toolsOpen ? toolsWidth : 64 }}>
+          {viewMode === "chat" && toolsOpen && <span className="brand-ink">Tools</span>}
+          {viewMode === "chat" && (
+            <button
+              className="icon-btn"
+              onClick={() => setToolsOpen((open) => !open)}
+              title={toolsOpen ? "Collapse tools" : "Expand tools"}
+            >
+              <MenuIcon />
+            </button>
+          )}
         </div>
       </header>
 
+      {viewMode === "workbench" && (
+        <div className="app-row workbench-embed">
+          <MantineProvider
+            theme={workbenchTheme}
+            colorSchemeManager={coreColorSchemeManager}
+            defaultColorScheme="light"
+          >
+            <CoreWorkspaceProvider workspace={coreWorkspace}>
+              <CoreWorkbenchContent />
+            </CoreWorkspaceProvider>
+          </MantineProvider>
+        </div>
+      )}
+
+      {viewMode === "chat" && (
       <div className="app-row">
         {dragOver && (
           <div className="drag-overlay">
@@ -8311,16 +8439,6 @@ export default function App() {
 
       <main className="main">
         <div className="content">
-          {!sbOpen && (
-            <button className="icon-btn floating-pane-btn floating-pane-btn-left" onClick={() => setSbOpen(true)}>
-              <MenuIcon />
-            </button>
-          )}
-          {!toolsOpen && (
-            <button className="icon-btn floating-pane-btn floating-pane-btn-right" onClick={() => setToolsOpen(true)}>
-              <MenuIcon />
-            </button>
-          )}
           <div className="body">
             <div className="chat-shell">
               <div className="chat-area" ref={chatAreaRef}>
@@ -8984,6 +9102,7 @@ export default function App() {
         </aside>
       </main>
       </div>
+      )}
 
       {settingsOpen && (
         <div className="modal-scrim">
