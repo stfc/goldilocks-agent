@@ -22,6 +22,14 @@ services:
     restart: "no"
 
   agent:
+    # Published by .github/workflows/docker-publish.yml on every push to
+    # main -- `docker compose up` pulls this if it can, so a colleague only
+    # needs this one file, not a clone of the source tree. `build: .` stays
+    # as a fallback/dev override: `docker compose up --build` (or `poe`/
+    # local dev work) still builds from source and tags the result the same
+    # way, and if the registry is ever unreachable, `up` falls back to it.
+    image: ghcr.io/junwen94/goldilocks-agent:latest
+    pull_policy: always
     build: .
     depends_on:
       - ollama

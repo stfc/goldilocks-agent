@@ -1,14 +1,75 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import WeasStructureViewport from "./components/WeasStructureViewport.jsx";
+import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
   WEAS_SUPPORTED_EXTS,
   formatStructureLabel,
   getRawFileExtension,
   getStructureFenceLanguage,
   inferStructureExtension,
-} from "./utils/structureFiles.js";
+} from "./utils/structureFiles";
+
+// React's CSSProperties type doesn't include arbitrary custom properties
+// (e.g. `--tool-color`, read by App.css) -- this widened alias documents
+// the handful of `style` objects below that set one intentionally.
+type CSSPropertiesWithVars = CSSProperties & Record<`--${string}`, string | number>;
+
+// --- Core recurring data shapes -------------------------------------------
+// These mirror the informal shapes already implied by createSession(),
+// the `role`/`content` literals sent to the backend, and the per-Tool
+// `modeState` slices (DEFAULT_MLIP_STATE/DEFAULT_DFT_STATE/etc. below).
+// Backend payloads (`content`, `modeState[...]`, tool-call results) are
+// still genuinely dynamic JSON from goldilocks-agent's Python side and the
+// underlying LLM/tool responses, so fields that carry those stay `any`/
+// loosely-typed with an index signature rather than fully modeled --
+// getting those exactly right would mean keeping this in lockstep with the
+// Python backend's schemas, which is out of scope for a frontend-only,
+// types-only migration under tonight's deadline.
+
+// A chat message as stored in `session.messages`. `content` is either a
+// plain string (the common case) or -- when rehydrated straight from the
+// LangGraph checkpointer -- a multimodal "parts" array (see
+// getMessageDisplayParts/extractStructureFromMessageContent for the actual
+// shape-sniffing this ambiguity forces on every reader).
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: any;
+  display?: string;
+  images?: { name: string; dataUrl?: string; url?: string }[];
+  [key: string]: any;
+}
+
+// A project groups chats together (see handleCreateProject/loadProjects).
+// `sources` is client-side-only for now -- the `projects` table has no
+// column for it yet (design doc 16.5).
+export interface Project {
+  id: string;
+  name: string;
+  desc?: string;
+  color: string;
+  sources?: any;
+  [key: string]: any;
+}
+
+// One chat/conversation. `modeState` is a per-Tool bag (keyed by Tool id,
+// e.g. "ml-analysis"/"dft-setup"/"structure-search") whose shape is
+// defined per-Tool by DEFAULT_MLIP_STATE/DEFAULT_DFT_STATE/etc. above and
+// below -- deliberately untyped here (`Record<string, any>`) rather than a
+// union of all of them, since each Tool only ever reads its own key.
+export interface Session {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  messagesLoaded?: boolean;
+  createdAt: string;
+  projectId: string | null;
+  tool: string | null;
+  rightPanelOpen: boolean;
+  rightPanelView: string | null;
+  modeState: Record<string, any>;
+  [key: string]: any;
+}
 
 // Order (both the group list and each group's items) is the user's explicit
 // priority (2026-09-15): Claude > OpenAI > Gemini > Ollama (local) >
@@ -887,7 +948,7 @@ function isFileSentInHistory(messages, name) {
   });
 }
 
-function createSession(projectId = null) {
+function createSession(projectId: string | null = null): Session {
   return {
     id: createId(),
     title: "New chat",
@@ -1122,7 +1183,50 @@ function ToolGlyph({ tool, size = 18 }) {
   );
 }
 
-function WorkspacePicker({ label, value, option, groups, isOpen, onToggle, onSelect, onAsk, onRecommend, disabled }) {
+// Shared shape for the option-picker family (WorkspacePicker/SimpleSelect)
+// below. Different pickers across the app attach different extra fields to
+// their items (`desc`, `recommended`, `tag`, `disabled`...), so that part
+// stays a loose index signature. `id` is generic rather than a bare
+// `string | number` union: each *individual* picker instance is consistent
+// (structure-list pickers key off the array index as a number; every other
+// picker uses a string id), and its `onSelect`/`value` feed a single
+// same-typed `useState` -- a bare union would let a number id flow into a
+// string-only setter (and vice versa) without TS complaining. `label` is
+// always plain text everywhere it's constructed, so that's typed precisely.
+interface PickerItem<TId extends string | number = string | number> {
+  id: TId;
+  label: string;
+  [key: string]: any;
+}
+
+interface PickerGroup<TId extends string | number = string | number> {
+  label: string;
+  items: PickerItem<TId>[];
+}
+
+function WorkspacePicker<TId extends string | number = string | number>({
+  label,
+  value,
+  option,
+  groups,
+  isOpen,
+  onToggle,
+  onSelect,
+  onAsk,
+  onRecommend,
+  disabled,
+}: {
+  label: string;
+  value: TId;
+  option: PickerItem<TId>;
+  groups: PickerGroup<TId>[];
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (id: TId) => void;
+  onAsk?: (item: PickerItem<TId>) => void;
+  onRecommend?: (item: PickerItem<TId>) => void;
+  disabled?: boolean;
+}) {
   const recItem = onRecommend && !disabled ? groups.flatMap((g) => g.items).find((i) => i.recommended) : null;
   return (
     <div className={`workspace-picker${isOpen ? " open" : ""}${disabled ? " disabled" : ""}`}>
@@ -1181,7 +1285,25 @@ function WorkspacePicker({ label, value, option, groups, isOpen, onToggle, onSel
   );
 }
 
-function SimpleSelect({ label, value, items, isOpen, onToggle, onSelect, onAsk, disabled }) {
+function SimpleSelect<TId extends string | number = string | number>({
+  label,
+  value,
+  items,
+  isOpen,
+  onToggle,
+  onSelect,
+  onAsk,
+  disabled,
+}: {
+  label: string;
+  value: TId;
+  items: PickerItem<TId>[];
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (id: TId) => void;
+  onAsk?: (item: PickerItem<TId>) => void;
+  disabled?: boolean;
+}) {
   const displayValue = items.find((i) => i.id === value)?.label ?? "—";
   return (
     <div className={`workspace-picker${isOpen ? " open" : ""}${disabled ? " disabled" : ""}`}>
@@ -1240,8 +1362,13 @@ function StructureUploadControl({
   label = "Upload structure",
   hint = "or drag a file here (CIF, XYZ, POSCAR, VASP, XSF, CUBE)",
   accept,
+}: {
+  onFile: (file: File) => void;
+  label?: string;
+  hint?: string;
+  accept?: string;
 }) {
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   return (
     <div
@@ -1292,11 +1419,19 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => readStoredWidth(STORAGE_KEYS.sidebarWidth, 260));
   const [toolsWidth, setToolsWidth] = useState(() => readStoredWidth(STORAGE_KEYS.toolsWidth, 440));
   const [resizingPane, setResizingPane] = useState(null);
+  // Tracks which resize boundary ("sidebar" | "tools") the pointer is over,
+  // independent of resizingPane (which only reflects an active drag). Each
+  // boundary has two DOM handles (one in the top header, one in the row
+  // below) that must highlight together as one continuous bar -- CSS
+  // :hover/:active on either element alone can't do that, since they're
+  // separate elements, so hover state is lifted here and applied via a
+  // shared class.
+  const [hoveredHandle, setHoveredHandle] = useState(null);
   const [view, setView] = useState("chats");
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [projectTab, setProjectTab] = useState("chats");
-  const [sessions, setSessions] = useState([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState(null);
   const [draftProjectId, setDraftProjectId] = useState(null);
   const [input, setInput] = useState("");
@@ -1376,7 +1511,7 @@ export default function App() {
   const [structureMatchLoading, setStructureMatchLoading] = useState(false);
   const [dbGroupOpen, setDbGroupOpen] = useState({});
   const [importingEntries, setImportingEntries] = useState(new Set());
-  const [pickerElements, setPickerElements] = useState({});
+  const [pickerElements, setPickerElements] = useState<Record<string, number>>({});
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
@@ -1954,7 +2089,7 @@ export default function App() {
     }));
   }
 
-  function pickerFormulaStr(elems) {
+  function pickerFormulaStr(elems: Record<string, number>) {
     return Object.entries(elems)
       .filter(([, n]) => n > 0)
       .map(([sym, n]) => (n === 1 ? sym : `${sym}${n}`))
@@ -2019,7 +2154,19 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const resultEntry = {
+      // MLIP endpoint responses are heterogeneous per calc type (singlepoint
+      // vs geomopt vs phonons vs eos vs neb each return a different `raw`
+      // shape) -- `any` here rather than modeling five distinct backend
+      // response schemas under tonight's deadline.
+      const resultEntry: {
+        id: number;
+        type: string;
+        arch: string;
+        structureName: string;
+        error?: string;
+        raw?: any;
+        summary?: any;
+      } = {
         id: Date.now() + Math.random(),
         type: mlipCalcType,
         arch: selectedMlipModel.label,
@@ -2431,7 +2578,7 @@ export default function App() {
   // context) while the chat bubble shows a short, human sentence instead of
   // the raw payload -- same real-content/friendly-display split `images`
   // already uses below, applied to a text-only case.
-  async function send(text, displayOverride) {
+  async function send(text?: string, displayOverride?: string) {
     const rawText = (text ?? input).trim();
     if ((!rawText && attachedFiles.length === 0 && attachedImages.length === 0) || loading || hasPendingConfirmation) return;
 
@@ -2926,7 +3073,7 @@ export default function App() {
     if (activeTool.id === "structure-search") {
       return (
         <div className="workspace-content">
-          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
             <div className="workspace-tool-header-top">
               <div className="workspace-tool-title">
                 <ToolGlyph tool={activeTool} size={18} />
@@ -3297,11 +3444,16 @@ export default function App() {
           </div>
         );
       }
-      const recordEntries = dftExplainResult?.records ? Object.entries(dftExplainResult.records) : [];
+      // Cast to Record<string, any>: TS's Object.entries overload infers the
+      // value type as `unknown` (rather than `any`) when given a bare `any`
+      // argument, which would make every `record.*` access below an error.
+      const recordEntries = dftExplainResult?.records
+        ? Object.entries(dftExplainResult.records as Record<string, any>)
+        : [];
 
       return (
         <div className="workspace-content">
-          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
             <div className="workspace-tool-header-top">
               <div className="workspace-tool-title">
                 <ToolGlyph tool={activeTool} size={18} />
@@ -3466,7 +3618,7 @@ export default function App() {
               </button>
               {dftBundleError && <div className="check-item error">{dftBundleError}</div>}
               {dftRunResult?.error && <div className="check-item error">{dftRunResult.error}</div>}
-              {dftRunResult?.files && Object.entries(dftRunResult.files).map(([name, content]) => (
+              {dftRunResult?.files && Object.entries(dftRunResult.files as Record<string, any>).map(([name, content]) => (
                 <details key={name} className="workspace-section" open={!name.startsWith("pseudo/")}>
                   <summary className="workspace-title" style={{ cursor: "pointer" }}>
                     {name}
@@ -3514,7 +3666,7 @@ export default function App() {
     if (activeTool.id === "beyond-dft") {
       return (
         <div className="workspace-content">
-          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
             <div className="workspace-tool-header-top">
               <div className="workspace-tool-title">
                 <ToolGlyph tool={activeTool} size={18} />
@@ -3609,7 +3761,7 @@ export default function App() {
     if (activeTool.id === "ml-analysis") {
     return (
       <div className="workspace-content">
-        <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+        <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
           <div className="workspace-tool-header-top">
             <div className="workspace-tool-title">
               <ToolGlyph tool={activeTool} size={18} />
@@ -4031,7 +4183,7 @@ export default function App() {
       }
       return (
         <div className="workspace-content">
-          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+          <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
             <div className="workspace-tool-header-top">
               <div className="workspace-tool-title">
                 <ToolGlyph tool={activeTool} size={18} />
@@ -4081,7 +4233,7 @@ export default function App() {
     // docs/goldilocks-agent-implementation-plan.md §五).
     return (
       <div className="workspace-content">
-        <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color }}>
+        <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
           <div className="workspace-tool-header-top">
             <div className="workspace-tool-title">
               <ToolGlyph tool={activeTool} size={18} />
@@ -4114,6 +4266,15 @@ export default function App() {
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body, #root { height: 100%; }
         body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        /* Browsers don't inherit the page font into form controls by default.
+           This codebase previously patched that per-button (a handful of
+           spots already have their own font-family/font: inherit) instead of
+           resetting it once -- that meant it was easy to miss on a new
+           button (as happened with the new header controls) and silently
+           fall back to the OS UI font. One global reset covers every button/
+           input/textarea/select, present and future; class-level overrides
+           (e.g. explicit monospace inputs) still win via specificity. */
+        button, input, textarea, select { font-family: inherit; }
 
         .app {
           --bg: #0b0b0f;
@@ -4130,6 +4291,13 @@ export default function App() {
           --accent-soft: rgba(43, 125, 224, 0.16);
           --success: #22c55e;
           --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+          /* Fixed brand header color -- matches goldilocks-web's nav bar exactly,
+             deliberately NOT theme-dependent (unlike everything else here), so the
+             three panel headers read as one consistent brand surface regardless of
+             light/dark mode. Not redefined in .app.light -- CSS vars inherit. */
+          --brand-header: #2e2d62;
+          --brand-header-text: #ffffff;
+          --brand-header-text-dim: rgba(255, 255, 255, 0.68);
           background:
             radial-gradient(circle at top right, rgba(43, 125, 224, 0.09), transparent 28%),
             radial-gradient(circle at bottom left, rgba(20, 184, 166, 0.07), transparent 24%),
@@ -4137,9 +4305,96 @@ export default function App() {
             var(--bg);
           color: var(--text);
           display: flex;
+          flex-direction: column;
           height: 100vh;
           position: relative;
           overflow: hidden;
+        }
+
+        .app-row {
+          flex: 1;
+          display: flex;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .top-header {
+          flex-shrink: 0;
+          display: flex;
+          align-items: stretch;
+          background: var(--brand-header);
+          color: var(--brand-header-text);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          z-index: 6;
+        }
+
+        .top-header-left,
+        .top-header-right {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 0 14px;
+          overflow: hidden;
+          flex-shrink: 0;
+          transition: width 0.2s ease;
+        }
+
+        .top-header-left {
+          border-right: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .top-header-right {
+          justify-content: space-between;
+          border-left: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .top-header-center {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10px 14px;
+          position: relative;
+        }
+
+        .top-header-theme-btn {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          border: none;
+          cursor: pointer;
+          border-radius: 999px;
+          padding: 6px 12px;
+          font-family: inherit;
+          font-size: 12px;
+          white-space: nowrap;
+          background: rgba(255, 255, 255, 0.12);
+          color: var(--brand-header-text);
+          transition: background 0.14s ease;
+        }
+
+        .top-header-theme-btn:hover {
+          background: rgba(255, 255, 255, 0.22);
+        }
+
+        .top-header .brand-name,
+        .top-header .brand-ink {
+          color: var(--brand-header-text);
+        }
+
+        .top-header .brand-slogan {
+          color: var(--brand-header-text-dim);
+        }
+
+        .top-header .icon-btn {
+          color: var(--brand-header-text-dim);
+        }
+
+        .top-header .icon-btn:hover {
+          background: rgba(255, 255, 255, 0.14);
+          color: var(--brand-header-text);
         }
 
         .app.light {
@@ -4209,13 +4464,6 @@ export default function App() {
           min-height: 100%;
         }
 
-        .sidebar-top {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 16px 14px 10px;
-          justify-content: space-between;
-        }
 
         .brand {
           display: flex;
@@ -4611,12 +4859,6 @@ export default function App() {
           transition: background 0.14s ease, color 0.14s ease;
         }
 
-        .composer-theme-btn {
-          flex-shrink: 0;
-          margin-bottom: 8px;
-          white-space: nowrap;
-        }
-
         .theme-chip:hover {
           background: var(--bg-soft);
           color: var(--text);
@@ -4665,6 +4907,51 @@ export default function App() {
           flex-direction: column;
           min-width: 0;
           min-height: 0;
+        }
+
+        .chat-mode-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          padding: 3px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.12);
+        }
+
+        .chat-mode-toggle-btn {
+          border: none;
+          background: transparent;
+          color: rgba(255, 255, 255, 0.7);
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 600;
+          padding: 6px 14px;
+          border-radius: 999px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.14s ease;
+        }
+
+        .chat-mode-toggle-btn.active {
+          background: #ffffff;
+          color: var(--brand-header);
+        }
+
+        .chat-mode-toggle-btn.disabled {
+          cursor: not-allowed;
+          opacity: 0.65;
+        }
+
+        .coming-soon-badge {
+          font-size: 9px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          background: rgba(255, 255, 255, 0.2);
+          padding: 2px 6px;
+          border-radius: 999px;
         }
 
         .chat-area {
@@ -5822,15 +6109,6 @@ export default function App() {
           box-sizing: border-box;
         }
 
-        .workspace-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 16px 14px 10px;
-          flex-shrink: 0;
-          font-size: 16px;
-          font-weight: 700;
-        }
 
         .workspace-body {
           flex: 1;
@@ -5849,14 +6127,22 @@ export default function App() {
           z-index: 6;
         }
 
-        .resize-handle:hover,
-        .resize-handle:active {
+        .resize-handle.handle-active {
           background: var(--accent-soft);
         }
 
         .sidebar.resizing,
         .workspace.resizing {
           transition: none;
+        }
+
+        .app.pane-resizing .top-header-left,
+        .app.pane-resizing .top-header-right {
+          transition: none;
+        }
+
+        .top-header .resize-handle.handle-active {
+          background: rgba(255, 255, 255, 0.25);
         }
 
         .app.pane-resizing {
@@ -5872,12 +6158,13 @@ export default function App() {
         .workspace-tool-header {
           margin-bottom: 10px;
           padding-bottom: 10px;
-          border-bottom: 1px solid var(--border);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.14);
           position: sticky;
           top: -14px;
           padding-top: 14px;
           margin-top: -14px;
-          background: color-mix(in srgb, var(--bg), var(--bg-elev) 38%);
+          background: var(--brand-header);
+          color: var(--brand-header-text);
           z-index: 3;
         }
 
@@ -5888,13 +6175,25 @@ export default function App() {
           margin-bottom: 4px;
         }
 
+        .workspace-tool-header .ghost-icon-btn {
+          color: rgba(255, 255, 255, 0.7);
+        }
+
+        .workspace-tool-header .ghost-icon-btn:hover {
+          background: rgba(255, 255, 255, 0.16);
+          color: #ffffff;
+        }
+
         .workspace-tool-title {
           display: flex;
           align-items: center;
           gap: 8px;
           font-size: 13px;
           font-weight: 700;
-          color: color-mix(in srgb, var(--tool-color, var(--accent)) 50%, var(--text));
+          /* Mixed toward white (not var(--text)) so each Tool's own accent color
+             still reads as a distinct hue against the now-fixed dark brand-header
+             background, regardless of the app's light/dark theme. */
+          color: color-mix(in srgb, var(--tool-color, var(--accent)) 55%, #ffffff);
         }
 
         .workspace-tabs {
@@ -7769,36 +8068,118 @@ export default function App() {
         }
       `}</style>
 
-      {dragOver && (
-        <div className="drag-overlay">
-          <div className="drag-overlay-inner">
-            <div className="drag-overlay-emoji">🔬</div>
-            <div>Drop a structure file to attach it to the current chat.</div>
-          </div>
-        </div>
-      )}
-
-      <aside
-        className={`sidebar${sbOpen ? "" : " closed"}${resizingPane === "sidebar" ? " resizing" : ""}`}
-        style={{ width: sbOpen ? sidebarWidth : 0, minWidth: sbOpen ? sidebarWidth : 0 }}
-      >
-        <div className="sidebar-inner" style={{ width: sidebarWidth }}>
-          <div className="sidebar-top">
-            <div className="brand">
-              <div className="brand-icon">
-                <LogoImage alt="Goldilocks logo" />
-              </div>
+      <header className="top-header">
+        <div className="top-header-left" style={{ width: sbOpen ? sidebarWidth : 64 }}>
+          <div className="brand">
+            <div className="brand-icon">
+              <LogoImage alt="Goldilocks logo" />
+            </div>
+            {sbOpen && (
               <div className="brand-copy">
                 <span className="brand-name brand-ink">Goldilocks</span>
                 <span className="brand-slogan">Towards Greener Computation</span>
               </div>
-            </div>
-            <button className="icon-btn" onClick={() => setSbOpen(false)}>
-              <MenuIcon />
+            )}
+          </div>
+          <button
+            className="icon-btn"
+            onClick={() => setSbOpen((open) => !open)}
+            title={sbOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <MenuIcon />
+          </button>
+        </div>
+
+        {sbOpen && (
+          <div
+            className={`resize-handle${hoveredHandle === "sidebar" || resizingPane === "sidebar" ? " handle-active" : ""}`}
+            onMouseEnter={() => setHoveredHandle("sidebar")}
+            onMouseLeave={() => setHoveredHandle(null)}
+            onMouseDown={(e) =>
+              startPaneResize(e, {
+                startWidth: sidebarWidth,
+                min: 200,
+                max: 480,
+                direction: "right",
+                onChange: updateSidebarWidth,
+                onStart: () => setResizingPane("sidebar"),
+                onEnd: () => setResizingPane(null),
+              })
+            }
+          />
+        )}
+
+        <div className="top-header-center">
+          <div className="chat-mode-toggle" role="tablist" aria-label="View">
+            <button type="button" className="chat-mode-toggle-btn active" role="tab" aria-selected="true">
+              Chat
+            </button>
+            <button
+              type="button"
+              className="chat-mode-toggle-btn disabled"
+              role="tab"
+              aria-selected="false"
+              disabled
+              title="Workbench view — coming soon"
+            >
+              Workbench <span className="coming-soon-badge">Soon</span>
             </button>
           </div>
+          <button
+            className="top-header-theme-btn"
+            onClick={() => updateTheme(resolvedTheme === "light" ? "dark" : "light")}
+          >
+            {resolvedTheme === "light" ? "☀ Day" : "☽ Night"}
+          </button>
+        </div>
 
-          <div className="sidebar-nav">
+        {toolsOpen && (
+          <div
+            className={`resize-handle${hoveredHandle === "tools" || resizingPane === "tools" ? " handle-active" : ""}`}
+            onMouseEnter={() => setHoveredHandle("tools")}
+            onMouseLeave={() => setHoveredHandle(null)}
+            onMouseDown={(e) =>
+              startPaneResize(e, {
+                startWidth: toolsWidth,
+                min: 320,
+                max: 700,
+                direction: "left",
+                onChange: updateToolsWidth,
+                onStart: () => setResizingPane("tools"),
+                onEnd: () => setResizingPane(null),
+              })
+            }
+          />
+        )}
+
+        <div className="top-header-right" style={{ width: toolsOpen ? toolsWidth : 64 }}>
+          {toolsOpen && <span className="brand-ink">Tools</span>}
+          <button
+            className="icon-btn"
+            onClick={() => setToolsOpen((open) => !open)}
+            title={toolsOpen ? "Collapse tools" : "Expand tools"}
+          >
+            <MenuIcon />
+          </button>
+        </div>
+      </header>
+
+      <div className="app-row">
+        {dragOver && (
+          <div className="drag-overlay">
+            <div className="drag-overlay-inner">
+              <div className="drag-overlay-emoji">🔬</div>
+              <div>Drop a structure file to attach it to the current chat.</div>
+            </div>
+          </div>
+        )}
+
+        <aside
+          className={`sidebar${sbOpen ? "" : " closed"}${resizingPane === "sidebar" ? " resizing" : ""}`}
+          style={{ width: sbOpen ? sidebarWidth : 0, minWidth: sbOpen ? sidebarWidth : 0 }}
+        >
+          <div className="sidebar-inner" style={{ width: sidebarWidth }}>
+            <div className="sidebar-nav">
             <button className="nav-row" onClick={() => newChat(null)}>
               <PlusIcon />
               <span>{t("new_chat")}</span>
@@ -7911,7 +8292,9 @@ export default function App() {
 
       {sbOpen && (
         <div
-          className="resize-handle"
+          className={`resize-handle${hoveredHandle === "sidebar" || resizingPane === "sidebar" ? " handle-active" : ""}`}
+          onMouseEnter={() => setHoveredHandle("sidebar")}
+          onMouseLeave={() => setHoveredHandle(null)}
           onMouseDown={(e) =>
             startPaneResize(e, {
               startWidth: sidebarWidth,
@@ -7938,7 +8321,6 @@ export default function App() {
               <MenuIcon />
             </button>
           )}
-
           <div className="body">
             <div className="chat-shell">
               <div className="chat-area" ref={chatAreaRef}>
@@ -8555,13 +8937,6 @@ export default function App() {
                             <SendIcon />
                           </button>
                         )}
-
-                        <button
-                          className="theme-chip composer-theme-btn"
-                          onClick={() => updateTheme(resolvedTheme === "light" ? "dark" : "light")}
-                        >
-                          {resolvedTheme === "light" ? "☀ Day" : "☽ Night"}
-                        </button>
                       </div>
                     </div>
 
@@ -8582,7 +8957,9 @@ export default function App() {
 
         {toolsOpen && (
           <div
-            className="resize-handle"
+            className={`resize-handle${hoveredHandle === "tools" || resizingPane === "tools" ? " handle-active" : ""}`}
+            onMouseEnter={() => setHoveredHandle("tools")}
+            onMouseLeave={() => setHoveredHandle(null)}
             onMouseDown={(e) =>
               startPaneResize(e, {
                 startWidth: toolsWidth,
@@ -8602,16 +8979,11 @@ export default function App() {
           style={{ width: toolsOpen ? toolsWidth : 0, minWidth: toolsOpen ? toolsWidth : 0 }}
         >
           <div className="workspace-inner" style={{ width: toolsWidth }}>
-            <div className="workspace-top">
-              <span className="brand-ink">Tools</span>
-              <button className="icon-btn" onClick={() => setToolsOpen(false)}>
-                <MenuIcon />
-              </button>
-            </div>
             <div className="workspace-body">{workspaceContent}</div>
           </div>
         </aside>
       </main>
+      </div>
 
       {settingsOpen && (
         <div className="modal-scrim">

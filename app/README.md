@@ -1,5 +1,14 @@
 # Goldilocks Web
 
+> ⚠️ **Stale clone instructions (2026-09-17)**: this file is a vendored copy of the old
+> `goldilocks-web` prototype's own README, kept here for reference since its code now lives
+> in this directory (`goldilocks-agent/app/`), not as a live remote. The GitHub repos
+> `stfc/goldilocks-web` / `junwen94/goldilocks-web` referenced below have since been
+> repurposed as the Goldilocks **ecosystem landing page** (see
+> [`goldilocks-ecosystem-design.md`](../docs/goldilocks-ecosystem-design.md), section 一) —
+> cloning them today gets you that static site, not this chat-first prototype. To work on
+> this code, use `goldilocks-agent`'s own repository instead.
+
 Goldilocks Web is a chat-first frontend prototype for computational materials research.
 
 It explores a ChatGPT-like interaction model with domain-specific workflows such as:

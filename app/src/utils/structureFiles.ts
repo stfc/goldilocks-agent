@@ -1,14 +1,28 @@
 export const WEAS_SUPPORTED_EXTS = new Set([".cif", ".cube", ".poscar", ".vasp", ".xsf", ".xyz", ".weas-json"]);
 
-function parseVector(line) {
+// A 3D vector (or lattice vector) as plain numbers -- mirrors the loose
+// array shape WEAS/ASE-style structure payloads use throughout this file.
+type Vec3 = [number, number, number];
+type Cell = [Vec3, Vec3, Vec3];
+
+// The structure payload shape consumed by WeasStructureViewport's
+// `applyStructurePayload` helper (from the `weas` package).
+export interface StructurePayload {
+  symbols: string[];
+  positions: number[][];
+  cell: Cell;
+  pbc: [boolean, boolean, boolean];
+}
+
+function parseVector(line: string): Vec3 {
   const values = line.trim().split(/\s+/).slice(0, 3).map(Number);
   if (values.length !== 3 || values.some((value) => !Number.isFinite(value))) {
     throw new Error("Invalid POSCAR lattice vector.");
   }
-  return values;
+  return values as Vec3;
 }
 
-function fracToCartesian(frac, cell) {
+function fracToCartesian(frac: number[], cell: Cell): Vec3 {
   return [
     frac[0] * cell[0][0] + frac[1] * cell[1][0] + frac[2] * cell[2][0],
     frac[0] * cell[0][1] + frac[1] * cell[1][1] + frac[2] * cell[2][1],
@@ -16,30 +30,30 @@ function fracToCartesian(frac, cell) {
   ];
 }
 
-export function normalizeStructureExtension(ext = "") {
+export function normalizeStructureExtension(ext: string = ""): string {
   return ext.toLowerCase();
 }
 
-export function getRawFileExtension(fileName = "") {
+export function getRawFileExtension(fileName: string = ""): string {
   const trimmed = fileName.trim();
   const lastDot = trimmed.lastIndexOf(".");
   if (lastDot <= 0 || lastDot === trimmed.length - 1) return "";
   return trimmed.slice(lastDot).toLowerCase();
 }
 
-export function formatStructureLabel(ext = "") {
+export function formatStructureLabel(ext: string = ""): string {
   const normalized = normalizeStructureExtension(ext);
   if (!normalized) return "FILE";
   if (normalized === ".weas-json") return "MLIP";
   return normalized.replace(".", "").toUpperCase();
 }
 
-export function getStructureFenceLanguage(ext = "") {
+export function getStructureFenceLanguage(ext: string = ""): string {
   const normalized = normalizeStructureExtension(ext);
   return normalized ? normalized.replace(".", "") : "text";
 }
 
-export function parsePoscarToPayload(content) {
+export function parsePoscarToPayload(content: string): StructurePayload {
   const lines = content
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -51,7 +65,9 @@ export function parsePoscarToPayload(content) {
 
   const rawScale = Number(lines[1]);
   const scale = Number.isFinite(rawScale) && rawScale !== 0 ? rawScale : 1;
-  const cell = [lines[2], lines[3], lines[4]].map(parseVector).map((vector) => vector.map((value) => value * scale));
+  const cell = [lines[2], lines[3], lines[4]]
+    .map(parseVector)
+    .map((vector) => vector.map((value) => value * scale)) as Cell;
 
   let cursor = 5;
   const maybeSymbols = lines[cursor].split(/\s+/);
@@ -81,8 +97,8 @@ export function parsePoscarToPayload(content) {
 
   cursor += 1;
 
-  const outSymbols = [];
-  const positions = [];
+  const outSymbols: string[] = [];
+  const positions: number[][] = [];
 
   for (let speciesIndex = 0; speciesIndex < counts.length; speciesIndex += 1) {
     const symbol = symbols[speciesIndex] ?? `X${speciesIndex + 1}`;
@@ -113,16 +129,16 @@ export function parsePoscarToPayload(content) {
   };
 }
 
-function looksLikeCif(content = "") {
+function looksLikeCif(content: string = ""): boolean {
   const trimmed = content.trim();
   return /^data_/im.test(trimmed) || /_cell_length_a|_atom_site_/im.test(trimmed);
 }
 
-function looksLikeXsf(content = "") {
+function looksLikeXsf(content: string = ""): boolean {
   return /PRIMVEC|PRIMCOORD|BEGIN_BLOCK_DATAGRID_3D/i.test(content);
 }
 
-function looksLikeXyz(content = "") {
+function looksLikeXyz(content: string = ""): boolean {
   const lines = content.trim().split(/\r?\n/);
   if (lines.length < 3) return false;
   const count = Number.parseInt(lines[0], 10);
@@ -131,7 +147,7 @@ function looksLikeXyz(content = "") {
   return firstAtom.length >= 4 && firstAtom.slice(1, 4).every((value) => Number.isFinite(Number(value)));
 }
 
-function looksLikeCube(content = "") {
+function looksLikeCube(content: string = ""): boolean {
   const lines = content.trim().split(/\r?\n/);
   if (lines.length < 6) return false;
   const header = lines[2]?.trim().split(/\s+/).map(Number) ?? [];
@@ -141,7 +157,7 @@ function looksLikeCube(content = "") {
   return header.length >= 4 && axisA.length >= 4 && axisB.length >= 4 && axisC.length >= 4;
 }
 
-export function inferStructureExtension(fileName = "", content = "") {
+export function inferStructureExtension(fileName: string = "", content: string = ""): string {
   const lowerName = fileName.trim().toLowerCase();
   if (lowerName === "poscar" || lowerName === "contcar") return ".poscar";
 

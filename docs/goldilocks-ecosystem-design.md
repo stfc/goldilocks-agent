@@ -1,7 +1,7 @@
 # goldilocks 生态设计
 
 > **状态**：设计讨论中。活文档。
-> **最后更新**：2026-09-11
+> **最后更新**：2026-09-17（补：生态门户 `goldilocks-web`，见「一」节末）
 > **这份文档管什么**：**四个包之间**的事——边界、依赖方向、共享词汇、发布纪律。
 > 单个包自己的设计各自成篇（见下表），**这里不重复，只留接缝**。
 
@@ -130,6 +130,23 @@ flowchart TB
 `core/kmesh.py` 从 goldilocks-data 搬过来，两边同名同职责。
 **data 定义了阶梯与 `MIN_K_DISTANCE` 的语义**（因为数据集是它生成的），
 core 必须跟上——**这正是跨仓库漂移的高发区，见第三节**。
+
+### 生态门户：goldilocks-web（不在图 1 里）
+
+图 1 没有画它——它**不产生依赖边**，不属于上面这张"谁调用谁"的图。
+它是**独立于四个包之外的第五个仓库**（`github.com/stfc/goldilocks-web`，静态站点，
+GitHub Pages 部署），职责是**生态的门户/落地页**：一个入口，把访问者分流到
+data / ml / core / agent 各自的 GitHub、docs，以及 core 的 Workbench 和 agent 的下载页。
+
+⚠️ **别和图 1 里 core 节点上标的 `UI["CLI · HTTP · web"]` 搞混**——那是
+**core 自己内嵌的 Workbench**（真的会调 core API 的 React 应用），是"四个包"依赖链的
+一部分。`goldilocks-web` 在它**之外**：纯静态、不调用任何包的 API，只放链接。
+两者只是名字都带"web"，职责完全不同。
+
+现状（2026-09-17）：`stfc/goldilocks-web` 自 2025-04 起只有一个占位页
+（"this is a placeholder"），一年多没人动过。落地页内容已经在
+`junwen94/goldilocks-web` 的 `landing-page` 分支上补齐并推送，
+还没有合并回 `stfc/goldilocks-web`——待有 push 权限的人开 PR。
 
 ---
 
@@ -566,6 +583,9 @@ desktop app 确认了**表单**路线，不是终端对话路线。
       → **agent「九之一」的"传路径不传内容"从"便宜的保险"升级为"已知的必经之路"**；
       **十七之七**那条证伪条件也更稳（**表单**路线，不是终端对话）
 - ✅ **生态是四个包**：core · ml · data · agent
+- ✅ **另有一个门户仓库 `goldilocks-web`，不算在"四个包"里**（2026-09-17）——
+      静态落地页，不参与依赖链，也不是图 1 里 core 的 `UI` 节点（那是 core 自己的
+      Workbench）。见「一」节末新增小节
 - ✅ **依赖方向单向**：`data → ml → core`，agent 在 core 之上。
       ⚠️ **2026-09-10 补**：**`agent → ml` 也是一条真依赖边**（不只是"产物流向"）——
       agent 要调 `ml.serving.releases()` 拿对话引擎的文件与 digest。**仍然无环。**
@@ -624,3 +644,17 @@ desktop app 确认了**表单**路线，不是终端对话路线。
       词汇不是一份，不发明跨仓库单一版本号——`ml` 是 target/contract 名字的定义之家，
       `core` 是 setting/fact 名字的定义之家，各自发各自的版本（派生哈希，不手工递增）；
       谁消费谁的词汇就在自己那边钉期望值，不匹配就报错。agent 两套都用，两边都查
+- [ ] ⚠️ **"最终上传 STFC cloud 的 docker/部署配置放哪"——v2 目前没有答案**（2026-09-17）。
+      **v1 有明确先例**：`old-goldilcoks-webapp/docs/stfc-deployment.md`，STFC cloud（VPN-only
+      内网 beta）的部署模板（`vllm.service` / `goldilocks-api.service` / `nginx.conf` 等）
+      放在 `goldilocks-web/deploy/stfc-cloud/`——**且 v1 那套完全不用 Docker**，是
+      systemd + uv venv + 系统 nginx。
+      **v2 现状**：core 和 agent **各自有一个 Dockerfile**，互不相关，都不对应这件事——
+      core 的 CI（`ci.yml`）只 build 来跑 e2e，**不 push 到任何 registry**；
+      agent 的 CI（`docker-publish.yml`）**会** push，但目标是 `ghcr.io/junwen94/goldilocks-agent`
+      （个人 fork 命名空间，不是 `stfc`），且它的 `docker-compose.yml` 绑定
+      `127.0.0.1:8080`，是给**本地桌面**自跑用的，不是对外服务。
+      **没有任何地方是 v1 `goldilocks-web/deploy/stfc-cloud/` 的 v2 对应物**。
+      待决：这件事该不该复用 `goldilocks-web`（历史同名先例）？该跑哪个包（大概率是
+      core 的 Workbench，呼应「core 自己跑在 STFC web team 的机器上」那句）？
+      形式还是 Docker，还是像 v1 一样走 systemd？

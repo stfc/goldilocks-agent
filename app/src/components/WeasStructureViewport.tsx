@@ -1,13 +1,39 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { WEAS } from "weas";
 import "../../node_modules/weas/dist/style.css";
 import {
   WEAS_SUPPORTED_EXTS,
   formatStructureLabel,
   normalizeStructureExtension,
   parsePoscarToPayload,
-} from "../utils/structureFiles.js";
+  type StructurePayload,
+} from "../utils/structureFiles";
 
-function getErrorMessage(error, ext) {
+// A structure file as attached in chat: raw text content plus the extension
+// used to pick a parser (see `parseStructurePayload` below).
+export interface StructureSource {
+  ext: string;
+  content: string;
+}
+
+// The subset of the `weas` module's named exports this viewport actually
+// uses. The parse* helpers aren't in weas's shipped .d.ts signatures we rely
+// on beyond "takes a string, returns something applyStructurePayload can
+// consume", so they're typed loosely here rather than reverse-engineered.
+interface WeasHelpers {
+  applyStructurePayload: (viewer: WEAS, payload: unknown) => void;
+  parseCIF: (content: string) => unknown;
+  parseCube: (content: string) => unknown;
+  parseXSF: (content: string) => unknown;
+  parseXYZ: (content: string) => unknown;
+}
+
+interface LegendEntry {
+  symbol: string;
+  color: string;
+}
+
+function getErrorMessage(error: unknown, ext: string): string {
   const normalized = normalizeStructureExtension(ext);
   if (!WEAS_SUPPORTED_EXTS.has(normalized)) {
     return `${formatStructureLabel(ext)} is not supported by the WEAS viewer. Try CIF, XYZ, XSF, CUBE, POSCAR, or VASP.`;
@@ -17,7 +43,7 @@ function getErrorMessage(error, ext) {
     : `Failed to load ${formatStructureLabel(ext)} in the WEAS viewer.`;
 }
 
-function parseStructurePayload(source, helpers) {
+function parseStructurePayload(source: StructureSource, helpers: WeasHelpers): StructurePayload | unknown {
   const normalizedExt = normalizeStructureExtension(source.ext);
 
   if (normalizedExt === ".weas-json") return JSON.parse(source.content);
@@ -30,14 +56,14 @@ function parseStructurePayload(source, helpers) {
   throw new Error(`Unsupported file extension: ${normalizedExt}`);
 }
 
-export default function WeasStructureViewport({ source, height = 320 }) {
-  const hostRef = useRef(null);
-  const viewerRef = useRef(null);
-  const helpersRef = useRef(null);
+export default function WeasStructureViewport({ source, height = 320 }: { source: StructureSource | null; height?: number }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewerRef = useRef<WEAS | null>(null);
+  const helpersRef = useRef<WeasHelpers | null>(null);
   const [isBooting, setIsBooting] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [viewerError, setViewerError] = useState("");
-  const [legendEntries, setLegendEntries] = useState([]);
+  const [legendEntries, setLegendEntries] = useState<LegendEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,7 +144,10 @@ export default function WeasStructureViewport({ source, height = 320 }) {
         viewerRef.current.render();
         if (!cancelled) {
           setViewerError("");
-          const settings = viewerRef.current?.avr?.atomManager?.settings ?? {};
+          // `atomManager` is `any` in weas's own .d.ts (see WeasHelpers
+          // comment above); cast to avoid the Object.entries(any)-infers-
+          // unknown-values quirk on the destructured `data` below.
+          const settings = (viewerRef.current?.avr?.atomManager?.settings ?? {}) as Record<string, any>;
           const entries = Object.entries(settings).map(([symbol, data]) => ({
             symbol,
             color: data.color ? `#${data.color.getHexString()}` : "#888",
@@ -186,7 +215,7 @@ export default function WeasStructureViewport({ source, height = 320 }) {
   );
 }
 
-const viewportWrapStyle = (height) => ({
+const viewportWrapStyle = (height: number): CSSProperties => ({
   position: "relative",
   width: "100%",
   flex: "1 1 0",
@@ -199,14 +228,14 @@ const viewportWrapStyle = (height) => ({
   boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
 });
 
-const hostStyle = {
+const hostStyle: CSSProperties = {
   display: "block",
   width: "100%",
   height: "100%",
   minHeight: 260,
 };
 
-const loadingOverlayStyle = {
+const loadingOverlayStyle: CSSProperties = {
   position: "absolute",
   inset: 0,
   display: "flex",
@@ -216,7 +245,7 @@ const loadingOverlayStyle = {
   backdropFilter: "blur(4px)",
 };
 
-const overlayContentStyle = {
+const overlayContentStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
@@ -226,30 +255,30 @@ const overlayContentStyle = {
   textAlign: "center",
 };
 
-const iconStyle = {
+const iconStyle: CSSProperties = {
   fontSize: 28,
   lineHeight: 1,
 };
 
-const titleStyle = {
+const titleStyle: CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   color: "var(--text, #0f172a)",
 };
 
-const copyStyle = {
+const copyStyle: CSSProperties = {
   maxWidth: 360,
   fontSize: 12,
   lineHeight: 1.7,
   color: "var(--muted, #475569)",
 };
 
-const hintStyle = {
+const hintStyle: CSSProperties = {
   fontSize: 11,
   color: "var(--subtle, #64748b)",
 };
 
-const legendStyle = {
+const legendStyle: CSSProperties = {
   position: "absolute",
   bottom: 12,
   right: 12,
@@ -264,13 +293,13 @@ const legendStyle = {
   pointerEvents: "none",
 };
 
-const legendRowStyle = {
+const legendRowStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
 };
 
-const legendDotStyle = {
+const legendDotStyle: CSSProperties = {
   display: "inline-block",
   width: 10,
   height: 10,
@@ -278,7 +307,7 @@ const legendDotStyle = {
   flexShrink: 0,
 };
 
-const legendLabelStyle = {
+const legendLabelStyle: CSSProperties = {
   fontSize: 13,
   fontWeight: 500,
   color: "#1e293b",
