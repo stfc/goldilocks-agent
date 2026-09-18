@@ -6248,13 +6248,15 @@ export default function App() {
         .workspace-tool-header {
           margin-bottom: 10px;
           padding-bottom: 10px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+          border-bottom: 1px solid var(--border);
           position: sticky;
           top: -14px;
           padding-top: 14px;
           margin-top: -14px;
-          background: var(--brand-header);
-          color: var(--brand-header-text);
+          /* Matches .workspace's own background exactly (not the fixed
+             brand-header blue) so the sticky header blends into the panel
+             instead of standing out as its own colored bar. */
+          background: color-mix(in srgb, var(--bg), var(--bg-elev) 38%);
           z-index: 3;
         }
 
@@ -6265,25 +6267,13 @@ export default function App() {
           margin-bottom: 4px;
         }
 
-        .workspace-tool-header .ghost-icon-btn {
-          color: rgba(255, 255, 255, 0.7);
-        }
-
-        .workspace-tool-header .ghost-icon-btn:hover {
-          background: rgba(255, 255, 255, 0.16);
-          color: #ffffff;
-        }
-
         .workspace-tool-title {
           display: flex;
           align-items: center;
           gap: 8px;
           font-size: 13px;
           font-weight: 700;
-          /* Mixed toward white (not var(--text)) so each Tool's own accent color
-             still reads as a distinct hue against the now-fixed dark brand-header
-             background, regardless of the app's light/dark theme. */
-          color: color-mix(in srgb, var(--tool-color, var(--accent)) 55%, #ffffff);
+          color: color-mix(in srgb, var(--tool-color, var(--accent)) 55%, var(--text));
         }
 
         .workspace-tabs {
