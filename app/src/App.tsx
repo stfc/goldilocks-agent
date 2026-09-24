@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -28,7 +28,7 @@ type CSSPropertiesWithVars = CSSProperties & Record<`--${string}`, string | numb
 // --- Core recurring data shapes -------------------------------------------
 // These mirror the informal shapes already implied by createSession(),
 // the `role`/`content` literals sent to the backend, and the per-Tool
-// `modeState` slices (DEFAULT_MLIP_STATE/DEFAULT_DFT_STATE/etc. below).
+// `modeState` slices (DEFAULT_MLIP_STATE/DEFAULT_STRUCTURE_SEARCH_STATE/etc. below).
 // Backend payloads (`content`, `modeState[...]`, tool-call results) are
 // still genuinely dynamic JSON from goldilocks-agent's Python side and the
 // underlying LLM/tool responses, so fields that carry those stay `any`/
@@ -63,10 +63,13 @@ export interface Project {
 }
 
 // One chat/conversation. `modeState` is a per-Tool bag (keyed by Tool id,
-// e.g. "ml-analysis"/"dft-workbench"/"structure-search") whose shape is
-// defined per-Tool by DEFAULT_MLIP_STATE/DEFAULT_DFT_STATE/etc. above and
-// below -- deliberately untyped here (`Record<string, any>`) rather than a
-// union of all of them, since each Tool only ever reads its own key.
+// e.g. "ml-analysis"/"structure-search") whose shape is defined per-Tool by
+// DEFAULT_MLIP_STATE/DEFAULT_STRUCTURE_SEARCH_STATE/etc. above and below --
+// deliberately untyped here (`Record<string, any>`) rather than a union of
+// all of them, since each Tool only ever reads its own key. DFT Workbench
+// doesn't have an entry any more (2026-09-24): its real setup/results live
+// entirely inside the embedded goldilocks-core Workbench's own workspace
+// object (`coreWorkspace`), not in `modeState`.
 export interface Session {
   id: string;
   title: string;
@@ -177,8 +180,6 @@ const TOOL_CALL_TO_UI_TOOL = {
   run_mlip_equation_of_state: "ml-analysis",
   run_mlip_neb: "ml-analysis",
   run_mlip_phonons: "ml-analysis",
-  dft_explain: "dft-workbench",
-  dft_generate: "dft-workbench",
 };
 
 // Only MACE is actually wired up (janus-core supports more, but exposing a
@@ -227,8 +228,6 @@ const DFT_HPC_GROUPS = [
     ],
   },
 ];
-
-const DFT_ADVISOR_MODELS = [];
 
 const MODEL_TAG_COLORS = {
   default: "#2b7de0",
@@ -327,14 +326,12 @@ const TOOL_ICON_SOURCES = {
   aiida: "/mode-icons/aiida.png",
 };
 
-// Real vocabulary, replacing a fake v1 catalog (17 codes, 19 tasks, 10 UK
-// HPC machines, none of which exist in real goldilocks-core v2 -- see
-// design doc twelve / implementation plan Step 2, 2026-09-15 redone).
-// `codes`/`tasks` are hardcoded here (not fetched) only because
-// goldilocks-core's CLI has no single command returning them the way
-// HTTP/MCP's `/capabilities` does (goldilocks-core#62) -- `--task`'s own
-// argparse `choices` is the source for the 4 task ids below, so this list
-// only grows when core's CLI actually adds one, not from a guess.
+// Real vocabulary (design doc twelve / implementation plan Step 2,
+// 2026-09-15). Only Beyond DFT's own decorative "Code" picker still uses
+// this -- DFT Workbench's real code/task selection now lives entirely
+// inside the embedded goldilocks-core Workbench (2026-09-24, see
+// CoreWorkbenchTree/CoreWorkbenchTabs), which reads it straight from core,
+// not from a hardcoded list here.
 const DFT_CODE_GROUPS = [
   {
     label: "Codes",
@@ -343,36 +340,6 @@ const DFT_CODE_GROUPS = [
     ],
   },
 ];
-
-const DFT_TASK_GROUPS = [
-  {
-    label: "Tasks",
-    items: [
-      { id: "scf_single_point", label: "Single-point SCF", desc: "One self-consistent-field calculation, no relaxation.", recommended: true },
-      { id: "dos", label: "Density of states", desc: "scf, then a denser nscf pass, then dos.x -- three steps sharing one prefix/outdir." },
-      { id: "relax", label: "Ionic relaxation", desc: "One pw.x run, calculation='relax': scf plus ionic-position optimisation." },
-      { id: "vc-relax", label: "Variable-cell relaxation", desc: "One pw.x run, calculation='vc-relax': scf plus ionic and cell relaxation together." },
-    ],
-  },
-];
-
-// `session.modeState["dft-workbench"]`'s shape -- same per-chat fix as MLIP/
-// structure-search. `overrides` mirrors goldilocks-core's own sparse
-// `--set`/`overrides: {}` model (advisors auto-resolve everything not
-// listed here) -- not a flat copy of every setting like the old fake
-// per-setting pickers were. Must be declared after DFT_CODE_GROUPS/
-// DFT_TASK_GROUPS (2026-09-15: an earlier version of this file declared it
-// *before* them, a temporal-dead-zone ReferenceError at module load that
-// blanked the whole app -- both are plain top-level `const`s evaluated in
-// file order, not hoisted the way function declarations are).
-const DEFAULT_DFT_STATE = {
-  code: DFT_CODE_GROUPS[0].items[0].id,
-  task: DFT_TASK_GROUPS[0].items[0].id,
-  hpc: "", // free-text override -- hpc_profiles[] isn't reachable via CLI, goldilocks-core#62
-  overrides: {}, // { settingKey: value }
-  explainResult: null, // { records, warnings } from the last /api/dft/explain
-  runResult: null, // { files } from the last /api/dft/run
-};
 
 const BEYOND_DFT_METHOD_GROUPS = [
   {
@@ -1369,6 +1336,122 @@ function StructureUploadControl({
   );
 }
 
+// The real embedded goldilocks-core Workbench tree -- shared verbatim by
+// both DFT Workbench's full-page detail view (unmodified) and its inline
+// side panel (wrapped in CoreWorkbenchTabs below). Always the same
+// `workspace` instance (App()'s own `coreWorkspace`, created once) so
+// switching between inline and full-page never drops or duplicates state.
+function CoreWorkbenchTree({ workspace }: { workspace: any }) {
+  return (
+    <MantineProvider
+      theme={workbenchTheme}
+      colorSchemeManager={coreColorSchemeManager}
+      defaultColorScheme="light"
+    >
+      <CoreWorkspaceProvider workspace={workspace}>
+        <CoreWorkbenchContent />
+      </CoreWorkspaceProvider>
+    </MantineProvider>
+  );
+}
+
+// Inline side-panel presentation of the same embedded goldilocks-core
+// Workbench the full-page detail view renders via CoreWorkbenchTree
+// directly -- one card visible at a time, tab-switcher style, instead of
+// the full-page's side-by-side grid.
+//
+// goldilocks-workbench's published npm package only exports the whole
+// grid (`WorkbenchContent`/`App`, both from `./App`) -- verified 2026-09-24
+// against `app/node_modules/goldilocks-workbench`: its `package.json`
+// `exports` map lists only `"."` and `"./style.css"`, and `dist-lib` ships
+// no separate per-card JS chunk (the `cards/*.d.ts` files present there are
+// leftover `tsc -b` declaration artifacts for modules bundled into
+// `index.js`, not independently importable -- even a deep import bypassing
+// `exports` would have no matching module to resolve). So individual cards
+// (Structure/Analysis/Advisors/Bundle/Magnetic Orderings) can't be
+// rendered separately -- this instead renders the real, unmodified grid
+// and uses a MutationObserver to discover its actual `.workbench-card`
+// children (kicker + title text read straight from the DOM via `.card-kicker`
+// and the card header's `<h2>`, not hardcoded -- see goldilocks-core/web's
+// own `cards/*.tsx`), so the tab bar can never drift from whatever core
+// actually ships, including the conditional 5th Magnetic Orderings card.
+// Exactly one `.workbench-card` is shown at a time via CSS
+// (`.workbench-card--active`, see App.css/the inline <style> block's
+// `.workbench-embed-tabs` rules) -- a pragmatic layout override, not a
+// second copy of the Workbench's own logic.
+//
+// Reuses the app's existing `.workspace-tabs`/`.workspace-tab` classes
+// (the same tab-bar look the old CLI panel's own Setup/Inputs/Checks tabs,
+// and Beyond DFT's own tab, already use) rather than inventing a third tab
+// visual style.
+function CoreWorkbenchTabs({ workspace }: { workspace: any }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [cards, setCards] = useState<{ id: string; kicker: string; title: string }[]>([]);
+  // The user's explicit tab click, if any -- NOT the effective active card
+  // (see `activeCardId` below). Kept separate so "which card renders" stays
+  // a plain derived value computed during render (no effect needed to
+  // reconcile it against `cards` whenever the DOM discovery below changes
+  // the list, e.g. the 5th Magnetic Orderings card appearing/disappearing).
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const activeCardId = (selectedCardId && cards.some((card) => card.id === selectedCardId))
+    ? selectedCardId
+    : (cards[0]?.id ?? null);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    function sync() {
+      const nodes = Array.from(
+        container!.querySelectorAll<HTMLElement>(".workbench-grid > .workbench-card")
+      );
+      const next = nodes.map((node, index) => ({
+        id: node.id || `workbench-card-${index}`,
+        kicker: node.querySelector(".card-kicker")?.textContent?.trim() ?? "",
+        title: node.querySelector(".card-header h2")?.textContent?.trim() ?? "",
+      }));
+      setCards((prev) => {
+        const unchanged = prev.length === next.length
+          && prev.every((card, index) => card.id === next[index].id && card.title === next[index].title);
+        return unchanged ? prev : next;
+      });
+    }
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll<HTMLElement>(".workbench-grid > .workbench-card").forEach((node) => {
+      node.classList.toggle("workbench-card--active", node.id === activeCardId);
+    });
+  }, [activeCardId, cards]);
+
+  return (
+    <div className="workbench-embed-tabs">
+      {cards.length > 0 && (
+        <div className="workspace-tabs">
+          {cards.map((card) => (
+            <button
+              key={card.id}
+              type="button"
+              className={`workspace-tab${card.id === activeCardId ? " active" : ""}`}
+              onClick={() => setSelectedCardId(card.id)}
+            >
+              {card.kicker ? `${card.kicker} · ${card.title}` : card.title}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="workbench-embed-tabs-body" ref={containerRef}>
+        <CoreWorkbenchTree workspace={workspace} />
+      </div>
+    </div>
+  );
+}
+
 function getToolById(id) {
   return TOOLS.find((tool) => tool.id === id) ?? null;
 }
@@ -1449,29 +1532,17 @@ export default function App() {
   // below (mirrors structure-search's per-chat state fix).
   const [openMlipPicker, setOpenMlipPicker] = useState(null);
   const [mlipCalcLoading, setMlipCalcLoading] = useState(false);
+  // Still shared with structure-search's/Beyond DFT's own dropdowns below,
+  // despite the name -- DFT Workbench no longer has any pickers of its own
+  // (2026-09-24: the CLI-based Setup tab that used to own this name is
+  // gone, see CoreWorkbenchTree/CoreWorkbenchTabs).
   const [openDftPicker, setOpenDftPicker] = useState(null);
-  const [dftLoading, setDftLoading] = useState(false);
-  // Fetched once via /api/dft/capabilities (goldilocks-core#62, closed
-  // 2026-09-15 -- `goldilocks capabilities --json` now gives codes/tasks/
-  // settings/pseudopotential_tables/hpc_profiles/facts/warnings-catalog in
-  // one call), not per-chat: it's static per goldilocks-core checkout, same
-  // for every session.
-  const [dftCapabilities, setDftCapabilities] = useState(null);
-  const [dftCapabilitiesLoading, setDftCapabilitiesLoading] = useState(false);
-  const [dftCapabilitiesError, setDftCapabilitiesError] = useState(null);
-  // "add an override" dropdown's own transient selection -- not part of
-  // session state, resets after each add.
-  const [dftOverrideDraftKey, setDftOverrideDraftKey] = useState("");
-  const [dftBundleLoading, setDftBundleLoading] = useState(false);
-  const [dftBundleError, setDftBundleError] = useState(null);
-  // DFT Workbench's own `code`/`task`/`hpc`/`overrides`/results are
-  // session-scoped below (see `dftState`/`updateDftState`) -- these two
-  // are Beyond DFT's own decorative, deliberately-decoupled state (see
-  // `DEFAULT_DFT_STATE`'s comment).
+  // Beyond DFT's own decorative, deliberately-unbacked state -- DFT
+  // Workbench's real setup/results now live entirely inside the embedded
+  // goldilocks-core Workbench, not in any React state here.
   const [beyondDftCode, setBeyondDftCode] = useState(DFT_CODE_GROUPS[0].items[0].id);
   const [beyondDftMachine, setBeyondDftMachine] = useState(DFT_HPC_GROUPS[0].items[0].id);
   const [selectedBeyondDftMethod, setSelectedBeyondDftMethod] = useState("gw");
-  const [selectedDftAdvisorModel, setSelectedDftAdvisorModel] = useState(null);
   // sessionFiles/attachedFiles moved to session.modeState (see below,
   // near structureSearchState) -- they used to leak across chats the same
   // way structure-search's formula box did.
@@ -1501,7 +1572,6 @@ export default function App() {
   const modelRef = useRef(null);
   const widgetsAreaRef = useRef(null);
   const chatAreaRef = useRef(null);
-  const dftPickerRef = useRef(null);
 
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
@@ -1609,60 +1679,7 @@ export default function App() {
   const mlipNebFmax = mlipState.mlipNebFmax;
   const setMlipNebFmax = (v) => updateMlipState("mlipNebFmax", v);
 
-  // DFT Workbench panel state -- same per-chat fix, same reasoning as MLIP
-  // (2026-09-15, redone against goldilocks-core's real v2 CLI -- see
-  // DEFAULT_DFT_STATE's own comment for why `overrides` is sparse, not a
-  // flat copy of every setting).
-  const dftState = session?.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE;
-  function updateDftState(key, updaterOrValue) {
-    updateCurrentSession((current) => {
-      const prev = current.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE;
-      const nextValue =
-        typeof updaterOrValue === "function" ? updaterOrValue(prev[key]) : updaterOrValue;
-      return {
-        ...current,
-        modeState: { ...current.modeState, "dft-workbench": { ...prev, [key]: nextValue } },
-      };
-    });
-  }
-  const dftCode = dftState.code;
-  const setDftCode = (v) => updateDftState("code", v);
-  const dftTask = dftState.task;
-  const setDftTask = (v) => updateDftState("task", v);
-  const dftHpc = dftState.hpc;
-  const setDftHpc = (v) => updateDftState("hpc", v);
-  const dftOverrides = dftState.overrides;
-  const setDftOverrides = (v) => updateDftState("overrides", v);
-  const dftExplainResult = dftState.explainResult;
-  const setDftExplainResult = (v) => updateDftState("explainResult", v);
-  const dftRunResult = dftState.runResult;
-  const setDftRunResult = (v) => updateDftState("runResult", v);
-
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
-  // DFT Workbench's own Code/Task groups are derived from the real fetched
-  // /api/dft/capabilities payload now that goldilocks-core#62 closed --
-  // DFT_CODE_GROUPS/DFT_TASK_GROUPS stay as the loading/error fallback (and
-  // Beyond DFT's own decorative picker keeps using them unconditionally,
-  // since that panel has no real backing at all, see BEYOND_DFT_METHOD_GROUPS).
-  const dftCodeGroupsFromCapabilities = dftCapabilities
-    ? [{ label: "Codes", items: dftCapabilities.codes.map((c) => ({ id: c.id, label: c.name, desc: `Tasks: ${c.tasks.join(", ")}`, recommended: true })) }]
-    : DFT_CODE_GROUPS;
-  const dftTaskGroupsFromCapabilities = dftCapabilities
-    ? [{ label: "Tasks", items: dftCapabilities.tasks.map((t) => ({ id: t.id, label: t.name, desc: t.description, recommended: t.id === "scf_single_point" })) }]
-    : DFT_TASK_GROUPS;
-  // Same WorkspacePicker component as Code/Task (not a raw <select>) so the
-  // whole Setup form reads as one consistent control family -- "" means
-  // "auto", real when exactly one HPC profile is installed.
-  const dftHpcGroupsFromCapabilities = [{
-    label: "HPC profile",
-    items: [
-      { id: "", label: "Auto", desc: "Only valid when exactly one HPC profile is installed.", recommended: (dftCapabilities?.hpc_profiles?.length ?? 0) <= 1 },
-      ...(dftCapabilities?.hpc_profiles ?? []).map((h) => ({ id: h.id, label: h.name, desc: `${h.scheduler} · partitions: ${h.partitions.join(", ")}` })),
-    ],
-  }];
-  const dftCodeMeta = findOptionInGroups(dftCodeGroupsFromCapabilities, dftCode) ?? dftCodeGroupsFromCapabilities[0].items[0];
-  const dftTaskMeta = findOptionInGroups(dftTaskGroupsFromCapabilities, dftTask) ?? dftTaskGroupsFromCapabilities[0].items[0];
-  const dftHpcMeta = findOptionInGroups(dftHpcGroupsFromCapabilities, dftHpc) ?? dftHpcGroupsFromCapabilities[0].items[0];
   const beyondDftCodeMeta = findOptionInGroups(DFT_CODE_GROUPS, beyondDftCode) ?? DFT_CODE_GROUPS[0].items[0];
   const beyondDftMachineMeta = findOptionInGroups(DFT_HPC_GROUPS, beyondDftMachine) ?? DFT_HPC_GROUPS[0].items[0];
   const selectedBeyondDftMethodMeta = findOptionInGroups(BEYOND_DFT_METHOD_GROUPS, selectedBeyondDftMethod) ?? BEYOND_DFT_METHOD_GROUPS[1].items[0];
@@ -1759,39 +1776,12 @@ export default function App() {
         setShowStructureViewer(false);
         setShowFilesPanel(false);
       }
-      if (dftPickerRef.current && !dftPickerRef.current.contains(event.target)) setOpenDftPicker(null);
     };
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  useEffect(() => {
-    if (activeTool?.id !== "dft-workbench" || (session?.rightPanelView ?? activeTool.defaultPanel) !== "setup") {
-      setOpenDftPicker(null);
-    }
-  }, [activeTool, session?.rightPanelView]);
-
-  // Fetched once, lazily, the first time the DFT Workbench panel is
-  // actually opened -- not on app load, since most sessions may never
-  // touch this Tool and goldilocks-core might not even be configured.
-  useEffect(() => {
-    if (activeTool?.id !== "dft-workbench" || dftCapabilities || dftCapabilitiesLoading) return;
-    setDftCapabilitiesLoading(true);
-    setDftCapabilitiesError(null);
-    fetch("/api/dft/capabilities")
-      .then(async (resp) => {
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.detail || `HTTP ${resp.status}`);
-        }
-        return resp.json();
-      })
-      .then(setDftCapabilities)
-      .catch((err) => setDftCapabilitiesError(err.message))
-      .finally(() => setDftCapabilitiesLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool?.id]);
 
   function replaceSession(id, updater) {
     setSessions((prev) => prev.map((item) => (item.id === id ? updater(item) : item)));
@@ -2235,82 +2225,6 @@ export default function App() {
     setSessionFiles((prev) => [...prev, file]);
   }
 
-  function dftRequestBody(struct) {
-    return {
-      structure_content: struct.content,
-      structure_name: struct.name,
-      code: dftCode,
-      task: dftTask,
-      hpc: dftHpc || null,
-      overrides: Object.keys(dftOverrides).length > 0 ? dftOverrides : null,
-    };
-  }
-
-  async function dftPostJson(path, body) {
-    const resp = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
-    return resp.json();
-  }
-
-  // One button, both results: goldilocks-core's `explain` (analysis +
-  // advisors, for the Explain tab) and `run` (real generated files, for
-  // the Inputs tab) are two separate CLI calls under the hood, but from
-  // the user's side "Generate" should produce everything at once, not
-  // require a second click into a tab to populate it.
-  async function handleDftGenerate() {
-    const struct = chatStructures[safeViewerIdx];
-    if (!struct) return;
-    setDftLoading(true);
-    const body = dftRequestBody(struct);
-    const [explainOutcome, runOutcome] = await Promise.allSettled([
-      dftPostJson("/api/dft/explain", body),
-      dftPostJson("/api/dft/run", body),
-    ]);
-    setDftExplainResult(
-      explainOutcome.status === "fulfilled" ? explainOutcome.value : { error: explainOutcome.reason.message }
-    );
-    setDftRunResult(
-      runOutcome.status === "fulfilled" ? runOutcome.value : { error: runOutcome.reason.message }
-    );
-    setDftLoading(false);
-  }
-
-  async function handleDftDownloadBundle() {
-    const struct = chatStructures[safeViewerIdx];
-    if (!struct) return;
-    setDftBundleLoading(true);
-    try {
-      const resp = await fetch("/api/dft/bundle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dftRequestBody(struct)),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-      const blob = await resp.blob();
-      const stem = struct.name.replace(/\.[^.]+$/, "");
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${stem}-bundle.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setDftBundleError(err.message);
-    } finally {
-      setDftBundleLoading(false);
-    }
-  }
-
   // Shared by the search panel's button and the element-picker's "search"
   // shortcut. Takes an explicit `sessionId` (captured by the caller before
   // any `await`) rather than reading `session` at completion time -- a slow
@@ -2655,18 +2569,16 @@ export default function App() {
           title: nextTitle,
           project_id: targetSession.projectId,
           tool: targetSession.tool ?? null,
-          // Real ids ("dft-workbench"/"ml-analysis", not "dft"/"mlip") -- the
+          // Real ids ("beyond-dft"/"ml-analysis", not "dft"/"mlip") -- the
           // old checks here never matched anything, so this was always
           // `null` regardless of which Tool was active (2026-09-15 fix).
-          // Still accepted-but-unused server-side until DFT/MLIP get an
-          // LLM tool node (design doc Step 3, not this pass) -- see
-          // ChatRequest.workspace_state in server.py.
-          workspace_state: targetSession.tool === "dft-workbench" ? {
-            code: dftCode,
-            task: dftTask,
-            hpc: dftHpc || null,
-            overrides: dftOverrides,
-          } : targetSession.tool === "beyond-dft" ? {
+          // Still accepted-but-unused server-side until MLIP gets an LLM
+          // tool node of its own beyond confirmation gating (design doc
+          // Step 3, not this pass) -- see ChatRequest.workspace_state in
+          // server.py. DFT Workbench no longer has an entry here (2026-09-24:
+          // its real setup/results now live in the embedded goldilocks-core
+          // Workbench, which talks to core directly, not through chat).
+          workspace_state: targetSession.tool === "beyond-dft" ? {
             method: selectedBeyondDftMethod,
           } : targetSession.tool === "ml-analysis" ? {
             model: selectedMlipModel?.id ?? null,
@@ -2786,23 +2698,6 @@ export default function App() {
                   "ml-analysis": {
                     ...(current.modeState?.["ml-analysis"] ?? DEFAULT_MLIP_STATE),
                     mlipResultsList: [resultEntry, ...(current.modeState?.["ml-analysis"]?.mlipResultsList ?? [])],
-                  },
-                },
-              }));
-            } else if (payload.tool === "dft_explain" || payload.tool === "dft_generate") {
-              // Same "panel is a second consumer" reasoning as above --
-              // `payload.result` here is always the *full* RunResult (with
-              // pseudo/* included), never the LLM-trimmed copy, since
-              // graph.py's call_tool streams `panel_output` over this event
-              // and reserves `model_dump_for_llm()` for the LLM's own copy.
-              const key = payload.tool === "dft_explain" ? "explainResult" : "runResult";
-              replaceSession(targetSessionId, (current) => ({
-                ...current,
-                modeState: {
-                  ...current.modeState,
-                  "dft-workbench": {
-                    ...(current.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE),
-                    [key]: payload.result,
                   },
                 },
               }));
@@ -3300,99 +3195,15 @@ export default function App() {
     }
 
     if (activeTool.id === "dft-workbench") {
-      // Grouped once per render from the flat /api/dft/capabilities
-      // settings[] list -- 49 items, cheap, no memoization needed.
-      const allSettings = dftCapabilities?.settings ?? [];
-      const settingsByGroup = [];
-      for (const spec of allSettings) {
-        let bucket = settingsByGroup.find((b) => b.group === spec.group);
-        if (!bucket) { bucket = { group: spec.group, specs: [] }; settingsByGroup.push(bucket); }
-        bucket.specs.push(spec);
-      }
-      const overrideCount = Object.keys(dftOverrides).length;
-      const pseudoTables = dftCapabilities?.pseudopotential_tables ?? [];
-      const hpcProfiles = dftCapabilities?.hpc_profiles ?? [];
-
-      function setOverrideEnabled(spec, enabled) {
-        setDftOverrides((prev) => {
-          const next = { ...prev };
-          if (enabled) next[spec.key] = spec.default ?? (spec.type === "number" ? 0 : "");
-          else delete next[spec.key];
-          return next;
-        });
-      }
-      function setOverrideValue(spec, raw) {
-        let value = raw;
-        if (spec.type === "number") value = raw === "" ? "" : Number(raw);
-        else if (spec.type === "boolean") value = raw === "true";
-        else if (spec.type === "array") {
-          try { value = JSON.parse(raw); } catch { return; } // wait for valid JSON before storing
-        }
-        setDftOverrides((prev) => ({ ...prev, [spec.key]: value }));
-      }
-      function renderOverrideInput(spec) {
-        if (spec.key === "pseudo_table_id" && pseudoTables.length > 0) {
-          return (
-            <select className="workspace-override-input" value={dftOverrides[spec.key] ?? ""} onChange={(e) => setOverrideValue(spec, e.target.value)}>
-              <option value="" disabled>Choose a pseudopotential table…</option>
-              {pseudoTables.map((p) => (
-                <option key={p.id} value={p.id}>{p.provider} · {p.functional} · {p.accuracy}{p.default ? " (default)" : ""}</option>
-              ))}
-            </select>
-          );
-        }
-        if (spec.enum) {
-          return (
-            <select className="workspace-override-input" value={dftOverrides[spec.key]} onChange={(e) => setOverrideValue(spec, e.target.value)}>
-              {spec.enum.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
-          );
-        }
-        if (spec.type === "boolean") {
-          return (
-            <select className="workspace-override-input" value={String(dftOverrides[spec.key])} onChange={(e) => setOverrideValue(spec, e.target.value)}>
-              <option value="true">true</option>
-              <option value="false">false</option>
-            </select>
-          );
-        }
-        return (
-          <input
-            className="workspace-override-input"
-            type={spec.type === "number" ? "number" : "text"}
-            value={dftOverrides[spec.key] ?? ""}
-            onChange={(e) => setOverrideValue(spec, e.target.value)}
-          />
-        );
-      }
-
-      // "Analysis + advisors" rendering for the Explain tab -- one row per
-      // `records{}` entry (a structure fact like is_metal, or a
-      // settings-group like cutoffs/k_sampling), showing who resolved it
-      // (source: human/ml/llm/heuristic) and with what value/reason.
-      function renderRecordValue(value) {
-        if (value === null || value === undefined) return <span style={{ color: "var(--muted)" }}>—</span>;
-        if (typeof value !== "object") return <span>{String(value)}</span>;
-        const entries = Object.entries(value).filter(([k]) => k !== "warnings");
-        if (entries.length === 0) return <span style={{ color: "var(--muted)" }}>—</span>;
-        return (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {entries.map(([k, v]) => (
-              <div key={k} style={{ display: "flex", gap: 6, fontSize: "0.8rem" }}>
-                <span style={{ color: "var(--muted)" }}>{k}:</span>
-                <span>{typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}</span>
-              </div>
-            ))}
-          </div>
-        );
-      }
-      // Cast to Record<string, any>: TS's Object.entries overload infers the
-      // value type as `unknown` (rather than `any`) when given a bare `any`
-      // argument, which would make every `record.*` access below an error.
-      const recordEntries = dftExplainResult?.records
-        ? Object.entries(dftExplainResult.records as Record<string, any>)
-        : [];
-
+      // The old CLI-based Setup/Inputs/Checks tabs (goldilocks-agent's own
+      // dft_workbench subprocess-per-call integration) were deleted
+      // 2026-09-24 in favor of embedding goldilocks-core's own real
+      // Workbench UI here too -- the exact same content the full-page
+      // detail view renders (renderToolDetailPage), just presented as
+      // one-card-at-a-time tabs instead of a side-by-side grid (see
+      // CoreWorkbenchTabs). Same shared `coreWorkspace` instance either
+      // way, so switching between inline and full-page never drops or
+      // duplicates state.
       return (
         <div className="workspace-content">
           <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
@@ -3419,197 +3230,7 @@ export default function App() {
               <a href="https://github.com/stfc/goldilocks-core" target="_blank" rel="noreferrer">goldilocks-core</a>
             </div>
           </div>
-          <div className="workspace-tabs">
-            <button className={`workspace-tab${panelView === "setup" ? " active" : ""}`} onClick={() => setRightPanelView("setup")}>{t("tab_setup")}</button>
-            <button className={`workspace-tab${panelView === "inputs" ? " active" : ""}`} onClick={() => setRightPanelView("inputs")}>{t("tab_inputs")}</button>
-            <button className={`workspace-tab${panelView === "checks" ? " active" : ""}`} onClick={() => setRightPanelView("checks")}>{t("tab_checks")}</button>
-          </div>
-          {panelView === "setup" && (
-            <div className="workspace-stack">
-              <div className="workspace-section" ref={dftPickerRef}>
-                <div className="workspace-form">
-                  <SimpleSelect
-                    label="Structure"
-                    value={safeViewerIdx}
-                    items={chatStructures.length === 0
-                      ? [{ id: -1, label: t("no_structure_in_chat") }]
-                      : chatStructures.map((s, i) => ({ id: i, label: s.name }))
-                    }
-                    isOpen={openDftPicker === "dft-struct"}
-                    onToggle={() => setOpenDftPicker((p) => p === "dft-struct" ? null : "dft-struct")}
-                    onSelect={(id) => { setViewerIdx(id); setOpenDftPicker(null); }}
-                    disabled={chatStructures.length === 0}
-                  />
-                  <StructureUploadControl onFile={readFile} />
-                  <WorkspacePicker
-                    label="Code"
-                    value={dftCode}
-                    option={dftCodeMeta}
-                    groups={dftCodeGroupsFromCapabilities}
-                    isOpen={openDftPicker === "code"}
-                    onToggle={() => setOpenDftPicker((current) => (current === "code" ? null : "code"))}
-                    onSelect={(value) => { setDftCode(value); setOpenDftPicker(null); }}
-                  />
-                  <WorkspacePicker
-                    label="Task"
-                    value={dftTask}
-                    option={dftTaskMeta}
-                    groups={dftTaskGroupsFromCapabilities}
-                    isOpen={openDftPicker === "task"}
-                    onToggle={() => setOpenDftPicker((current) => (current === "task" ? null : "task"))}
-                    onSelect={(value) => { setDftTask(value); setOpenDftPicker(null); }}
-                  />
-                  <WorkspacePicker
-                    label="HPC profile"
-                    value={dftHpc}
-                    option={dftHpcMeta}
-                    groups={dftHpcGroupsFromCapabilities}
-                    isOpen={openDftPicker === "hpc"}
-                    onToggle={() => setOpenDftPicker((current) => (current === "hpc" ? null : "hpc"))}
-                    onSelect={(value) => { setDftHpc(value); setOpenDftPicker(null); }}
-                  />
-                  {dftCapabilitiesLoading && hpcProfiles.length === 0 && (
-                    <div className="workspace-hint">Loading real HPC profiles from goldilocks-core…</div>
-                  )}
-                  <SimpleSelect
-                    label="Advisor model"
-                    value={selectedDftAdvisorModel}
-                    items={DFT_ADVISOR_MODELS.length > 0
-                      ? DFT_ADVISOR_MODELS.map((m) => ({ id: m.id, label: m.label }))
-                      : [{ id: "__none__", label: "Provided by goldilocks-core" }]}
-                    isOpen={DFT_ADVISOR_MODELS.length > 0 && openDftPicker === "dft-advisor"}
-                    onToggle={DFT_ADVISOR_MODELS.length > 0 ? () => setOpenDftPicker((p) => p === "dft-advisor" ? null : "dft-advisor") : undefined}
-                    onSelect={DFT_ADVISOR_MODELS.length > 0 ? (id) => { setSelectedDftAdvisorModel(id); setOpenDftPicker(null); } : undefined}
-                    disabled={DFT_ADVISOR_MODELS.length === 0}
-                  />
-                </div>
-              </div>
-
-              <button className="mlip-run-btn" disabled={dftLoading || chatStructures.length === 0} onClick={handleDftGenerate}>
-                {dftLoading ? "Generating…" : "Generate"}
-              </button>
-              {(dftExplainResult?.error || dftRunResult?.error) && (
-                <div className="check-item error">{dftExplainResult?.error || dftRunResult?.error}</div>
-              )}
-              <div className="workspace-hint">
-                One click runs goldilocks-core's real analysis+advisors and
-                generates the recommended input, pseudopotential, and
-                submission script -- see the Inputs and Explain tabs.
-              </div>
-
-              <div className="workspace-section">
-                <div className="workspace-task-builder-header">
-                  <span className="workspace-task-builder-label">
-                    Settings overrides {overrideCount > 0 ? `(${overrideCount} set)` : ""}
-                  </span>
-                </div>
-                <div className="workspace-hint">
-                  goldilocks-core's advisors auto-resolve every setting from
-                  the structure -- add an override only for the ones you
-                  disagree with.
-                </div>
-                {dftCapabilitiesLoading && <div className="workspace-hint">Loading real settings from goldilocks-core...</div>}
-                {dftCapabilitiesError && <div className="check-item error">{dftCapabilitiesError}</div>}
-                {allSettings.length > 0 && (
-                  <select
-                    className="workspace-override-input"
-                    style={{ width: "100%" }}
-                    value={dftOverrideDraftKey}
-                    onChange={(e) => {
-                      const key = e.target.value;
-                      if (!key) return;
-                      const spec = allSettings.find((s) => s.key === key);
-                      if (spec) setOverrideEnabled(spec, true);
-                      setDftOverrideDraftKey("");
-                    }}
-                  >
-                    <option value="">+ Add an override…</option>
-                    {settingsByGroup.map(({ group, specs }) => {
-                      const available = specs.filter((s) => !Object.hasOwn(dftOverrides, s.key));
-                      if (available.length === 0) return null;
-                      return (
-                        <optgroup key={group} label={group}>
-                          {available.map((s) => (
-                            <option key={s.key} value={s.key}>{s.key}{s.unit ? ` (${s.unit})` : ""}</option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  </select>
-                )}
-                {overrideCount === 0 && (
-                  <div className="workspace-hint">No overrides added -- goldilocks-core's defaults will be used.</div>
-                )}
-                {Object.keys(dftOverrides).map((key) => {
-                  const spec = allSettings.find((s) => s.key === key);
-                  if (!spec) return null;
-                  return (
-                    <div key={key} className="workspace-settings-row" title={spec.description}>
-                      <div className="workspace-settings-row-label">{spec.group} · {spec.key}{spec.unit ? ` (${spec.unit})` : ""}</div>
-                      <div className="workspace-settings-row-control">
-                        {renderOverrideInput(spec)}
-                        <button className="ghost-icon-btn" onClick={() => setOverrideEnabled(spec, false)} title="Remove override">
-                          <CloseIcon />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {panelView === "inputs" && (
-            <div className="workspace-stack">
-              <button
-                className="mlip-run-btn"
-                disabled={dftBundleLoading || chatStructures.length === 0}
-                onClick={handleDftDownloadBundle}
-              >
-                {dftBundleLoading ? "Preparing bundle…" : "⬇ Download bundle (.zip)"}
-              </button>
-              {dftBundleError && <div className="check-item error">{dftBundleError}</div>}
-              {dftRunResult?.error && <div className="check-item error">{dftRunResult.error}</div>}
-              {dftRunResult?.files && Object.entries(dftRunResult.files as Record<string, any>).map(([name, content]) => (
-                <details key={name} className="workspace-section" open={!name.startsWith("pseudo/")}>
-                  <summary className="workspace-title" style={{ cursor: "pointer" }}>
-                    {name}
-                    {name.startsWith("pseudo/") ? " (pseudopotential)" : name === "submit.sh" ? " (submission script)" : ""}
-                  </summary>
-                  <pre className="workspace-code"><code>{content}</code></pre>
-                </details>
-              ))}
-              {!dftRunResult && <div className="workspace-hint">{t("generated_preview")} -- click Generate on the Setup tab to run goldilocks-core for real.</div>}
-            </div>
-          )}
-          {panelView === "checks" && (
-            <div className="workspace-stack">
-              <div className="workspace-section">
-                <div className="workspace-title">Analysis &amp; advisors</div>
-                {dftExplainResult?.error && <div className="check-item error">{dftExplainResult.error}</div>}
-                {recordEntries.map(([key, record]) => (
-                  <div key={key} className="workspace-settings-row">
-                    <div className="workspace-settings-row-label" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <span>{key}</span>
-                      <span className={`workspace-source-badge${record.status !== "resolved" ? " error" : ""}`}>
-                        {record.status}{record.source ? ` · ${record.source}` : ""}
-                      </span>
-                    </div>
-                    {record.status === "resolved" && renderRecordValue(record.value)}
-                    {record.reason && <span className="workspace-hint">{record.reason}</span>}
-                    {record.blocked_by && <span className="workspace-hint">Blocked by: {record.blocked_by}</span>}
-                  </div>
-                ))}
-                {!dftExplainResult && <div className="workspace-hint">Click Generate on the Setup tab to see goldilocks-core's real analysis and advisors here.</div>}
-              </div>
-              <div className="workspace-section">
-                <div className="workspace-title">{t("validation")}</div>
-                {dftExplainResult?.warnings?.map((w, i) => (
-                  <div key={i} className={`check-item${w.level === "warning" ? " error" : ""}`}>{w.message}</div>
-                ))}
-                {dftExplainResult?.warnings?.length === 0 && <div className="check-item">No warnings from the last Generate run.</div>}
-              </div>
-            </div>
-          )}
+          <CoreWorkbenchTabs workspace={coreWorkspace} />
         </div>
       );
     }
@@ -4274,26 +3895,17 @@ export default function App() {
   }
 
   // Full-page detail body for whichever Tool is active. DFT Workbench is
-  // special-cased to the real embedded goldilocks-core Workbench (the exact
-  // MantineProvider/CoreWorkspaceProvider/CoreWorkbenchContent block that
-  // used to live under the old top-level "Workbench" viewMode branch) --
-  // every other Tool reuses `workspaceContent` (the same renderWorkspace()
-  // output already rendered beside chat by the inline side panel) at full
-  // width instead of designing a second copy of that content.
+  // special-cased to the real embedded goldilocks-core Workbench, unmodified
+  // (all 4/5 cards side-by-side via CoreWorkbenchTree) -- the inline side
+  // panel (renderWorkspace's own "dft-workbench" branch) renders the exact
+  // same tree, just wrapped in CoreWorkbenchTabs for a narrow width. Every
+  // other Tool reuses `workspaceContent` (the same renderWorkspace() output
+  // already rendered beside chat by the inline side panel) at full width
+  // instead of designing a second copy of that content.
   function renderToolDetailPage() {
     if (!activeTool) return renderToolsOverview();
     if (activeTool.id === "dft-workbench") {
-      return (
-        <MantineProvider
-          theme={workbenchTheme}
-          colorSchemeManager={coreColorSchemeManager}
-          defaultColorScheme="light"
-        >
-          <CoreWorkspaceProvider workspace={coreWorkspace}>
-            <CoreWorkbenchContent />
-          </CoreWorkspaceProvider>
-        </MantineProvider>
-      );
+      return <CoreWorkbenchTree workspace={coreWorkspace} />;
     }
     return <div className="tool-detail-content">{workspaceContent}</div>;
   }
@@ -5178,8 +4790,12 @@ export default function App() {
            don't lean on that spacing as much. revert (not unset -- margin/
            padding aren't inherited properties, so unset would just reapply
            the initial 0 value) hands the property back to the normal
-           cascade, i.e. Mantine's own layered rules or the UA default. */
-        .workbench-embed * {
+           cascade, i.e. Mantine's own layered rules or the UA default.
+           .workbench-embed-tabs (the inline side-panel's tabbed embed,
+           see CoreWorkbenchTabs) is the exact same goldilocks-workbench DOM
+           and needs the identical fix. */
+        .workbench-embed *,
+        .workbench-embed-tabs * {
           margin: revert;
           padding: revert;
         }
@@ -5195,7 +4811,11 @@ export default function App() {
         .workbench-embed button,
         .workbench-embed input,
         .workbench-embed textarea,
-        .workbench-embed select {
+        .workbench-embed select,
+        .workbench-embed-tabs button,
+        .workbench-embed-tabs input,
+        .workbench-embed-tabs textarea,
+        .workbench-embed-tabs select {
           font-family: unset;
         }
 
@@ -5225,6 +4845,41 @@ export default function App() {
              explicitly instead of relying on margin: auto to imply it. */
           align-self: center;
           width: 100%;
+        }
+
+        /* Inline side panel's tabbed embed (CoreWorkbenchTabs) -- renders
+           the same, real, unmodified .workbench-grid as .workbench-embed
+           above, but the side panel is narrow (a WorkspacePicker-width
+           aside, not a full app row), so instead of sizing the grid to fill
+           a row and letting it scroll horizontally, this collapses it to a
+           single block-flow column and shows exactly one .workbench-card at
+           a time -- CoreWorkbenchTabs toggles .workbench-card--active in
+           the DOM based on its own tab-bar state. The side panel's own
+           .workspace-body ancestor already scrolls vertically, so cards
+           just flow to their natural content height here rather than each
+           trying to own a fixed/calc'd height or a second nested scroll. */
+        .workbench-embed-tabs {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+
+        .workbench-embed-tabs .workbench-grid {
+          display: block;
+          height: auto;
+          width: 100%;
+          max-width: none;
+          margin: 0;
+          padding: 0;
+        }
+
+        .workbench-embed-tabs .workbench-card {
+          display: none;
+          height: auto;
+        }
+
+        .workbench-embed-tabs .workbench-card.workbench-card--active {
+          display: flex;
         }
 
         .chat-area {
