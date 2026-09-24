@@ -11,7 +11,7 @@ RUN npm run build
 # --- runtime ------------------------------------------------------------
 # Ships uv + Python 3.12 preinstalled (matches pyproject.toml's
 # requires-python = ">=3.12"). `uv` stays in the final image (not discarded
-# after this build) because MLIP Playground and DFT Workspace both shell
+# after this build) because MLIP Playground and DFT Workbench both shell
 # out to `uv run --project <path> ...` at runtime, not just at build time.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 WORKDIR /app

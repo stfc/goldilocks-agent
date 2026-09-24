@@ -42,7 +42,7 @@ from goldilocks_agent.config import (
     write_experience_level,
 )
 from goldilocks_agent.graph import build_graph, open_checkpointer
-from goldilocks_agent.tools import dft_workspace, mlip_playground, structure_search
+from goldilocks_agent.tools import dft_workbench, mlip_playground, structure_search
 from goldilocks_agent.tools.structure_search import jarvis_cache
 
 logger = logging.getLogger(__name__)
@@ -518,33 +518,33 @@ async def _run_dft(coro):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-_capabilities_cache: dft_workspace.CapabilitiesResult | None = None
+_capabilities_cache: dft_workbench.CapabilitiesResult | None = None
 
 
 @app.get("/api/dft/capabilities")
-async def dft_capabilities() -> dft_workspace.CapabilitiesResult:
+async def dft_capabilities() -> dft_workbench.CapabilitiesResult:
     """Cached in-process -- static per core checkout (codes/tasks/
     pseudopotential_tables/hpc_profiles/settings/facts/warnings-catalog
     don't change between calls the way explain/run's *results* do)."""
     global _capabilities_cache
     if _capabilities_cache is None:
-        _capabilities_cache = await _run_dft(dft_workspace.capabilities())
+        _capabilities_cache = await _run_dft(dft_workbench.capabilities())
     return _capabilities_cache
 
 
 @app.post("/api/dft/inspect")
-async def dft_inspect(request: DftInspectRequest) -> dft_workspace.InspectResult:
+async def dft_inspect(request: DftInspectRequest) -> dft_workbench.InspectResult:
     return await _run_dft(
-        dft_workspace.inspect_structure(
+        dft_workbench.inspect_structure(
             request.structure_content, request.structure_name
         )
     )
 
 
 @app.post("/api/dft/explain")
-async def dft_explain(request: DftExplainRequest) -> dft_workspace.ExplainResult:
+async def dft_explain(request: DftExplainRequest) -> dft_workbench.ExplainResult:
     return await _run_dft(
-        dft_workspace.explain(
+        dft_workbench.explain(
             request.structure_content,
             request.structure_name,
             request.code,
@@ -556,9 +556,9 @@ async def dft_explain(request: DftExplainRequest) -> dft_workspace.ExplainResult
 
 
 @app.post("/api/dft/run")
-async def dft_run(request: DftRunRequest) -> dft_workspace.RunResult:
+async def dft_run(request: DftRunRequest) -> dft_workbench.RunResult:
     return await _run_dft(
-        dft_workspace.run(
+        dft_workbench.run(
             request.structure_content,
             request.structure_name,
             request.code,
@@ -574,7 +574,7 @@ async def dft_bundle(request: DftRunRequest) -> Response:
     """Real archive bytes for the Inputs tab's one-click download -- not
     the text-preview dict `/api/dft/run` returns."""
     zip_bytes = await _run_dft(
-        dft_workspace.run_bundle(
+        dft_workbench.run_bundle(
             request.structure_content,
             request.structure_name,
             request.code,

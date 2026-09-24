@@ -62,7 +62,7 @@ requires_mlip_enabled = pytest.mark.skipif(
 
 requires_core_cli = pytest.mark.skipif(
     not os.environ.get("GOLDILOCKS_CORE_PATH"),
-    reason="GOLDILOCKS_CORE_PATH not configured -- DFT Workspace opt-in, see config.py",
+    reason="GOLDILOCKS_CORE_PATH not configured -- DFT Workbench opt-in, see config.py",
 )
 
 _TEST_NACL_CIF = """\
@@ -274,9 +274,9 @@ def test_llm_node_calls_find_in_databases_tool() -> None:
 @requires_anthropic_key
 @requires_core_cli
 def test_llm_node_calls_dft_explain_tool() -> None:
-    """First real exercise of DFT Workspace's LLM tool-calling path (added
+    """First real exercise of DFT Workbench's LLM tool-calling path (added
     2026-09-16, previously panel-only) -- no confirmation gate (see
-    `dft_workspace/tool.py`'s own docstring for why), so this mirrors
+    `dft_workbench/tool.py`'s own docstring for why), so this mirrors
     find_in_databases's test shape above, not MLIP's pause-for-confirmation
     one below."""
     graph = build_graph()

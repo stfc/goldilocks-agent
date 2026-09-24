@@ -57,7 +57,7 @@ What's on by default:
   when you actually use it.
 
 What needs extra setup:
-- **DFT Workspace** needs your own [goldilocks-core](https://github.com/stfc/goldilocks-core)
+- **DFT Workbench** needs your own [goldilocks-core](https://github.com/stfc/goldilocks-core)
   checkout. Edit `docker-compose.yml`: uncomment the `agent` service's
   `GOLDILOCKS_CORE_PATH` environment variable and the matching volume mount
   under `volumes:`, pointing them at your checkout, then
@@ -101,6 +101,6 @@ Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and Node.js
 5. Open <http://localhost:5173>.
 
 That's enough for chat and **Find in Databases**. **MLIP Playground**, **DFT
-Workspace**, and cloud model providers are all opt-in extras -- see the
+Workbench**, and cloud model providers are all opt-in extras -- see the
 README's [Configuration](../README.md#configuration) section for the
 specific environment variables each one needs.

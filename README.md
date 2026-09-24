@@ -9,7 +9,7 @@ submission).
 > **Status**: real, working chat + tool-calling for three of the six
 > planned Tools -- **Find in Databases** (Materials Project/Materials
 > Cloud/NOMAD/JARVIS search), **MLIP Playground** (local MACE calculations
-> via `janus-core`), and **DFT Workspace** (real Quantum ESPRESSO input
+> via `janus-core`), and **DFT Workbench** (real Quantum ESPRESSO input
 > generation via `goldilocks-core`). **Beyond DFT**/**Post Analysis** are
 > partial (panel-only, no real backing yet beyond Post Analysis's phonon
 > visualizer). **AiiDA** is not built. See
@@ -22,9 +22,9 @@ submission).
 
 ```
 src/goldilocks_agent/   Python package (LangGraph orchestration, local HTTP/SSE server, Tools)
-app/                    React/Vite frontend (chat + tool-box panel, plus an embedded
-                        Workbench tab published from goldilocks-core/web -- see issue #1)
-                        -- not "web": see design doc §13
+app/                    React/Vite frontend (chat + Tools panel; DFT Workbench's own
+                        full-page detail embeds goldilocks-core/web's published UI --
+                        see issue #1) -- not "web": see design doc §13
 mlip-cli/               Own project (own pyproject.toml), just a `janus-core[mace]` dependency pin --
                         keeps torch/mace out of goldilocks-agent's own env; MLIP Playground shells
                         out to `janus` (janus-core's own CLI) inside it, see tools/mlip_playground/
@@ -93,7 +93,7 @@ inside `./mlip-cli/`, so this needs to be opt-in):
 export GOLDILOCKS_AGENT_MLIP_ENABLED=1
 ```
 
-**Optional: DFT Workspace** (real Quantum ESPRESSO input generation via
+**Optional: DFT Workbench** (real Quantum ESPRESSO input generation via
 `goldilocks-core`) -- point at your own `goldilocks-core` checkout (this
 repo doesn't vendor it, since it's your own separate, actively-developed
 project):
@@ -119,19 +119,22 @@ in Databases' JARVIS results) -- the app is usable immediately, JARVIS
 results just start working once it finishes. Run it manually ahead of
 time with `uv run poe fetch-jarvis-cache` if you'd rather not wait.
 
-**Workbench tab**: the app's "Workbench" tab embeds goldilocks-core's own
-Workbench UI, published as an npm package and installed into `app/`'s
-dependencies (see [issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)).
-It talks to core's HTTP server directly, not via the CLI path
-`GOLDILOCKS_CORE_PATH` configures above -- start that server too:
+**DFT Workbench's full-page detail**: expand the Tools panel's own
+expand-all-tools button (top right, next to the Tools panel toggle) to see
+all six Tools full-page, then expand DFT Workbench there -- its detail page
+embeds goldilocks-core's own Workbench UI, published as an npm package and
+installed into `app/`'s dependencies (see
+[issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)). It talks
+to core's HTTP server directly, not via the CLI path `GOLDILOCKS_CORE_PATH`
+configures above -- start that server too:
 
 ```bash
 cd /path/to/goldilocks-core && uv run poe serve   # core backend on http://127.0.0.1:8000
 ```
 
 `app/vite.config.js` proxies `/capabilities`, `/run`, `/explain`, etc. to
-that port; without it running, the Workbench tab still renders but shows a
-"Request failed" banner instead of real data. The published-package
+that port; without it running, DFT Workbench's detail page still renders but
+shows a "Request failed" banner instead of real data. The published-package
 pipeline is currently a local tarball
 (`app/vendor/goldilocks-workbench-0.0.0.tgz`, rebuilt from `core/web` via
 `npm run build:lib && npm pack`) rather than a real registry -- see issue #1
@@ -154,7 +157,7 @@ on its own.
   first, since it's real local compute (`GOLDILOCKS_AGENT_MLIP_ENABLED`
   must be set). Phonon results link to a "Phonon visualizer" -- also
   reachable from Post Analysis for a `band.yaml` from anywhere else.
-- **DFT Workspace**: pick a structure, code, and task, optionally override
+- **DFT Workbench**: pick a structure, code, and task, optionally override
   specific settings, then Generate -- goldilocks-core's real advisors
   resolve everything else and produce a downloadable Quantum ESPRESSO
   input bundle (input file, pseudopotential, SLURM submission script). The

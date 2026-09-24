@@ -106,7 +106,7 @@ def mlip_cli_path() -> Path:
     return Path(__file__).resolve().parents[2] / "mlip-cli"
 
 
-# DFT Workspace's subprocess calls (tools/dft_workspace/client.py) shell out
+# DFT Workbench's subprocess calls (tools/dft_workbench/client.py) shell out
 # to `goldilocks` (the CLI, not HTTP/MCP -- see that package's docstring for
 # why) inside this checkout. Unlike janus-api, goldilocks-core is *not*
 # vendored here -- it's the user's own separate, actively-developed project,

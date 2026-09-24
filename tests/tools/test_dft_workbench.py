@@ -1,4 +1,4 @@
-"""DFT Workspace (design doc 十二 · implementation plan Step 2,
+"""DFT Workbench (design doc 十二 · implementation plan Step 2,
 2026-09-15 redone against goldilocks-core's real v2 CLI instead of v1
 assumptions, then redone again the same day once goldilocks-core#62
 landed -- see that package's own docstring for why CLI, not HTTP/MCP).
@@ -21,7 +21,7 @@ import os
 
 import pytest
 
-from goldilocks_agent.tools.dft_workspace import (
+from goldilocks_agent.tools.dft_workbench import (
     CapabilitiesResult,
     ExplainResult,
     ResolvedField,
@@ -35,7 +35,7 @@ from goldilocks_agent.tools.dft_workspace import (
 
 requires_core_cli = pytest.mark.skipif(
     not os.environ.get("GOLDILOCKS_CORE_PATH"),
-    reason="GOLDILOCKS_CORE_PATH not configured -- DFT Workspace opt-in, see config.py",
+    reason="GOLDILOCKS_CORE_PATH not configured -- DFT Workbench opt-in, see config.py",
 )
 
 # Captured live 2026-09-15 from `goldilocks explain
