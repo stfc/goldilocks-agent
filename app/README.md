@@ -14,7 +14,7 @@ Goldilocks Web is a chat-first frontend prototype for computational materials re
 It explores a ChatGPT-like interaction model with domain-specific workflows such as:
 
 - `Structure Match`
-- `DFT Workspace`
+- `DFT Workbench`
 - `MLIP Playground`
 
 This repository currently contains a React + Vite prototype intended for UI and product exploration.
