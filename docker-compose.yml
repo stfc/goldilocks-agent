@@ -47,7 +47,7 @@ services:
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
-      # Optional, for DFT Workspace -- mount your own goldilocks-core
+      # Optional, for DFT Workbench -- mount your own goldilocks-core
       # checkout and set GOLDILOCKS_CORE_PATH above to match:
       # - /path/to/your/goldilocks-core:/goldilocks-core
     restart: unless-stopped

@@ -106,13 +106,15 @@ def mlip_cli_path() -> Path:
     return Path(__file__).resolve().parents[2] / "mlip-cli"
 
 
-# DFT Workbench's subprocess calls (tools/dft_workbench/client.py) shell out
-# to `goldilocks` (the CLI, not HTTP/MCP -- see that package's docstring for
-# why) inside this checkout. Unlike janus-api, goldilocks-core is *not*
-# vendored here -- it's the user's own separate, actively-developed project,
-# so this just points at wherever their checkout lives. Not configured =
-# clear "core not configured" error, same degradation as
-# JANUS_API_PATH/MP_API_KEY.
+# `core_server.py` reads this to auto-start goldilocks-core's own HTTP
+# backend (`uv run --directory <path> poe serve`) for the embedded DFT
+# Workbench UI -- 2026-09-24, replacing this value's earlier use feeding
+# the now-deleted `dft_workbench` CLI-subprocess-per-call integration.
+# Unlike janus-api, goldilocks-core is *not* vendored here -- it's the
+# user's own separate, actively-developed project, so this just points at
+# wherever their checkout lives. Not configured = DFT Workbench's embedded
+# core UI simply has nothing to auto-start (local/desktop deployment only;
+# a hosted deployment's core Workbench is already its own running service).
 def read_core_path() -> str | None:
     env_value = os.environ.get("GOLDILOCKS_CORE_PATH")
     if env_value:

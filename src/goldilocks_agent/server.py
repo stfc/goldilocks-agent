@@ -28,13 +28,13 @@ from pathlib import Path
 import httpx
 import openai
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from goldilocks_agent import store
+from goldilocks_agent import core_server, store
 from goldilocks_agent.config import (
     configured_providers,
     read_experience_level,
@@ -42,7 +42,7 @@ from goldilocks_agent.config import (
     write_experience_level,
 )
 from goldilocks_agent.graph import build_graph, open_checkpointer
-from goldilocks_agent.tools import dft_workbench, mlip_playground, structure_search
+from goldilocks_agent.tools import mlip_playground, structure_search
 from goldilocks_agent.tools.structure_search import jarvis_cache
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,9 @@ async def lifespan(app: FastAPI):
         app.state.graph = build_graph(checkpointer)
         app.state.store = db
         yield
+    # Belt and suspenders alongside `core_server`'s own `atexit` hook (see
+    # its docstring) -- covers the graceful-shutdown path explicitly too.
+    core_server.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -166,24 +169,6 @@ class MlipPhononsRequest(BaseModel):
     arch: str = "mace_mp"
     supercell: int = 2
     displacement: float = 0.01
-
-
-class DftInspectRequest(BaseModel):
-    structure_content: str
-    structure_name: str
-
-
-class DftExplainRequest(BaseModel):
-    structure_content: str
-    structure_name: str
-    code: str | None = None
-    task: str | None = None
-    hpc: str | None = None
-    overrides: dict[str, object] | None = None
-
-
-class DftRunRequest(DftExplainRequest):
-    pass
 
 
 class StructureMatchRequest(BaseModel):
@@ -504,91 +489,17 @@ async def mlip_phonons(request: MlipPhononsRequest) -> dict:
     )
 
 
-async def _run_dft(coro):
-    """Shared error translation for the 4 routes below -- no confirmation
-    gate, unlike MLIP: this is recommendation logic and local file writes,
-    not expensive/dangerous compute, same reasoning as /api/structure-match."""
-    try:
-        return await coro
-    except RuntimeError as exc:
-        # Not configured (no GOLDILOCKS_CORE_PATH) or the CLI call itself
-        # failed (bad --set key, missing pseudopotential table, etc.) --
-        # goldilocks-core's own CLI messages are already specific enough
-        # to show the user directly.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-_capabilities_cache: dft_workbench.CapabilitiesResult | None = None
-
-
-@app.get("/api/dft/capabilities")
-async def dft_capabilities() -> dft_workbench.CapabilitiesResult:
-    """Cached in-process -- static per core checkout (codes/tasks/
-    pseudopotential_tables/hpc_profiles/settings/facts/warnings-catalog
-    don't change between calls the way explain/run's *results* do)."""
-    global _capabilities_cache
-    if _capabilities_cache is None:
-        _capabilities_cache = await _run_dft(dft_workbench.capabilities())
-    return _capabilities_cache
-
-
-@app.post("/api/dft/inspect")
-async def dft_inspect(request: DftInspectRequest) -> dft_workbench.InspectResult:
-    return await _run_dft(
-        dft_workbench.inspect_structure(
-            request.structure_content, request.structure_name
-        )
-    )
-
-
-@app.post("/api/dft/explain")
-async def dft_explain(request: DftExplainRequest) -> dft_workbench.ExplainResult:
-    return await _run_dft(
-        dft_workbench.explain(
-            request.structure_content,
-            request.structure_name,
-            request.code,
-            request.task,
-            request.hpc,
-            request.overrides,
-        )
-    )
-
-
-@app.post("/api/dft/run")
-async def dft_run(request: DftRunRequest) -> dft_workbench.RunResult:
-    return await _run_dft(
-        dft_workbench.run(
-            request.structure_content,
-            request.structure_name,
-            request.code,
-            request.task,
-            request.hpc,
-            request.overrides,
-        )
-    )
-
-
-@app.post("/api/dft/bundle")
-async def dft_bundle(request: DftRunRequest) -> Response:
-    """Real archive bytes for the Inputs tab's one-click download -- not
-    the text-preview dict `/api/dft/run` returns."""
-    zip_bytes = await _run_dft(
-        dft_workbench.run_bundle(
-            request.structure_content,
-            request.structure_name,
-            request.code,
-            request.task,
-            request.hpc,
-            request.overrides,
-        )
-    )
-    stem = request.structure_name.rsplit(".", 1)[0]
-    return Response(
-        content=zip_bytes,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{stem}-bundle.zip"'},
-    )
+@app.post("/api/core-server/ensure")
+async def core_server_ensure() -> dict:
+    """The frontend calls this the moment DFT Workbench opens (inline or
+    full-page) -- lazily ensures goldilocks-core's own HTTP backend
+    (`goldilocks serve http`, embedding-target for the `goldilocks-workbench`
+    npm package) is running, local/desktop deployment only (see
+    `core_server`'s module docstring). Non-blocking: returns immediately
+    with the current status; the frontend polls this same route until it
+    reports ``ready``/``error``/``not_configured`` rather than waiting on
+    one long request."""
+    return core_server.ensure_running()
 
 
 # Opt-in only (unset in normal dev, where the frontend is vite's own dev
