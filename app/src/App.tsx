@@ -853,13 +853,6 @@ function startPaneResize(startEvent, { startWidth, min, max, direction, onChange
 }
 
 
-function getElementTokens(text) {
-  return text
-    .split(/[^A-Za-z]+/)
-    .map((token) => token.trim())
-    .filter((token) => ELEMENT_SYMBOLS.includes(token));
-}
-
 function getElementCategory(symbol) {
   for (const [category, symbols] of Object.entries(ELEMENT_CATEGORY_GROUPS)) {
     if (symbols.includes(symbol)) return category;
@@ -971,57 +964,6 @@ function createSession(projectId: string | null = null): Session {
     rightPanelView: null,
     modeState: {},
   };
-}
-
-function fmt(text) {
-  const lines = text.split("\n");
-  const els = [];
-  let codeBuffer = null;
-  let codeLang = "";
-
-  lines.forEach((line, index) => {
-    if (line.startsWith("```")) {
-      if (codeBuffer === null) {
-        codeLang = line.slice(3).trim();
-        codeBuffer = [];
-      } else {
-        els.push(
-          <pre key={index} className="code-block">
-            {codeLang && <span className="code-lang">{codeLang.toUpperCase()}</span>}
-            <code>{codeBuffer.join("\n")}</code>
-          </pre>,
-        );
-        codeBuffer = null;
-        codeLang = "";
-      }
-      return;
-    }
-
-    if (codeBuffer !== null) {
-      codeBuffer.push(line);
-      return;
-    }
-
-    if (!line.trim()) {
-      els.push(<br key={index} />);
-      return;
-    }
-
-    const parts = line.split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) => {
-      if (part.startsWith("**") && part.endsWith("**")) {
-        return <strong key={partIndex}>{part.slice(2, -2)}</strong>;
-      }
-      return part;
-    });
-
-    els.push(
-      <p key={index} className="message-paragraph">
-        {parts}
-      </p>,
-    );
-  });
-
-  return els;
 }
 
 function LogoImage({ className = "", alt = "Goldilocks logo" }) {
@@ -1718,9 +1660,6 @@ export default function App() {
   );
   const canSend = Boolean(input.trim() || attachedFiles.length > 0 || attachedImages.length > 0) && !hasPendingConfirmation;
   const currentExperience = EXPERIENCE_OPTIONS.find((option) => option.id === experienceLevel);
-  const lastUserMessage = useMemo(() => {
-    return [...messages].reverse().find((message) => message.role === "user") ?? null;
-  }, [messages]);
   const chatStructures = useMemo(() => {
     const found = [];
     for (const sf of sessionFiles) {
@@ -2991,74 +2930,6 @@ export default function App() {
             )}
           </div>
         )}
-      </div>
-    );
-  }
-
-  function renderExpandedProject(project) {
-    if (!project) return null;
-
-    const scopedProjectChats = sessions.filter((item) => item.projectId === project.id);
-
-    return (
-      <div className="project-children">
-        <div className="project-scope-block">
-          <div className="project-scope-head">
-            <div>
-              <div className="project-scope-name">{project.name}</div>
-              <div className="project-scope-desc">{project.desc}</div>
-            </div>
-            <button className="ghost-icon-btn" onClick={() => deleteProject(project.id)} aria-label={`Delete ${project.name}`}>
-              <TrashIcon />
-            </button>
-          </div>
-
-          {project.sources?.length ? (
-            <div className="project-inline-sources">
-              {project.sources.map((source) => (
-                <span key={source} className="project-inline-source">
-                  {source}
-                </span>
-              ))}
-            </div>
-          ) : null}
-
-          <button className="secondary-btn compact project-new-chat-btn" onClick={() => newChat(project.id)}>
-            New chat in project
-          </button>
-        </div>
-
-        <div className="sidebar-project-chats">
-          {scopedProjectChats.map((item) => {
-            const tool = getToolById(item.tool);
-            return (
-              <div
-                key={item.id}
-                className={`session-item${item.id === currentActiveId ? " active" : ""}`}
-                onClick={() => {
-                  setActiveId(item.id);
-                  setView("chats");
-                  setShowElementPicker(false);
-                }}
-              >
-                <div className="tool-dot" style={{ background: tool?.color ?? project.color }} />
-                <div className="session-copy">
-                  <div className="session-title">{item.title}</div>
-                  <div className="session-meta">{tool ? tool.label : t("general_chat")}</div>
-                </div>
-                <button
-                  className="ghost-icon-btn"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteSession(item.id);
-                  }}
-                >
-                  <TrashIcon />
-                </button>
-              </div>
-            );
-          })}
-        </div>
       </div>
     );
   }
