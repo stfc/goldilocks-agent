@@ -18,7 +18,8 @@ Frontend lives in `app/` (Node/Vite/React, not `uv`) — `cd app && npm install`
 ⚠️ Not called `web/`: `goldilocks-core/web/` is still a different product
 (a form-only tool, no LLM) with its own repo/Docker image, even though
 `app/` now embeds its published Workbench UI as an npm dependency behind
-the DFT Workbench Tool's full-page detail view — see design doc §13 and
+the DFT Workbench Tool's inline panel and full-page detail view alike (a
+grid full-page, one card at a time as tabs inline) — see design doc §13 and
 [goldilocks-agent#1](https://github.com/junwen94/goldilocks-agent/issues/1).
 
 ## Code style

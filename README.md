@@ -6,12 +6,15 @@ decides DFT parameters; this package decides *when to ask the user*, *how to
 explain a recommendation*, and *how to run it* (bundle download or AiiDA
 submission).
 
-> **Status**: real, working chat + tool-calling for three of the six
-> planned Tools -- **Find in Databases** (Materials Project/Materials
-> Cloud/NOMAD/JARVIS search), **MLIP Playground** (local MACE calculations
-> via `janus-core`), and **DFT Workbench** (real Quantum ESPRESSO input
-> generation via `goldilocks-core`). **Beyond DFT**/**Post Analysis** are
-> partial (panel-only, no real backing yet beyond Post Analysis's phonon
+> **Status**: real, working chat + tool-calling for two of the six planned
+> Tools -- **Find in Databases** (Materials Project/Materials Cloud/NOMAD/
+> JARVIS search) and **MLIP Playground** (local MACE calculations via
+> `janus-core`). **DFT Workbench** is real too, but not via chat
+> tool-calling -- it embeds `goldilocks-core`'s own published Workbench UI
+> directly (same content inline, as tabs, and full-page, as a grid), talking
+> to a `goldilocks-core` HTTP backend goldilocks-agent auto-starts for you
+> (see Configuration below). **Beyond DFT**/**Post Analysis** are partial
+> (panel-only, no real backing yet beyond Post Analysis's phonon
 > visualizer). **AiiDA** is not built. See
 > [`docs/goldilocks-agent-design.md`](docs/goldilocks-agent-design.md) for
 > the full product design and
@@ -22,8 +25,8 @@ submission).
 
 ```
 src/goldilocks_agent/   Python package (LangGraph orchestration, local HTTP/SSE server, Tools)
-app/                    React/Vite frontend (chat + Tools panel; DFT Workbench's own
-                        full-page detail embeds goldilocks-core/web's published UI --
+app/                    React/Vite frontend (chat + Tools panel; DFT Workbench's inline panel
+                        and full-page detail both embed goldilocks-core/web's published UI --
                         see issue #1) -- not "web": see design doc §13
 mlip-cli/               Own project (own pyproject.toml), just a `janus-core[mace]` dependency pin --
                         keeps torch/mace out of goldilocks-agent's own env; MLIP Playground shells
@@ -43,7 +46,7 @@ Prerequisites: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), Node.js
 18+/npm. Optional, only if you want the features they back: a local
 [Ollama](https://ollama.com) install (local-model chat), a
 [goldilocks-core](https://github.com/stfc/goldilocks-core) checkout (DFT
-Workspace).
+Workbench).
 
 ```bash
 git clone <this-repo> && cd 1-goldilocks-agent
@@ -93,8 +96,8 @@ inside `./mlip-cli/`, so this needs to be opt-in):
 export GOLDILOCKS_AGENT_MLIP_ENABLED=1
 ```
 
-**Optional: DFT Workbench** (real Quantum ESPRESSO input generation via
-`goldilocks-core`) -- point at your own `goldilocks-core` checkout (this
+**Optional: DFT Workbench** (goldilocks-core's own real Workbench UI,
+embedded directly) -- point at your own `goldilocks-core` checkout (this
 repo doesn't vendor it, since it's your own separate, actively-developed
 project):
 
@@ -102,9 +105,14 @@ project):
 export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 ```
 
-Both `client.py`s shell out via `uv run --project <path> <cli>` on each
-call rather than running a persistent service, so nothing needs to stay
-running in the background for either.
+Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
+persistent service -- the first time you actually open DFT Workbench
+(inline or full-page), goldilocks-agent lazily runs
+`uv run --directory <path> poe serve` for you (health-checking first, so it
+reuses an instance you already started yourself in another terminal instead
+of double-spawning) and keeps it running for the rest of the session,
+shutting it down when goldilocks-agent's own process exits. Nothing to
+start by hand.
 
 ## Running it
 
@@ -119,22 +127,19 @@ in Databases' JARVIS results) -- the app is usable immediately, JARVIS
 results just start working once it finishes. Run it manually ahead of
 time with `uv run poe fetch-jarvis-cache` if you'd rather not wait.
 
-**DFT Workbench's full-page detail**: expand the Tools panel's own
-expand-all-tools button (top right, next to the Tools panel toggle) to see
-all six Tools full-page, then expand DFT Workbench there -- its detail page
-embeds goldilocks-core's own Workbench UI, published as an npm package and
+**DFT Workbench**: open its panel (inline, in the Tools strip) or expand it
+full-page (the Tools panel's own expand-all-tools button, top right, then
+DFT Workbench from the six-Tool grid) -- both render the exact same
+embedded goldilocks-core Workbench UI, published as an npm package and
 installed into `app/`'s dependencies (see
-[issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)). It talks
-to core's HTTP server directly, not via the CLI path `GOLDILOCKS_CORE_PATH`
-configures above -- start that server too:
-
-```bash
-cd /path/to/goldilocks-core && uv run poe serve   # core backend on http://127.0.0.1:8000
-```
-
-`app/vite.config.js` proxies `/capabilities`, `/run`, `/explain`, etc. to
-that port; without it running, DFT Workbench's detail page still renders but
-shows a "Request failed" banner instead of real data. The published-package
+[issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)): the
+full-page view shows all its cards (Structure/Analysis/Advisors/Bundles)
+side by side, the inline panel shows the same cards as tabs, one at a time.
+The first time either is opened, goldilocks-agent auto-starts
+goldilocks-core's own HTTP backend on `http://127.0.0.1:8000` for it to
+talk to (see `GOLDILOCKS_CORE_PATH` above) -- you'll briefly see a
+"starting up..." state while that happens, or a clear error if
+`GOLDILOCKS_CORE_PATH` isn't configured/valid. The published-package
 pipeline is currently a local tarball
 (`app/vendor/goldilocks-workbench-0.0.0.tgz`, rebuilt from `core/web` via
 `npm run build:lib && npm pack`) rather than a real registry -- see issue #1
@@ -144,9 +149,12 @@ for the GitHub Packages follow-up.
 
 Start a chat and either talk to the model directly, or open one of the
 Tool panels on the right (the small icon strip) for a structured
-interface into the same underlying capability -- both paths call the same
-backend functions, and the panel updates live when the model calls a tool
-on its own.
+interface into the same underlying capability -- for Find in Databases and
+MLIP Playground, both paths call the same backend functions, and the panel
+updates live when the model calls a tool on its own. DFT Workbench is the
+exception: it has no chat tool-calling of its own (see below) -- Goldilocks
+in chat only ever gives DFT guidance, the real setup/results live entirely
+in its embedded panel.
 
 - **Find in Databases**: search by chemical formula, or type/attach a
   structure and ask about it directly (`find_in_databases`/`get_structure`
@@ -157,14 +165,13 @@ on its own.
   first, since it's real local compute (`GOLDILOCKS_AGENT_MLIP_ENABLED`
   must be set). Phonon results link to a "Phonon visualizer" -- also
   reachable from Post Analysis for a `band.yaml` from anywhere else.
-- **DFT Workbench**: pick a structure, code, and task, optionally override
-  specific settings, then Generate -- goldilocks-core's real advisors
-  resolve everything else and produce a downloadable Quantum ESPRESSO
-  input bundle (input file, pseudopotential, SLURM submission script). The
-  Explain tab shows *why* each setting was chosen. The same thing is
-  callable from chat via `dft_explain`/`dft_generate` (`GOLDILOCKS_CORE_PATH`
-  must be set); no confirmation needed -- it's local file generation, not
-  compute.
+- **DFT Workbench**: the embedded goldilocks-core Workbench itself handles
+  structure input, analysis, advisors, and bundle download/generation --
+  talk to it directly, not through chat (`GOLDILOCKS_CORE_PATH` must be
+  set; goldilocks-agent auto-starts core's backend for you, see
+  Configuration above). Chat can still explain DFT concepts/workflows in
+  general, it just can't drive this Tool's panel the way it drives Find in
+  Databases/MLIP Playground.
 - Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
   use a Tool panel's own "Upload structure" button, to add it to the
   current chat.
@@ -180,6 +187,6 @@ Tests that need real credentials/local services are marked `integration`
 and each has its own `skipif` -- they show up as *skipped*, not deselected,
 in a plain `uv run poe check` run with nothing configured. Set whichever
 they need (a configured API key, a running Ollama model,
-`GOLDILOCKS_AGENT_MLIP_ENABLED`, `GOLDILOCKS_CORE_PATH`, ...) and they run
+`GOLDILOCKS_AGENT_MLIP_ENABLED`, ...) and they run
 for real -- see each test module's own skip reason for exactly what it
 needs. Select only those with `uv run pytest -m integration`.
