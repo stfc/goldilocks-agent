@@ -97,9 +97,16 @@ export GOLDILOCKS_AGENT_MLIP_ENABLED=1
 ```
 
 **Optional: DFT Workbench** (goldilocks-core's own real Workbench UI,
-embedded directly) -- point at your own `goldilocks-core` checkout (this
-repo doesn't vendor it, since it's your own separate, actively-developed
-project):
+embedded directly) -- `goldilocks-core` is [on PyPI](https://pypi.org/project/goldilocks-core/)
+now, so the simplest way to enable this needs no checkout at all:
+
+```bash
+export GOLDILOCKS_AGENT_CORE_AUTOSTART=1
+```
+
+If you're actively developing goldilocks-core itself, point at your local
+checkout instead -- it takes priority over the PyPI package, so you get
+your own uncommitted changes:
 
 ```bash
 export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
@@ -107,12 +114,14 @@ export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
 persistent service -- the first time you actually open DFT Workbench
-(inline or full-page), goldilocks-agent lazily runs
-`uv run --directory <path> poe serve` for you (health-checking first, so it
-reuses an instance you already started yourself in another terminal instead
-of double-spawning) and keeps it running for the rest of the session,
+(inline or full-page), goldilocks-agent lazily runs it for you (either
+`uvx --from goldilocks-core[http] goldilocks serve http`, or your
+checkout's own `uv run --directory <path> poe serve` if
+`GOLDILOCKS_CORE_PATH` is set), health-checking first so it reuses an
+instance you already started yourself in another terminal instead of
+double-spawning, and keeps it running for the rest of the session,
 shutting it down when goldilocks-agent's own process exits. Nothing to
-start by hand.
+start by hand either way.
 
 ## Running it
 
@@ -137,9 +146,9 @@ full-page view shows all its cards (Structure/Analysis/Advisors/Bundles)
 side by side, the inline panel shows the same cards as tabs, one at a time.
 The first time either is opened, goldilocks-agent auto-starts
 goldilocks-core's own HTTP backend on `http://127.0.0.1:8000` for it to
-talk to (see `GOLDILOCKS_CORE_PATH` above) -- you'll briefly see a
-"starting up..." state while that happens, or a clear error if
-`GOLDILOCKS_CORE_PATH` isn't configured/valid. The published-package
+talk to (see Configuration above) -- you'll briefly see a "starting up..."
+state while that happens, or a clear error if neither
+`GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The published-package
 pipeline is currently a local tarball
 (`app/vendor/goldilocks-workbench-0.0.0.tgz`, rebuilt from `core/web` via
 `npm run build:lib && npm pack`) rather than a real registry -- see issue #1
@@ -167,11 +176,11 @@ in its embedded panel.
   reachable from Post Analysis for a `band.yaml` from anywhere else.
 - **DFT Workbench**: the embedded goldilocks-core Workbench itself handles
   structure input, analysis, advisors, and bundle download/generation --
-  talk to it directly, not through chat (`GOLDILOCKS_CORE_PATH` must be
-  set; goldilocks-agent auto-starts core's backend for you, see
-  Configuration above). Chat can still explain DFT concepts/workflows in
-  general, it just can't drive this Tool's panel the way it drives Find in
-  Databases/MLIP Playground.
+  talk to it directly, not through chat (`GOLDILOCKS_AGENT_CORE_AUTOSTART`
+  or `GOLDILOCKS_CORE_PATH` must be set; goldilocks-agent auto-starts
+  core's backend for you either way, see Configuration above). Chat can
+  still explain DFT concepts/workflows in general, it just can't drive this
+  Tool's panel the way it drives Find in Databases/MLIP Playground.
 - Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
   use a Tool panel's own "Upload structure" button, to add it to the
   current chat.

@@ -41,14 +41,21 @@ services:
       # GEMINI_API_KEY:
       # MP_API_KEY:
       GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
+      # goldilocks-core is on PyPI, so DFT Workbench needs no checkout/mount
+      # by default -- goldilocks-agent auto-starts `goldilocks serve http`
+      # via `uvx` the first time the Tool is opened (needs outbound network
+      # to pypi.org the first time, same one-time-cost shape as MLIP
+      # Playground's own multi-GB first-call download above).
+      GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
+      # If you're developing goldilocks-core itself, point at your own
+      # checkout instead (takes priority over the PyPI package above) --
+      # mount it and uncomment both lines to match:
       # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/getting-started.md
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
-      # Optional, for DFT Workbench -- mount your own goldilocks-core
-      # checkout and set GOLDILOCKS_CORE_PATH above to match:
       # - /path/to/your/goldilocks-core:/goldilocks-core
     restart: unless-stopped
 

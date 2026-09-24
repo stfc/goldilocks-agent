@@ -107,16 +107,30 @@ def mlip_cli_path() -> Path:
 
 
 # `core_server.py` reads this to auto-start goldilocks-core's own HTTP
-# backend (`uv run --directory <path> poe serve`) for the embedded DFT
-# Workbench UI -- 2026-09-24, replacing this value's earlier use feeding
-# the now-deleted `dft_workbench` CLI-subprocess-per-call integration.
-# Unlike janus-api, goldilocks-core is *not* vendored here -- it's the
-# user's own separate, actively-developed project, so this just points at
-# wherever their checkout lives. Not configured = DFT Workbench's embedded
-# core UI simply has nothing to auto-start (local/desktop deployment only;
-# a hosted deployment's core Workbench is already its own running service).
+# backend for the embedded DFT Workbench UI. Optional override for someone
+# actively developing goldilocks-core itself: if set, `core_server.py` runs
+# the checkout's own `uv run --directory <path> poe serve` instead of the
+# published PyPI package (see `read_core_autostart_enabled()` below) --
+# picks up local, uncommitted changes to core the same session, which the
+# published package obviously can't. Most users don't need this at all now
+# that goldilocks-core is on PyPI (2026-09-24).
 def read_core_path() -> str | None:
     env_value = os.environ.get("GOLDILOCKS_CORE_PATH")
     if env_value:
         return env_value
     return read_config().get("core", {}).get("path")
+
+
+# Whether `core_server.py` is allowed to auto-start goldilocks-core at all
+# when `read_core_path()` is unset -- spawns the real published PyPI
+# package (`uvx --from goldilocks-core[http] goldilocks serve http`, no
+# checkout needed) rather than doing nothing. Off by default, same
+# opt-in-gate reasoning as `read_mlip_enabled()`: a shared/hosted deployment
+# must not have its agent server silently reach out to PyPI and spawn a
+# whole separate ML-heavy Python process just because network access
+# happens to work -- local/desktop users turn this on deliberately.
+def read_core_autostart_enabled() -> bool:
+    env_value = os.environ.get("GOLDILOCKS_AGENT_CORE_AUTOSTART")
+    if env_value is not None:
+        return env_value.strip().lower() not in ("", "0", "false", "no")
+    return bool(read_config().get("core", {}).get("autostart"))

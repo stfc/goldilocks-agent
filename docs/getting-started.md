@@ -55,12 +55,18 @@ What's on by default:
   multi-GB download inside the container (installing `janus-core[mace]`) --
   this is independent of the Ollama model download above and only happens
   when you actually use it.
+- **DFT Workbench** is enabled too -- goldilocks-core is
+  [on PyPI](https://pypi.org/project/goldilocks-core/) now, so no checkout
+  needed: the first time you open the Tool, goldilocks-agent auto-starts it
+  for you inside the container via `uvx` (needs outbound network to
+  pypi.org that first time, otherwise nothing to set up).
 
 What needs extra setup:
-- **DFT Workbench** needs your own [goldilocks-core](https://github.com/stfc/goldilocks-core)
-  checkout. Edit `docker-compose.yml`: uncomment the `agent` service's
-  `GOLDILOCKS_CORE_PATH` environment variable and the matching volume mount
-  under `volumes:`, pointing them at your checkout, then
+- If you're actively developing goldilocks-core itself and want your own
+  uncommitted changes reflected, edit `docker-compose.yml`: uncomment the
+  `agent` service's `GOLDILOCKS_CORE_PATH` environment variable and the
+  matching volume mount under `volumes:`, pointing them at your checkout
+  (this takes priority over the PyPI package above), then
   `docker compose up` again.
 - Cloud model providers (Claude/OpenAI/Gemini) and Materials Project search
   need API keys. Uncomment and fill in the matching environment variable in

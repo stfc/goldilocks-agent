@@ -2,8 +2,28 @@
 for the DFT Workbench Tool's embedded `goldilocks-workbench` frontend to
 talk to -- local/desktop deployment only (design doc 19): a hosted
 deployment would already have core's Workbench running as its own
-separately-managed service, so `read_core_path()` being unset there just
-means "nothing to auto-start," not an error.
+separately-managed service, so both `read_core_path()` and
+`read_core_autostart_enabled()` being unset there just means "nothing to
+auto-start," not an error.
+
+Two ways to source goldilocks-core, checked in this order:
+
+1. ``read_core_path()`` set -- someone actively developing core itself:
+   runs *that checkout's* ``uv run --directory <path> poe serve``, picking
+   up local, uncommitted changes.
+2. Otherwise, if ``read_core_autostart_enabled()`` -- everyone else: runs
+   the real published PyPI package directly, no checkout needed at all
+   (``uvx --from goldilocks-core[http] goldilocks serve http``, 2026-09-24).
+
+Either way this is a real, separate OS process, deliberately never an
+in-process import: goldilocks-agent treats goldilocks-core as an external
+tool it shells out to, the same way `mlip-cli` treats `janus-core`, never a
+Python dependency of its own package. A proposal to merge the two packages
+into one uv workspace (junwen94/goldilocks-core#75) was raised and rejected
+specifically because it would make `import goldilocks_core` mechanically
+possible from this package's own environment -- goldilocks-core landing on
+PyPI doesn't reopen that question, it only changes *how* the external
+subprocess gets sourced (a checkout path vs. an installable package).
 
 Lazy, singleton, process-lifetime: `ensure_running()` only ever spawns a
 subprocess the first time the frontend actually opens DFT Workbench (inline
@@ -19,10 +39,11 @@ itself -- it kicks that off as a background task at most once and returns
 immediately with whatever the current status is, so `server.py`'s route can
 be polled cheaply and repeatedly by the frontend (design: show a "starting
 up..." state, not block one HTTP request for up to `_STARTUP_TIMEOUT`
-seconds). Real invocation and both the fresh-spawn and already-running-reuse
-paths were exercised manually against a real goldilocks-core checkout
-(2026-09-24) before writing this -- see the module-level constants' comments
-for what was actually verified.
+seconds). Real invocation of both spawn modes, and both the fresh-spawn and
+already-running-reuse paths, were exercised manually against real
+goldilocks-core (both the checkout and the published PyPI package, 2026-09-24) before
+writing this -- see the module-level constants' comments for what was
+actually verified.
 """
 
 from __future__ import annotations
@@ -34,7 +55,7 @@ import subprocess
 
 import httpx
 
-from goldilocks_agent.config import read_core_path
+from goldilocks_agent.config import read_core_autostart_enabled, read_core_path
 
 logger = logging.getLogger(__name__)
 
@@ -77,26 +98,56 @@ async def _is_healthy(client: httpx.AsyncClient) -> bool:
     return response.status_code < 500
 
 
-def _spawn(core_path: str) -> subprocess.Popen:
-    """`uv run --directory <core_path> poe serve` -- verified live
-    2026-09-24 against a real goldilocks-core checkout: installs/confirms
-    its own ML/pseudopotential assets, then serves on :8000. `poe serve`'s
-    own shell script already refuses to start (exit 1) if port 8000 is
-    already answering -- `ensure_running()` health-checks first precisely
-    to avoid ever hitting that path, not to work around it.
+def _spawn_command(core_path: str | None) -> list[str]:
+    """Checkout mode (`core_path` set): `uv run --directory <core_path>
+    poe serve` -- verified live 2026-09-24 against a real goldilocks-core
+    checkout: installs/confirms its own ML/pseudopotential assets, then
+    serves on :8000. `poe serve`'s own shell script already refuses to
+    start (exit 1) if port 8000 is already answering -- `ensure_running()`
+    health-checks first precisely to avoid ever hitting that path, not to
+    work around it.
 
-    `start_new_session=True`: this subprocess (and whatever it execs/forks
-    internally -- `uv run poe serve` is itself a multi-process chain) is
-    detached into its own session, so it isn't tied to this server
-    process's controlling terminal/process group. Termination is still a
-    plain `Popen.terminate()`/`kill()` on this top-level PID (verified live
-    2026-09-24: SIGTERM to the top-level `uv run` process cleanly took down
-    every descendant, including the actual `goldilocks serve http`
-    process several levels down in its own process group) -- no
-    `os.killpg` needed.
+    PyPI mode (`core_path` is ``None``): `uvx --from goldilocks-core[http]
+    goldilocks serve http --host 127.0.0.1 --port 8000` -- verified live
+    2026-09-24 against the real published package, no checkout anywhere on
+    disk. The bare ``goldilocks`` CLI's `http` transport needs the `[http]`
+    extra (`uvicorn`/FastAPI) -- the base package doesn't pull those in,
+    confirmed by hitting `ImportError: The HTTP transport requires
+    goldilocks-core[http]` without it. Deliberately doesn't pass
+    `--static-root`: goldilocks-agent embeds the Workbench UI itself via
+    the `goldilocks-workbench` npm package, so this process only needs to
+    serve the JSON API, never core's own standalone frontend build.
+    """
+    if core_path:
+        return ["uv", "run", "--directory", core_path, "poe", "serve"]
+    return [
+        "uvx",
+        "--from",
+        "goldilocks-core[http]",
+        "goldilocks",
+        "serve",
+        "http",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+    ]
+
+
+def _spawn(core_path: str | None) -> subprocess.Popen:
+    """`start_new_session=True`: this subprocess (and whatever it
+    execs/forks internally -- both `uv run poe serve` and `uvx ... `
+    are themselves multi-process chains) is detached into its own
+    session, so it isn't tied to this server process's controlling
+    terminal/process group. Termination is still a plain
+    `Popen.terminate()`/`kill()` on this top-level PID (verified live
+    2026-09-24 for both spawn modes: SIGTERM to the top-level process
+    cleanly took down every descendant, including the actual `goldilocks
+    serve http` process several levels down in its own process group) --
+    no `os.killpg` needed.
     """
     return subprocess.Popen(
-        ["uv", "run", "--directory", core_path, "poe", "serve"],
+        _spawn_command(core_path),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -128,16 +179,18 @@ def shutdown() -> None:
 atexit.register(shutdown)
 
 
-async def _bring_up(core_path: str) -> None:
+async def _bring_up(core_path: str | None) -> None:
     """Background body of `ensure_running()`'s spawn -- runs at most once
-    per process (guarded by `_task` in `ensure_running`)."""
+    per process (guarded by `_task` in `ensure_running`). `core_path` is
+    ``None`` for PyPI mode, a checkout path for checkout mode -- see
+    `_spawn_command()`."""
     global _process, _state
     async with httpx.AsyncClient(base_url=CORE_SERVER_BASE_URL) as client:
         if await _is_healthy(client):
             # Already running -- the user started it themselves, or a
             # previous call already brought it up. Reuse it: spawning a
-            # second `poe serve` would just fail (it refuses to bind an
-            # already-used port).
+            # second instance would just fail (both spawn modes' own
+            # servers refuse to bind an already-used port).
             logger.info(
                 "goldilocks-core already answering at %s -- reusing it",
                 CORE_SERVER_BASE_URL,
@@ -149,9 +202,7 @@ async def _bring_up(core_path: str) -> None:
             }
             return
 
-        logger.info(
-            "Starting goldilocks-core: uv run --directory %s poe serve", core_path
-        )
+        logger.info("Starting goldilocks-core: %s", " ".join(_spawn_command(core_path)))
         try:
             _process = _spawn(core_path)
         except OSError as exc:
@@ -170,11 +221,17 @@ async def _bring_up(core_path: str) -> None:
                 }
                 return
             if _process.poll() is not None:
+                hint = (
+                    "check GOLDILOCKS_CORE_PATH and that "
+                    "`uv run --directory <path> poe serve` works on its own"
+                    if core_path
+                    else "check that "
+                    "`uvx --from goldilocks-core[http] goldilocks serve http` "
+                    "works on its own"
+                )
                 detail = (
                     f"goldilocks-core exited (code {_process.returncode}) "
-                    "before it started answering -- check GOLDILOCKS_CORE_PATH "
-                    "and that `uv run --directory <path> poe serve` works on "
-                    "its own."
+                    f"before it started answering -- {hint}."
                 )
                 logger.error(detail)
                 _state = {"status": "error", "base_url": None, "detail": detail}
@@ -195,19 +252,20 @@ def ensure_running() -> dict:
     process if needed, and always returns immediately with the
     current status for the caller to relay/poll:
 
-    - ``not_configured``: no `GOLDILOCKS_CORE_PATH` -- nothing to
-      auto-start (the hosted-deployment case, or local and simply unset).
+    - ``not_configured``: neither `GOLDILOCKS_CORE_PATH` nor
+      `GOLDILOCKS_AGENT_CORE_AUTOSTART` -- nothing to auto-start (the
+      hosted-deployment case, or local and simply unset).
     - ``starting``: a spawn/health-check is in flight -- poll again.
     - ``ready``: something is answering at `base_url`, reused or freshly
       spawned.
     - ``error``: configured but the spawn/health-check failed; `detail`
       has a specific reason. A later call retries from scratch (e.g. the
-      user fixed `GOLDILOCKS_CORE_PATH` and reopened DFT Workbench) rather
-      than latching the failure forever.
+      user fixed their config and reopened DFT Workbench) rather than
+      latching the failure forever.
     """
     global _task
     core_path = read_core_path()
-    if not core_path:
+    if not core_path and not read_core_autostart_enabled():
         return {"status": "not_configured", "base_url": None, "detail": None}
     task_in_flight = _task is not None and not _task.done()
     if not task_in_flight and _state["status"] in ("idle", "error"):
