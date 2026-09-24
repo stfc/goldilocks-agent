@@ -9,7 +9,7 @@ Lazy, singleton, process-lifetime: `ensure_running()` only ever spawns a
 subprocess the first time the frontend actually opens DFT Workbench (inline
 or full-page) in this goldilocks-agent server process's lifetime -- never
 eagerly at import/startup. Once spawned it outlives any one browser
-tab/view; only this process exiting tears it down (`_shutdown`, registered
+tab/view; only this process exiting tears it down (`shutdown()`, registered
 with `atexit` -- uvicorn's normal SIGINT/SIGTERM handling exits the
 interpreter cleanly, which is what actually fires atexit callbacks; nothing
 here handles a hard `kill -9`, same limitation any atexit-based cleanup has).
@@ -115,6 +115,7 @@ def shutdown() -> None:
     global _process
     if _process is None or _process.poll() is not None:
         return
+    logger.info("Shutting down the goldilocks-core process this module spawned")
     try:
         _process.terminate()
         _process.wait(timeout=5)
@@ -137,6 +138,10 @@ async def _bring_up(core_path: str) -> None:
             # previous call already brought it up. Reuse it: spawning a
             # second `poe serve` would just fail (it refuses to bind an
             # already-used port).
+            logger.info(
+                "goldilocks-core already answering at %s -- reusing it",
+                CORE_SERVER_BASE_URL,
+            )
             _state = {
                 "status": "ready",
                 "base_url": CORE_SERVER_BASE_URL,
@@ -144,15 +149,20 @@ async def _bring_up(core_path: str) -> None:
             }
             return
 
+        logger.info(
+            "Starting goldilocks-core: uv run --directory %s poe serve", core_path
+        )
         try:
             _process = _spawn(core_path)
         except OSError as exc:
+            logger.error("Failed to spawn goldilocks-core: %s", exc)
             _state = {"status": "error", "base_url": None, "detail": str(exc)}
             return
 
         deadline = asyncio.get_event_loop().time() + _STARTUP_TIMEOUT
         while asyncio.get_event_loop().time() < deadline:
             if await _is_healthy(client):
+                logger.info("goldilocks-core is up at %s", CORE_SERVER_BASE_URL)
                 _state = {
                     "status": "ready",
                     "base_url": CORE_SERVER_BASE_URL,
@@ -160,27 +170,23 @@ async def _bring_up(core_path: str) -> None:
                 }
                 return
             if _process.poll() is not None:
-                _state = {
-                    "status": "error",
-                    "base_url": None,
-                    "detail": (
-                        f"goldilocks-core exited (code {_process.returncode}) "
-                        "before it started answering -- check GOLDILOCKS_CORE_PATH "
-                        "and that `uv run --directory <path> poe serve` works on "
-                        "its own."
-                    ),
-                }
+                detail = (
+                    f"goldilocks-core exited (code {_process.returncode}) "
+                    "before it started answering -- check GOLDILOCKS_CORE_PATH "
+                    "and that `uv run --directory <path> poe serve` works on "
+                    "its own."
+                )
+                logger.error(detail)
+                _state = {"status": "error", "base_url": None, "detail": detail}
                 return
             await asyncio.sleep(_POLL_INTERVAL)
 
-    _state = {
-        "status": "error",
-        "base_url": None,
-        "detail": (
-            f"goldilocks-core did not answer at {CORE_SERVER_BASE_URL}{_HEALTH_PATH} "
-            f"within {_STARTUP_TIMEOUT:.0f}s of starting."
-        ),
-    }
+    detail = (
+        f"goldilocks-core did not answer at {CORE_SERVER_BASE_URL}{_HEALTH_PATH} "
+        f"within {_STARTUP_TIMEOUT:.0f}s of starting."
+    )
+    logger.error(detail)
+    _state = {"status": "error", "base_url": None, "detail": detail}
 
 
 def ensure_running() -> dict:
