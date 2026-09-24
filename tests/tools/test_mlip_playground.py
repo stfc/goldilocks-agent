@@ -28,7 +28,10 @@ from goldilocks_agent.tools.mlip_playground import (
     NebResult,
     PhononsResult,
     SinglePointResult,
+    run_equation_of_state,
     run_geometry_optimization,
+    run_neb,
+    run_phonons,
     run_singlepoint,
 )
 
@@ -53,6 +56,89 @@ _atom_site_fract_y
 _atom_site_fract_z
 Na 0.0 0.0 0.0
 Cl 0.5 0.5 0.5
+"""
+
+# Smallest realistic NEB case: nearest-neighbour vacancy hop in a 2x1x1 FCC
+# Al supercell (7 atoms -- 8-atom conventional cubic cell minus one vacancy).
+# Both endpoints have the same 7 atoms; only the vacancy site differs (atom
+# at (0, 0.5, 0.5) in the init structure has hopped to the vacant (0, 0, 0)
+# site in the final structure, the FCC nearest-neighbour distance, ~2.86 Å
+# for a=4.05 Å). Verified live against the real `janus neb` CLI before
+# adding here: converges in ~7s with `--n-images 3 --fmax 0.5`, "ase"/idpp
+# interpolation (janus-core's own default) avoids clashing with neighbouring
+# atoms along the path, and gives a barrier (~0.76 eV) in the right
+# ballpark for known Al vacancy-migration energies (~0.6-0.7 eV,
+# experiment/DFT) -- plausible, not exact, since this is an unrelaxed,
+# single-vacancy, non-cubic-shaped small supercell, not a converged
+# calculation.
+_AL_VACANCY_INIT_CIF = """\
+data_image0
+_chemical_formula_structural       Al7
+_chemical_formula_sum              "Al7"
+_cell_length_a       8.1
+_cell_length_b       4.05
+_cell_length_c       4.05
+_cell_angle_alpha    90.0
+_cell_angle_beta     90.0
+_cell_angle_gamma    90.0
+
+_space_group_name_H-M_alt    "P 1"
+_space_group_IT_number       1
+
+loop_
+  _space_group_symop_operation_xyz
+  'x, y, z'
+
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  _atom_site_occupancy
+  Al  Al1       1.0  0.0  0.5  0.5  1.0000
+  Al  Al2       1.0  0.25  0.0  0.5  1.0000
+  Al  Al3       1.0  0.25  0.5  0.0  1.0000
+  Al  Al4       1.0  0.5  0.0  0.0  1.0000
+  Al  Al5       1.0  0.5  0.5  0.5  1.0000
+  Al  Al6       1.0  0.75  0.0  0.5  1.0000
+  Al  Al7       1.0  0.75  0.5  0.0  1.0000
+"""
+
+_AL_VACANCY_FINAL_CIF = """\
+data_image0
+_chemical_formula_structural       Al7
+_chemical_formula_sum              "Al7"
+_cell_length_a       8.1
+_cell_length_b       4.05
+_cell_length_c       4.05
+_cell_angle_alpha    90.0
+_cell_angle_beta     90.0
+_cell_angle_gamma    90.0
+
+_space_group_name_H-M_alt    "P 1"
+_space_group_IT_number       1
+
+loop_
+  _space_group_symop_operation_xyz
+  'x, y, z'
+
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  _atom_site_occupancy
+  Al  Al1       1.0  0.0  0.0  0.0  1.0000
+  Al  Al2       1.0  0.25  0.0  0.5  1.0000
+  Al  Al3       1.0  0.25  0.5  0.0  1.0000
+  Al  Al4       1.0  0.5  0.0  0.0  1.0000
+  Al  Al5       1.0  0.5  0.5  0.5  1.0000
+  Al  Al6       1.0  0.75  0.0  0.5  1.0000
+  Al  Al7       1.0  0.75  0.5  0.0  1.0000
 """
 
 
@@ -148,3 +234,64 @@ def test_run_geomopt_against_real_janus_cli() -> None:
     )
     assert result.final_energy is not None
     assert result.optimised_structure
+
+
+@pytest.mark.integration
+@requires_mlip_enabled
+def test_run_eos_against_real_janus_cli() -> None:
+    result = asyncio.run(run_equation_of_state(_NACL_CIF, "NaCl.cif"))
+    assert result.bulk_modulus is not None
+    assert result.bulk_modulus > 0
+    assert result.v_0 is not None
+    assert result.e_0 is not None
+    assert result.volumes and result.energies
+    assert len(result.volumes) == len(result.energies) == 7
+    assert result.eos_svg and "<svg" in result.eos_svg
+
+
+@pytest.mark.integration
+@requires_mlip_enabled
+def test_run_neb_against_real_janus_cli() -> None:
+    """First-ever real run of `run_neb` (previously only checked against
+    source, never executed) -- an Al FCC nearest-neighbour vacancy hop, the
+    smallest structure that still makes a legitimate two-endpoint NEB case
+    (see `_AL_VACANCY_INIT_CIF`'s comment for why this structure)."""
+    result = asyncio.run(
+        run_neb(
+            _AL_VACANCY_INIT_CIF,
+            "Al_vacancy_init.cif",
+            _AL_VACANCY_FINAL_CIF,
+            "Al_vacancy_final.cif",
+            n_images=3,
+            fmax=0.5,
+        )
+    )
+    assert result.barrier is not None
+    assert result.barrier > 0
+    assert result.delta_e is not None
+    assert result.max_force is not None
+    assert result.neb_svg and "<svg" in result.neb_svg
+    assert result.neb_traj and "Lattice" in result.neb_traj
+
+
+@pytest.mark.integration
+@requires_mlip_enabled
+def test_run_phonons_against_real_janus_cli() -> None:
+    result = asyncio.run(run_phonons(_NACL_CIF, "NaCl.cif"))
+    assert result.temperatures
+    assert result.heat_capacity and len(result.heat_capacity) == len(
+        result.temperatures
+    )
+    assert result.entropy and result.free_energy
+    # heat capacity must rise from 0 at T=0 towards the Dulong-Petit limit --
+    # a real physical constraint, not just "some numbers came back".
+    assert result.heat_capacity[0] == pytest.approx(0.0, abs=1e-6)
+    assert result.heat_capacity[-1] > result.heat_capacity[0]
+    assert result.band_svg and "<svg" in result.band_svg
+    # band_yaml is best-effort (render_band_yaml.py's own phonopy
+    # post-processing subprocess, see client.py's docstring) -- assert it
+    # actually succeeded here rather than silently accepting None, since a
+    # real run is exactly what should catch that step regressing. "nqpoint"
+    # is phonopy's own band.yaml top-level key (verified against a real
+    # render_band_yaml.py run), not something we're inventing here.
+    assert result.band_yaml and "nqpoint" in result.band_yaml

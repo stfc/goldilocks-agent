@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import struct
 import urllib.request
 import zlib
@@ -80,6 +81,83 @@ _atom_site_fract_y
 _atom_site_fract_z
 Na 0.0 0.0 0.0
 Cl 0.5 0.5 0.5
+"""
+
+# Same fixture as tests/tools/test_mlip_playground.py's `_AL_VACANCY_INIT_CIF`/
+# `_AL_VACANCY_FINAL_CIF` (duplicated here rather than imported, matching how
+# `_TEST_NACL_CIF` above is already its own copy, not shared with that
+# file) -- smallest real two-endpoint NEB case: a nearest-neighbour vacancy
+# hop in a 2x1x1 FCC Al supercell. See that file's comment for how/why this
+# was built and verified against the real `janus neb` CLI (barrier ~0.76 eV,
+# the right ballpark for known Al vacancy-migration energies).
+_TEST_AL_VACANCY_INIT_CIF = """\
+data_image0
+_chemical_formula_structural       Al7
+_chemical_formula_sum              "Al7"
+_cell_length_a       8.1
+_cell_length_b       4.05
+_cell_length_c       4.05
+_cell_angle_alpha    90.0
+_cell_angle_beta     90.0
+_cell_angle_gamma    90.0
+
+_space_group_name_H-M_alt    "P 1"
+_space_group_IT_number       1
+
+loop_
+  _space_group_symop_operation_xyz
+  'x, y, z'
+
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  _atom_site_occupancy
+  Al  Al1       1.0  0.0  0.5  0.5  1.0000
+  Al  Al2       1.0  0.25  0.0  0.5  1.0000
+  Al  Al3       1.0  0.25  0.5  0.0  1.0000
+  Al  Al4       1.0  0.5  0.0  0.0  1.0000
+  Al  Al5       1.0  0.5  0.5  0.5  1.0000
+  Al  Al6       1.0  0.75  0.0  0.5  1.0000
+  Al  Al7       1.0  0.75  0.5  0.0  1.0000
+"""
+
+_TEST_AL_VACANCY_FINAL_CIF = """\
+data_image0
+_chemical_formula_structural       Al7
+_chemical_formula_sum              "Al7"
+_cell_length_a       8.1
+_cell_length_b       4.05
+_cell_length_c       4.05
+_cell_angle_alpha    90.0
+_cell_angle_beta     90.0
+_cell_angle_gamma    90.0
+
+_space_group_name_H-M_alt    "P 1"
+_space_group_IT_number       1
+
+loop_
+  _space_group_symop_operation_xyz
+  'x, y, z'
+
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  _atom_site_occupancy
+  Al  Al1       1.0  0.0  0.0  0.0  1.0000
+  Al  Al2       1.0  0.25  0.0  0.5  1.0000
+  Al  Al3       1.0  0.25  0.5  0.0  1.0000
+  Al  Al4       1.0  0.5  0.0  0.0  1.0000
+  Al  Al5       1.0  0.5  0.5  0.5  1.0000
+  Al  Al6       1.0  0.75  0.0  0.5  1.0000
+  Al  Al7       1.0  0.75  0.5  0.0  1.0000
 """
 
 
@@ -460,6 +538,62 @@ def test_mlip_tool_call_runs_for_real_once_approved() -> None:
     payload = json.loads(tool_messages[-1].content)
     assert "error" not in payload
     assert payload["energy"] is not None
+
+
+@pytest.mark.integration
+@requires_anthropic_key
+@requires_mlip_enabled
+def test_mlip_neb_tool_call_runs_for_real_and_llm_reports_the_real_barrier() -> None:
+    """NEB's first real end-to-end run (previously only checked against
+    source, see acceptance-testing task) -- a real Claude call drives
+    `run_mlip_neb` through the same confirm/approve/execute path as
+    singlepoint above, on the smallest legitimate two-endpoint NEB case (an
+    Al FCC nearest-neighbour vacancy hop, real barrier verified directly
+    against the client function beforehand: ~0.7647 eV, deterministic --
+    MACE/LBFGS has no randomness). Confirms both that the LLM can drive a
+    calc type it's never been exercised on before, and that its own
+    follow-up text reports a number in the right ballpark rather than a
+    hallucinated one.
+    """
+    graph = build_graph(InMemorySaver())
+    config = {
+        "configurable": {
+            "thread_id": "mlip-neb-approve",
+            "model_id": "anthropic-claude",
+        }
+    }
+    message = {
+        "role": "user",
+        "content": (
+            f"Here is the initial structure (CIF) for an aluminium "
+            f"vacancy hop:\n\n{_TEST_AL_VACANCY_INIT_CIF}\n\n"
+            f"Here is the final structure (CIF), after the hop:\n\n"
+            f"{_TEST_AL_VACANCY_FINAL_CIF}\n\n"
+            "Use the run_mlip_neb tool (init_structure_name "
+            "'Al_vacancy_init.cif', final_structure_name "
+            "'Al_vacancy_final.cif', n_images=3, fmax=0.5 -- keep it small, "
+            "this is just a quick check) to estimate the migration barrier "
+            "between them. Once you have a result, report the barrier in "
+            "eV back to me."
+        ),
+    }
+    asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
+    final = asyncio.run(
+        graph.ainvoke(Command(resume={"approved": True}), config=config)
+    )
+
+    tool_messages = [m for m in final["messages"] if m.type == "tool"]
+    assert tool_messages
+    payload = json.loads(tool_messages[-1].content)
+    assert "error" not in payload
+    assert payload["barrier"] == pytest.approx(0.7647223845317481, abs=1e-3)
+
+    reply = final["messages"][-1].content
+    assert reply.strip()
+    numbers = [float(n) for n in re.findall(r"-?\d+\.\d+", reply)]
+    assert any(abs(n - payload["barrier"]) < 0.05 for n in numbers), (
+        f"expected the reply to report the real barrier (~0.76 eV), got: {reply!r}"
+    )
 
 
 def test_experience_level_system_message_shape() -> None:
