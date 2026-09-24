@@ -61,7 +61,7 @@ class RunResult(BaseModel):
         shipping the pseudopotential text into every subsequent call on
         that thread would be real, growing waste (same reasoning
         mlip_playground's models document for their own heavy fields).
-        `dft_workspace/tool.py`'s `dft_generate` schema tells the model the
+        `dft_workbench/tool.py`'s `dft_generate` schema tells the model the
         real bundle -- pseudopotential included -- is one click away in the
         panel's Inputs tab."""
         return {

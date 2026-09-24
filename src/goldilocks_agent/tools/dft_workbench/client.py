@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 from goldilocks_agent.config import read_core_path
-from goldilocks_agent.tools.dft_workspace.models import (
+from goldilocks_agent.tools.dft_workbench.models import (
     CapabilitiesResult,
     ExplainResult,
     InspectResult,
@@ -42,7 +42,7 @@ def _require_core_path() -> Path:
     if not configured:
         raise RuntimeError(
             "goldilocks-core not configured -- set GOLDILOCKS_CORE_PATH to "
-            "a local goldilocks-core checkout to enable DFT Workspace."
+            "a local goldilocks-core checkout to enable DFT Workbench."
         )
     path = Path(configured)
     if not path.is_dir():

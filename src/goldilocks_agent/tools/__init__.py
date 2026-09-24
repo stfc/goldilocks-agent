@@ -1,5 +1,5 @@
 """The agent's Tools -- one subpackage per entry in the UI's six-Tool list
-(design doc 十二: Find in Databases, DFT Workspace, MLIP Playground, Beyond
+(design doc 十二: Find in Databases, DFT Workbench, MLIP Playground, Beyond
 DFT, Post Analysis, AiiDA). Each subpackage owns both its implementation and
 its LLM-facing tool schema together, so the schema can't drift from the
 function it describes.
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from goldilocks_agent.tools.dft_workspace.tool import (
+from goldilocks_agent.tools.dft_workbench.tool import (
     TOOL_DISPATCH as _DFT_DISPATCH,
     TOOL_SCHEMA as _DFT_SCHEMA,
 )
@@ -42,7 +42,7 @@ TOOL_DISPATCH: dict[str, Callable[..., Awaitable]] = {
     **_MLIP_DISPATCH,
     **_DFT_DISPATCH,
 }
-# DFT Workspace has no confirmation-required tools (see dft_workspace/tool.py's
+# DFT Workbench has no confirmation-required tools (see dft_workbench/tool.py's
 # own docstring for why) -- same as structure_search, so neither contributes
 # to these two sets, only MLIP Playground does.
 CONFIRMATION_REQUIRED_TOOLS: set[str] = {*_MLIP_CONFIRMATION_REQUIRED}

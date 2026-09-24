@@ -1,4 +1,4 @@
-"""LLM-facing tool wrappers for dft_workspace.
+"""LLM-facing tool wrappers for dft_workbench.
 
 Same shape as `structure_search/tool.py`: schema lives next to the
 functions it describes, `graph.py` only ever imports the aggregated
@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from goldilocks_agent.tools.dft_workspace.client import explain, run
-from goldilocks_agent.tools.dft_workspace.models import ExplainResult, RunResult
+from goldilocks_agent.tools.dft_workbench.client import explain, run
+from goldilocks_agent.tools.dft_workbench.models import ExplainResult, RunResult
 
 _TASK_NOTE = (
     "'quantum_espresso' is the only real code, and 'scf_single_point'/"
@@ -128,7 +128,7 @@ TOOL_SCHEMA: list[dict] = [
                 "dft_explain for that). The pseudopotential file itself is "
                 "not included in what you get back (it's plain text but "
                 "large) -- it's part of the real generated bundle, tell the "
-                "user it's there and downloadable from the DFT Workspace "
+                "user it's there and downloadable from the DFT Workbench "
                 "panel's Inputs tab (a one-click 'Download bundle' button) "
                 "if they need the actual file, not just the input/script "
                 "text. " + _TASK_NOTE
