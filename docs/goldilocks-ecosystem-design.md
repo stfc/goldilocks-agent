@@ -644,17 +644,18 @@ desktop app 确认了**表单**路线，不是终端对话路线。
       词汇不是一份，不发明跨仓库单一版本号——`ml` 是 target/contract 名字的定义之家，
       `core` 是 setting/fact 名字的定义之家，各自发各自的版本（派生哈希，不手工递增）；
       谁消费谁的词汇就在自己那边钉期望值，不匹配就报错。agent 两套都用，两边都查
-- [ ] ⚠️ **"最终上传 STFC cloud 的 docker/部署配置放哪"——v2 目前没有答案**（2026-09-17）。
+- [x] ~~⚠️ **"最终上传 STFC cloud 的 docker/部署配置放哪"**~~ → **已定（2026-09-24）**：放
+      **`goldilocks-agent` 自己仓库的 `deploy/stfc-cloud/`**，不是 `goldilocks-web`（历史同名
+      先例不适用）——理由是"部署配置跟着 app 走"，goldilocks-agent 是依赖 core 的那一方（不是
+      反过来），goldilocks-web 继续保持纯静态门户，不背这份配置。
       **v1 有明确先例**：`old-goldilcoks-webapp/docs/stfc-deployment.md`，STFC cloud（VPN-only
       内网 beta）的部署模板（`vllm.service` / `goldilocks-api.service` / `nginx.conf` 等）
       放在 `goldilocks-web/deploy/stfc-cloud/`——**且 v1 那套完全不用 Docker**，是
-      systemd + uv venv + 系统 nginx。
-      **v2 现状**：core 和 agent **各自有一个 Dockerfile**，互不相关，都不对应这件事——
-      core 的 CI（`ci.yml`）只 build 来跑 e2e，**不 push 到任何 registry**；
-      agent 的 CI（`docker-publish.yml`）**会** push，但目标是 `ghcr.io/junwen94/goldilocks-agent`
-      （个人 fork 命名空间，不是 `stfc`），且它的 `docker-compose.yml` 绑定
-      `127.0.0.1:8080`，是给**本地桌面**自跑用的，不是对外服务。
-      **没有任何地方是 v1 `goldilocks-web/deploy/stfc-cloud/` 的 v2 对应物**。
-      待决：这件事该不该复用 `goldilocks-web`（历史同名先例）？该跑哪个包（大概率是
-      core 的 Workbench，呼应「core 自己跑在 STFC web team 的机器上」那句）？
-      形式还是 Docker，还是像 v1 一样走 systemd？
+      systemd + uv venv + 系统 nginx。**v1 的 `vllm.service` 值得作为这次 vLLM 部署的参考起点**。
+      **v2 现状（2026-09-17）**：core 和 agent **各自有一个 Dockerfile**，互不相关，都不对应
+      这件事——core 的 CI（`ci.yml`）只 build 来跑 e2e，**不 push 到任何 registry**；agent 的
+      CI（`docker-publish.yml`）**会** push，但目标是 `ghcr.io/junwen94/goldilocks-agent`
+      （个人 fork 命名空间，不是 `stfc`），且它的 `docker-compose.yml` 绑定 `127.0.0.1:8080`，
+      是给**本地桌面**自跑用的，不是对外服务——这些描述仍然成立，只是"配置放哪个仓库"这一条
+      已经定了。**Docker vs. systemd 这个形式问题仍未定**，可以参考 v1 的 systemd 先例，也可以
+      延续 v2 agent 已有的 Dockerfile 路线，留到实际写 `deploy/stfc-cloud/` 时再定。

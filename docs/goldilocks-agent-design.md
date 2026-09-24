@@ -3301,8 +3301,17 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
 
 ### 19.8 待决 / 已知缺口（本节范围内）
 
-- [ ] **TLS 证书获取方式**——如果走 Let's Encrypt 的 HTTP-01 验证，需要同时开放 80 端口
-      （已建议写进防火墙工单，见 19.5，但最终方案未定）
+- [x] ~~**TLS 证书获取方式**~~ → **已定（2026-09-24，STFC Cloud IT/David Fairbrother 邮件确认）**：
+      **certbot + Let's Encrypt，HTTP-01 验证**——`harbor.stfc.ac.uk` 就是这么做的，选它是因为
+      自动续期、社区支持广，不只是因为免费。**80 端口必须跟 443 一起开，不是"预留以防万一"**，
+      这是防火墙工单要如实填的东西。TLS 配置用 https://configurator.tlsref.org/（Mozilla SSL
+      Config Generator 的后继者）生成，它会给出不影响 certbot 续期挑战的安全配置。终止在哪一层
+      由我们自己定，David 的建议是选团队真能维护多年的方案，他举的 rsync/Manila
+      share/cert-manager+k8s 只是别的团队的例子，不是给这个项目规模的推荐。内网专用证书另有 DI
+      的人工流程（SharePoint 表单），这次公开部署用不上。OpenStack 负载均衡器自动签发（经
+      Barbican）最早要等 2027 年夏天的停机窗口，不是近期选项。
+      ⚠️ **卡点**：STFC Cloud 分配的子域名/floating IP 还没到手（2026-09-24），证书申请要等它
+      落地才能真正跑。
 - [ ] **`app/vite.config.js` 按 `base: '/agent/'` 的构建流程**——需要区分"独立部署/Docker"
       （根路径构建）与"挂在 goldilocks 网站下"（`/agent/` 前缀构建）两种产物，
       具体怎么切换（环境变量？独立的 `npm run build:mounted` 脚本？）还没定
