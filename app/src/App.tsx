@@ -507,6 +507,7 @@ const TRANSLATIONS = {
     no_structure_in_chat: "No structure in chat",
     no_structure_msg: "No structure in this chat yet. Attach a file in the chat first.",
     dismiss_tool: "Dismiss tool",
+    expand_tool_fullpage: "Expand to full page",
     generated_preview: "Generated preview", validation: "Validation",
     mlip_model: "MLIP Model",
     analysis_summary: "Analysis summary",
@@ -575,6 +576,7 @@ const TRANSLATIONS = {
     no_structure_in_chat: "Aucune structure dans le chat",
     no_structure_msg: "Aucune structure dans ce chat. Joignez d'abord un fichier dans le chat.",
     dismiss_tool: "Fermer l'outil",
+    expand_tool_fullpage: "Agrandir en pleine page",
     generated_preview: "Aperçu généré", validation: "Validation",
     mlip_model: "Modèle MLIP",
     analysis_summary: "Résumé de l'analyse",
@@ -642,6 +644,7 @@ const TRANSLATIONS = {
     no_structure_in_chat: "Keine Struktur im Chat",
     no_structure_msg: "Noch keine Struktur in diesem Chat. Fügen Sie zuerst eine Datei im Chat an.",
     dismiss_tool: "Werkzeug schließen",
+    expand_tool_fullpage: "Auf Vollbild erweitern",
     generated_preview: "Generierte Vorschau", validation: "Validierung",
     mlip_model: "MLIP-Modell",
     analysis_summary: "Analyseübersicht",
@@ -709,6 +712,7 @@ const TRANSLATIONS = {
     no_structure_in_chat: "聊天中无结构",
     no_structure_msg: "此聊天中暂无结构。请先在聊天中附加一个文件。",
     dismiss_tool: "关闭工具",
+    expand_tool_fullpage: "展开为全屏详情页",
     generated_preview: "生成预览", validation: "验证",
     mlip_model: "MLIP 模型",
     analysis_summary: "分析摘要",
@@ -776,6 +780,7 @@ const TRANSLATIONS = {
     no_structure_in_chat: "Nessuna struttura nella chat",
     no_structure_msg: "Nessuna struttura in questa chat. Allega prima un file nella chat.",
     dismiss_tool: "Chiudi strumento",
+    expand_tool_fullpage: "Espandi a schermo intero",
     generated_preview: "Anteprima generata", validation: "Validazione",
     mlip_model: "Modello MLIP",
     analysis_summary: "Riepilogo analisi",
@@ -3007,9 +3012,18 @@ export default function App() {
                 <ToolGlyph tool={activeTool} size={18} />
                 <span>{activeTool.label}</span>
               </div>
-              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-                <CloseIcon />
-              </button>
+              <div className="workspace-tool-header-actions">
+                <button
+                  className="ghost-icon-btn"
+                  onClick={() => openToolFullPage(activeTool)}
+                  title={t("expand_tool_fullpage")}
+                >
+                  <ExpandIcon />
+                </button>
+                <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
           </div>
           <div className="workspace-stack">
@@ -3387,9 +3401,18 @@ export default function App() {
                 <ToolGlyph tool={activeTool} size={18} />
                 <span>{activeTool.label}</span>
               </div>
-              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-                <CloseIcon />
-              </button>
+              <div className="workspace-tool-header-actions">
+                <button
+                  className="ghost-icon-btn"
+                  onClick={() => openToolFullPage(activeTool)}
+                  title={t("expand_tool_fullpage")}
+                >
+                  <ExpandIcon />
+                </button>
+                <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
             <div className="workspace-powered-by">
               {t("powered_by")}{" "}
@@ -3600,9 +3623,18 @@ export default function App() {
                 <ToolGlyph tool={activeTool} size={18} />
                 <span>{activeTool.label}</span>
               </div>
-              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-                <CloseIcon />
-              </button>
+              <div className="workspace-tool-header-actions">
+                <button
+                  className="ghost-icon-btn"
+                  onClick={() => openToolFullPage(activeTool)}
+                  title={t("expand_tool_fullpage")}
+                >
+                  <ExpandIcon />
+                </button>
+                <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
             <div className="workspace-no-backing" title={t("beyond_dft_no_backing_hint")}>
               <WarningIcon />
@@ -4117,9 +4149,18 @@ export default function App() {
                 <ToolGlyph tool={activeTool} size={18} />
                 <span>{activeTool.label}</span>
               </div>
-              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-                <CloseIcon />
-              </button>
+              <div className="workspace-tool-header-actions">
+                <button
+                  className="ghost-icon-btn"
+                  onClick={() => openToolFullPage(activeTool)}
+                  title={t("expand_tool_fullpage")}
+                >
+                  <ExpandIcon />
+                </button>
+                <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
             <div className="workspace-no-backing" title="Parsing/plotting general DFT and MLIP output files (pw.out, OUTCAR, ...) isn't built yet -- only the phonon visualizer below is real.">
               <WarningIcon />
@@ -6387,6 +6428,12 @@ export default function App() {
           align-items: center;
           justify-content: space-between;
           margin-bottom: 4px;
+        }
+
+        .workspace-tool-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 2px;
         }
 
         .workspace-tool-header .ghost-icon-btn {
