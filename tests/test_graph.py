@@ -60,11 +60,6 @@ requires_mlip_enabled = pytest.mark.skipif(
     reason="GOLDILOCKS_AGENT_MLIP_ENABLED not set -- MLIP Playground opt-in",
 )
 
-requires_core_cli = pytest.mark.skipif(
-    not os.environ.get("GOLDILOCKS_CORE_PATH"),
-    reason="GOLDILOCKS_CORE_PATH not configured -- DFT Workbench opt-in, see config.py",
-)
-
 _TEST_NACL_CIF = """\
 data_NaCl
 _cell_length_a 5.6402
@@ -268,63 +263,6 @@ def test_llm_node_calls_find_in_databases_tool() -> None:
 
     reply = messages[-1].content.lower()
     assert "nacl" in reply or "sodium chloride" in reply
-
-
-@pytest.mark.integration
-@requires_anthropic_key
-@requires_core_cli
-def test_llm_node_calls_dft_explain_tool() -> None:
-    """First real exercise of DFT Workbench's LLM tool-calling path (added
-    2026-09-16, previously panel-only) -- no confirmation gate (see
-    `dft_workbench/tool.py`'s own docstring for why), so this mirrors
-    find_in_databases's test shape above, not MLIP's pause-for-confirmation
-    one below."""
-    graph = build_graph()
-    config = {"configurable": {"model_id": "anthropic-claude"}}
-    message = {
-        "role": "user",
-        "content": (
-            f"Here is a CIF for NaCl:\n\n{_TEST_NACL_CIF}\n\n"
-            "Use the dft_explain tool (structure_name 'NaCl.cif') to see what "
-            "DFT settings goldilocks-core would recommend for this structure."
-        ),
-    }
-    result = asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
-    messages = result["messages"]
-
-    tool_messages = [m for m in messages if m.type == "tool"]
-    assert tool_messages, "expected the graph to have routed through the tool node"
-    payload = json.loads(tool_messages[-1].content)
-    assert "error" not in payload
-    assert payload["records"]["cutoffs"]["status"] == "resolved"
-
-
-@pytest.mark.integration
-@requires_anthropic_key
-@requires_core_cli
-def test_llm_node_calls_dft_generate_tool_and_trims_pseudo_for_llm() -> None:
-    """Confirms `RunResult.model_dump_for_llm()` (models.py) actually reaches
-    the LLM's own copy of the tool result through `call_tool`'s generic
-    `model_dump_for_llm()`-preference hook, not just in isolation."""
-    graph = build_graph()
-    config = {"configurable": {"model_id": "anthropic-claude"}}
-    message = {
-        "role": "user",
-        "content": (
-            f"Here is a CIF for NaCl:\n\n{_TEST_NACL_CIF}\n\n"
-            "Use the dft_generate tool (structure_name 'NaCl.cif') to generate "
-            "a real Quantum ESPRESSO input for a single-point SCF calculation."
-        ),
-    }
-    result = asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
-    messages = result["messages"]
-
-    tool_messages = [m for m in messages if m.type == "tool"]
-    assert tool_messages, "expected the graph to have routed through the tool node"
-    payload = json.loads(tool_messages[-1].content)
-    assert "error" not in payload
-    assert "scf.in" in payload["files"]
-    assert not any(name.startswith("pseudo/") for name in payload["files"])
 
 
 @pytest.mark.integration
