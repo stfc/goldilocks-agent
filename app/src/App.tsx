@@ -4957,6 +4957,31 @@ export default function App() {
           display: flex;
         }
 
+        /* Structure's 3D viewer (.structure-stage, StructureViewport) is
+           the one piece of card content in this app that isn't naturally
+           content-sized -- it's a WebGL canvas + an absolutely-positioned
+           formula/site-count label, both of which need a real number of
+           pixels to lay out into, not "auto". core/web's own
+           .structure-stage floor (min-height: 16rem) assumes a flex
+           ancestor chain that's actually filling real remaining vertical
+           space (true on the full-page grid and on core's own standalone
+           page) -- but .workbench-card above is deliberately height:auto
+           here, so that chain never gets any height to distribute, and
+           .structure-stage collapses to exactly its 16rem floor with
+           nothing left over for the viewer above the "Inspect lattice..."
+           button, which is why the two visibly overlapped (found live,
+           2026-09-24, a real structure loaded into the inline tab -- not
+           visible with no structure selected, since EmptyStage has no
+           absolutely-positioned children to collide with). Fixing this by
+           giving the stage a real, generous fixed height (not a floor)
+           is consistent with this view's own "natural content flow, the
+           side panel scrolls" design instead of fighting for flex-filled
+           height inside an auto-height ancestor. */
+        .workbench-embed-tabs .structure-stage {
+          height: 22rem;
+          flex: none;
+        }
+
         .chat-area {
           flex: 1;
           overflow-y: auto;
