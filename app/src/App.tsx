@@ -1452,6 +1452,21 @@ function CoreWorkbenchTabs({ workspace }: { workspace: any }) {
   );
 }
 
+// A plain status message for whenever the embedded Workbench isn't safe to
+// mount yet (see the `/api/core-server/ensure` polling effect in App()) --
+// mounting CoreWorkbenchTree/CoreWorkbenchTabs before core is actually
+// listening would just let the Workbench's own HttpCoreClient hit a raw
+// 502, which is exactly the confusing state this replaces.
+function coreWorkbenchStatusMessage(status: { status: string; detail: string | null } | null): string {
+  if (status?.status === "not_configured") {
+    return "DFT Workbench needs a goldilocks-core checkout -- set GOLDILOCKS_CORE_PATH (see the README's Configuration section) and reopen this Tool.";
+  }
+  if (status?.status === "error") {
+    return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
+  }
+  return "Starting goldilocks-core's Workbench backend...";
+}
+
 function getToolById(id) {
   return TOOLS.find((tool) => tool.id === id) ?? null;
 }
@@ -1481,8 +1496,16 @@ export default function App() {
   // One workspace/client instance per app lifetime -- recreating it every
   // time DFT Workbench's detail page is opened would drop in-progress state
   // (see junwen94/goldilocks-agent#1 -- this is the embedded
-  // goldilocks-workbench package DFT Workbench's full-page detail reuses).
+  // goldilocks-workbench package DFT Workbench's full-page detail and inline
+  // panel both reuse, see CoreWorkbenchTree/CoreWorkbenchTabs).
   const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
+  // goldilocks-agent's own /api/core-server/ensure readiness state for the
+  // goldilocks-core HTTP backend the embedded Workbench above needs --
+  // null until the first poll response lands. Deliberately NOT reset when
+  // the user navigates away from DFT Workbench: once ready, core stays up
+  // for the rest of the session (server.py/core_server.py never tie its
+  // lifetime to UI navigation), so there's no reason to re-poll on return.
+  const [coreServerStatus, setCoreServerStatus] = useState<{ status: string; base_url: string | null; detail: string | null } | null>(null);
   // Drives the full-page "takeover" navigation (header's new expand-all-tools
   // button -> a grid of all six Tools -> a Tool's own full-page detail page):
   // "none" is the everyday chat+sidebar+Tools-panel shell, "overview" is the
@@ -1782,6 +1805,45 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Lazily ensures goldilocks-core's HTTP backend is up the first time DFT
+  // Workbench is actually opened (inline or full-page -- both set
+  // session.tool to "dft-workbench", so activeTool.id covers either) --
+  // not on app load, matching core_server.py's own "only spawn once
+  // actually needed" reasoning. POST /api/core-server/ensure is cheap and
+  // non-blocking server-side (it kicks off the spawn/health-check as a
+  // background task and returns immediately), so polling it every second
+  // while "starting" just reflects that same background progress back to
+  // the UI as a real "starting up..." state instead of the embedded
+  // Workbench's own components immediately hitting a 502 against a core
+  // backend that isn't listening yet.
+  useEffect(() => {
+    if (activeTool?.id !== "dft-workbench" || coreServerStatus?.status === "ready") return undefined;
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    async function poll() {
+      try {
+        const resp = await fetch("/api/core-server/ensure", { method: "POST" });
+        const data = await resp.json();
+        if (cancelled) return;
+        setCoreServerStatus(data);
+        if (data.status === "starting") timeoutId = setTimeout(poll, 1000);
+      } catch {
+        if (!cancelled) {
+          setCoreServerStatus({
+            status: "error",
+            base_url: null,
+            detail: "Could not reach goldilocks-agent's own server to check on goldilocks-core.",
+          });
+        }
+      }
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool?.id]);
 
   function replaceSession(id, updater) {
     setSessions((prev) => prev.map((item) => (item.id === id ? updater(item) : item)));
@@ -3230,7 +3292,13 @@ export default function App() {
               <a href="https://github.com/stfc/goldilocks-core" target="_blank" rel="noreferrer">goldilocks-core</a>
             </div>
           </div>
-          <CoreWorkbenchTabs workspace={coreWorkspace} />
+          {coreServerStatus?.status === "ready" ? (
+            <CoreWorkbenchTabs workspace={coreWorkspace} />
+          ) : (
+            <div className="workspace-stack">
+              <div className="workspace-hint">{coreWorkbenchStatusMessage(coreServerStatus)}</div>
+            </div>
+          )}
         </div>
       );
     }
@@ -3905,6 +3973,13 @@ export default function App() {
   function renderToolDetailPage() {
     if (!activeTool) return renderToolsOverview();
     if (activeTool.id === "dft-workbench") {
+      if (coreServerStatus?.status !== "ready") {
+        return (
+          <div className="tool-detail-content">
+            <div className="workspace-hint">{coreWorkbenchStatusMessage(coreServerStatus)}</div>
+          </div>
+        );
+      }
       return <CoreWorkbenchTree workspace={coreWorkspace} />;
     }
     return <div className="tool-detail-content">{workspaceContent}</div>;
