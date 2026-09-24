@@ -3727,9 +3727,18 @@ export default function App() {
               <ToolGlyph tool={activeTool} size={18} />
               <span>{activeTool.label}</span>
             </div>
-            <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-              <CloseIcon />
-            </button>
+            <div className="workspace-tool-header-actions">
+              <button
+                className="ghost-icon-btn"
+                onClick={() => openToolFullPage(activeTool)}
+                title={t("expand_tool_fullpage")}
+              >
+                <ExpandIcon />
+              </button>
+              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                <CloseIcon />
+              </button>
+            </div>
           </div>
           <div className="workspace-powered-by">
             {t("powered_by")}{" "}
@@ -4208,9 +4217,18 @@ export default function App() {
               <ToolGlyph tool={activeTool} size={18} />
               <span>{activeTool.label}</span>
             </div>
-            <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
-              <CloseIcon />
-            </button>
+            <div className="workspace-tool-header-actions">
+              <button
+                className="ghost-icon-btn"
+                onClick={() => openToolFullPage(activeTool)}
+                title={t("expand_tool_fullpage")}
+              >
+                <ExpandIcon />
+              </button>
+              <button className="ghost-icon-btn" onClick={clearTool} title={t("dismiss_tool")}>
+                <CloseIcon />
+              </button>
+            </div>
           </div>
         </div>
         <div className="workspace-section">
@@ -6416,8 +6434,8 @@ export default function App() {
           border-bottom: 1px solid rgba(255, 255, 255, 0.14);
           position: sticky;
           top: -14px;
-          padding-top: 14px;
-          margin-top: -14px;
+          padding: 14px 14px 10px;
+          margin: -14px -14px 10px;
           background: var(--brand-header);
           color: var(--brand-header-text);
           z-index: 3;
