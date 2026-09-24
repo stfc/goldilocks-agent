@@ -63,7 +63,7 @@ export interface Project {
 }
 
 // One chat/conversation. `modeState` is a per-Tool bag (keyed by Tool id,
-// e.g. "ml-analysis"/"dft-setup"/"structure-search") whose shape is
+// e.g. "ml-analysis"/"dft-workbench"/"structure-search") whose shape is
 // defined per-Tool by DEFAULT_MLIP_STATE/DEFAULT_DFT_STATE/etc. above and
 // below -- deliberately untyped here (`Record<string, any>`) rather than a
 // union of all of them, since each Tool only ever reads its own key.
@@ -177,8 +177,8 @@ const TOOL_CALL_TO_UI_TOOL = {
   run_mlip_equation_of_state: "ml-analysis",
   run_mlip_neb: "ml-analysis",
   run_mlip_phonons: "ml-analysis",
-  dft_explain: "dft-setup",
-  dft_generate: "dft-setup",
+  dft_explain: "dft-workbench",
+  dft_generate: "dft-workbench",
 };
 
 // Only MACE is actually wired up (janus-core supports more, but exposing a
@@ -277,9 +277,9 @@ const TOOLS = [
     defaultPanel: "analysis",
   },
   {
-    id: "dft-setup",
+    id: "dft-workbench",
     icon: "📄",
-    label: "DFT Workspace",
+    label: "DFT Workbench",
     color: "#f59e0b",
     desc: "Ask anything about DFT workflows, inputs, convergence, and results. Goldilocks provides guidance rather than running jobs.",
     launcherDesc: "Guidance for DFT workflows, inputs, convergence, and results",
@@ -319,7 +319,7 @@ const TOOLS = [
 ];
 
 const TOOL_ICON_SOURCES = {
-  "dft-setup": "/mode-icons/dft.svg",
+  "dft-workbench": "/mode-icons/dft.svg",
   "ml-analysis": "/mode-icons/janus-core.png",
   "structure-search": "/mode-icons/structure-search.svg",
   "beyond-dft": "/mode-icons/beyond-dft.svg",
@@ -356,7 +356,7 @@ const DFT_TASK_GROUPS = [
   },
 ];
 
-// `session.modeState["dft-setup"]`'s shape -- same per-chat fix as MLIP/
+// `session.modeState["dft-workbench"]`'s shape -- same per-chat fix as MLIP/
 // structure-search. `overrides` mirrors goldilocks-core's own sparse
 // `--set`/`overrides: {}` model (advisors auto-resolve everything not
 // listed here) -- not a flat copy of every setting like the old fake
@@ -518,7 +518,7 @@ const TRANSLATIONS = {
     // Mode launcher descriptions
     tool_structure_search_launcher: "Search Materials Cloud, Materials Project, NOMAD, and JARVIS",
     tool_ml_analysis_launcher: "Explore materials research with machine learning interatomic potentials",
-    tool_dft_setup_launcher: "Guidance for DFT workflows, inputs, convergence, and results",
+    tool_dft_workbench_launcher: "Guidance for DFT workflows, inputs, convergence, and results",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     tool_post_analysis_launcher: "Parse and interpret DFT/MLIP outputs, plots, and convergence data",
     tool_aiida_launcher: "Monitor AiiDA processes, diagnose failures, and browse provenance",
@@ -585,7 +585,7 @@ const TRANSLATIONS = {
     tab_analysis: "Analyse", tab_metrics: "Métriques", tab_compute: "Calcul",
     tool_structure_search_launcher: "Rechercher dans Materials Cloud, Materials Project, NOMAD et JARVIS",
     tool_ml_analysis_launcher: "Explorer la recherche sur les matériaux avec des potentiels interatomiques ML",
-    tool_dft_setup_launcher: "Aide pour les workflows DFT, entrées, convergence et résultats",
+    tool_dft_workbench_launcher: "Aide pour les workflows DFT, entrées, convergence et résultats",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM et au-delà",
     tool_post_analysis_launcher: "Analyser et interpréter les sorties DFT/MLIP, les graphiques et les données de convergence",
     tool_aiida_launcher: "Surveiller les processus AiiDA, diagnostiquer les échecs et parcourir la provenance",
@@ -652,7 +652,7 @@ const TRANSLATIONS = {
     tab_analysis: "Analyse", tab_metrics: "Metriken", tab_compute: "Berechnen",
     tool_structure_search_launcher: "In Materials Cloud, Materials Project, NOMAD und JARVIS suchen",
     tool_ml_analysis_launcher: "Materialforschung mit maschinellen interatomaren Potentialen erkunden",
-    tool_dft_setup_launcher: "Anleitung für DFT-Workflows, Eingaben, Konvergenz und Ergebnisse",
+    tool_dft_workbench_launcher: "Anleitung für DFT-Workflows, Eingaben, Konvergenz und Ergebnisse",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM und darüber hinaus",
     tool_post_analysis_launcher: "DFT/MLIP-Ausgaben, Diagramme und Konvergenzdaten analysieren und interpretieren",
     tool_aiida_launcher: "AiiDA-Prozesse überwachen, Fehler diagnostizieren und Herkunft durchsuchen",
@@ -719,7 +719,7 @@ const TRANSLATIONS = {
     tab_analysis: "分析", tab_metrics: "指标", tab_compute: "计算",
     tool_structure_search_launcher: "搜索 Materials Cloud、Materials Project、NOMAD 和 JARVIS",
     tool_ml_analysis_launcher: "用机器学习原子间势探索材料研究",
-    tool_dft_setup_launcher: "DFT 工作流、输入、收敛和结果指导",
+    tool_dft_workbench_launcher: "DFT 工作流、输入、收敛和结果指导",
     tool_beyond_dft_launcher: "GW、BSE、QMC、TDDFT、Wannier、DMFT、QM/MM 及更多",
     tool_post_analysis_launcher: "解析并解读 DFT/MLIP 输出、图表和收敛数据",
     tool_aiida_launcher: "监控 AiiDA 流程，诊断失败，浏览溯源信息",
@@ -786,7 +786,7 @@ const TRANSLATIONS = {
     tab_analysis: "Analisi", tab_metrics: "Metriche", tab_compute: "Calcolo",
     tool_structure_search_launcher: "Cerca su Materials Cloud, Materials Project, NOMAD e JARVIS",
     tool_ml_analysis_launcher: "Esplora la ricerca sui materiali con potenziali interatomici ML",
-    tool_dft_setup_launcher: "Guida per workflow DFT, input, convergenza e risultati",
+    tool_dft_workbench_launcher: "Guida per workflow DFT, input, convergenza e risultati",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM e oltre",
     tool_post_analysis_launcher: "Analizza e interpreta output DFT/MLIP, grafici e dati di convergenza",
     tool_aiida_launcher: "Monitora i processi AiiDA, diagnostica gli errori ed esplora la provenienza",
@@ -1048,6 +1048,17 @@ function MenuIcon() {
       <line x1="3" y1="6" x2="21" y2="6" />
       <line x1="3" y1="12" x2="21" y2="12" />
       <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
     </svg>
   );
 }
@@ -1379,12 +1390,19 @@ export default function App() {
   // separate elements, so hover state is lifted here and applied via a
   // shared class.
   const [hoveredHandle, setHoveredHandle] = useState(null);
-  // "chat" is the existing sidebar/chat/tools layout; "workbench" swaps the
-  // same row for the embedded goldilocks-workbench package (see
-  // junwen94/goldilocks-agent#1). One workspace/client instance per app
-  // lifetime -- recreating it on every toggle would drop in-progress state.
-  const [viewMode, setViewMode] = useState("chat");
+  // One workspace/client instance per app lifetime -- recreating it every
+  // time DFT Workbench's detail page is opened would drop in-progress state
+  // (see junwen94/goldilocks-agent#1 -- this is the embedded
+  // goldilocks-workbench package DFT Workbench's full-page detail reuses).
   const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
+  // Drives the full-page "takeover" navigation (header's new expand-all-tools
+  // button -> a grid of all six Tools -> a Tool's own full-page detail page):
+  // "none" is the everyday chat+sidebar+Tools-panel shell, "overview" is the
+  // grid, "detail" is a specific Tool's full page (which Tool is just
+  // `activeTool`, the same session.tool the inline side panel already
+  // tracks -- see openToolFullPage). Purely additive: the inline "pick a
+  // tool from the side panel" path below doesn't read this state at all.
+  const [fullPageView, setFullPageView] = useState<"none" | "overview" | "detail">("none");
   const [view, setView] = useState("chats");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
@@ -1590,15 +1608,15 @@ export default function App() {
   // (2026-09-15, redone against goldilocks-core's real v2 CLI -- see
   // DEFAULT_DFT_STATE's own comment for why `overrides` is sparse, not a
   // flat copy of every setting).
-  const dftState = session?.modeState?.["dft-setup"] ?? DEFAULT_DFT_STATE;
+  const dftState = session?.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE;
   function updateDftState(key, updaterOrValue) {
     updateCurrentSession((current) => {
-      const prev = current.modeState?.["dft-setup"] ?? DEFAULT_DFT_STATE;
+      const prev = current.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE;
       const nextValue =
         typeof updaterOrValue === "function" ? updaterOrValue(prev[key]) : updaterOrValue;
       return {
         ...current,
-        modeState: { ...current.modeState, "dft-setup": { ...prev, [key]: nextValue } },
+        modeState: { ...current.modeState, "dft-workbench": { ...prev, [key]: nextValue } },
       };
     });
   }
@@ -1744,7 +1762,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTool?.id !== "dft-setup" || (session?.rightPanelView ?? activeTool.defaultPanel) !== "setup") {
+    if (activeTool?.id !== "dft-workbench" || (session?.rightPanelView ?? activeTool.defaultPanel) !== "setup") {
       setOpenDftPicker(null);
     }
   }, [activeTool, session?.rightPanelView]);
@@ -1753,7 +1771,7 @@ export default function App() {
   // actually opened -- not on app load, since most sessions may never
   // touch this Tool and goldilocks-core might not even be configured.
   useEffect(() => {
-    if (activeTool?.id !== "dft-setup" || dftCapabilities || dftCapabilitiesLoading) return;
+    if (activeTool?.id !== "dft-workbench" || dftCapabilities || dftCapabilitiesLoading) return;
     setDftCapabilitiesLoading(true);
     setDftCapabilitiesError(null);
     fetch("/api/dft/capabilities")
@@ -2034,6 +2052,29 @@ export default function App() {
       rightPanelOpen: false,
       rightPanelView: null,
     }));
+  }
+
+  // Full-page tools navigation (header's expand-all-tools button, see
+  // its JSX for the icon-btn that calls openToolsOverview). Kept separate
+  // from activateTool/clearTool above only in name -- opening a Tool's full
+  // page reuses activateTool itself, so it's still the exact same
+  // session.tool/rightPanelOpen state the inline side panel reads (design
+  // constraint: this navigation is additive, not a fork of Tool state).
+  function openToolsOverview() {
+    setFullPageView("overview");
+  }
+
+  function openToolFullPage(tool) {
+    activateTool(tool);
+    setFullPageView("detail");
+  }
+
+  function backToToolsOverview() {
+    setFullPageView("overview");
+  }
+
+  function closeFullPage() {
+    setFullPageView("none");
   }
 
   function setRightPanelView(viewName) {
@@ -2609,13 +2650,13 @@ export default function App() {
           title: nextTitle,
           project_id: targetSession.projectId,
           tool: targetSession.tool ?? null,
-          // Real ids ("dft-setup"/"ml-analysis", not "dft"/"mlip") -- the
+          // Real ids ("dft-workbench"/"ml-analysis", not "dft"/"mlip") -- the
           // old checks here never matched anything, so this was always
           // `null` regardless of which Tool was active (2026-09-15 fix).
           // Still accepted-but-unused server-side until DFT/MLIP get an
           // LLM tool node (design doc Step 3, not this pass) -- see
           // ChatRequest.workspace_state in server.py.
-          workspace_state: targetSession.tool === "dft-setup" ? {
+          workspace_state: targetSession.tool === "dft-workbench" ? {
             code: dftCode,
             task: dftTask,
             hpc: dftHpc || null,
@@ -2754,8 +2795,8 @@ export default function App() {
                 ...current,
                 modeState: {
                   ...current.modeState,
-                  "dft-setup": {
-                    ...(current.modeState?.["dft-setup"] ?? DEFAULT_DFT_STATE),
+                  "dft-workbench": {
+                    ...(current.modeState?.["dft-workbench"] ?? DEFAULT_DFT_STATE),
                     [key]: payload.result,
                   },
                 },
@@ -3244,7 +3285,7 @@ export default function App() {
       );
     }
 
-    if (activeTool.id === "dft-setup") {
+    if (activeTool.id === "dft-workbench") {
       // Grouped once per render from the flat /api/dft/capabilities
       // settings[] list -- 49 items, cheap, no memoization needed.
       const allSettings = dftCapabilities?.settings ?? [];
@@ -4139,6 +4180,103 @@ export default function App() {
     );
   }
 
+  // Full-page "all tools" grid -- reachable from the header's new
+  // expand-all-tools button (openToolsOverview). Each card's own expand
+  // affordance (ExpandIcon) drills into that Tool's full detail page via
+  // openToolFullPage, which is activateTool() plus flipping fullPageView to
+  // "detail" -- so this is purely a second entry point onto the same Tool
+  // state renderToolPicker()/activateTool() already manage for the inline
+  // side panel, not a parallel copy of it.
+  function renderToolsOverview() {
+    return (
+      <div className="tools-overview-grid">
+        {TOOLS.map((tool) => (
+          <button
+            key={tool.id}
+            type="button"
+            className="tools-overview-card"
+            style={{ "--tool-color": tool.color } as CSSPropertiesWithVars}
+            onClick={() => openToolFullPage(tool)}
+          >
+            <div className="tools-overview-card-icon">
+              <ToolGlyph tool={tool} size={26} />
+            </div>
+            <div className="tools-overview-card-copy">
+              <strong>{tool.label}</strong>
+              <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+            </div>
+            <span className="tools-overview-expand-btn" title={`Expand ${tool.label}`}>
+              <ExpandIcon />
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // Full-page detail body for whichever Tool is active. DFT Workbench is
+  // special-cased to the real embedded goldilocks-core Workbench (the exact
+  // MantineProvider/CoreWorkspaceProvider/CoreWorkbenchContent block that
+  // used to live under the old top-level "Workbench" viewMode branch) --
+  // every other Tool reuses `workspaceContent` (the same renderWorkspace()
+  // output already rendered beside chat by the inline side panel) at full
+  // width instead of designing a second copy of that content.
+  function renderToolDetailPage() {
+    if (!activeTool) return renderToolsOverview();
+    if (activeTool.id === "dft-workbench") {
+      return (
+        <MantineProvider
+          theme={workbenchTheme}
+          colorSchemeManager={coreColorSchemeManager}
+          defaultColorScheme="light"
+        >
+          <CoreWorkspaceProvider workspace={coreWorkspace}>
+            <CoreWorkbenchContent />
+          </CoreWorkspaceProvider>
+        </MantineProvider>
+      );
+    }
+    return <div className="tool-detail-content">{workspaceContent}</div>;
+  }
+
+  // The full-page takeover itself -- same "replace the whole app-row"
+  // pattern the old viewMode === "workbench" branch used, just triggered by
+  // fullPageView instead of a removed top-level Chat/Workbench toggle. Always
+  // offers a breadcrumb back to chat (and, one level down, back to the
+  // overview) so there's an obvious way out from anywhere in this drill-down.
+  function renderToolsFullPage() {
+    const isWorkbenchDetail = fullPageView === "detail" && activeTool?.id === "dft-workbench";
+    return (
+      <div className="app-row tools-fullpage">
+        <div className="tools-fullpage-header">
+          <button type="button" className="tools-fullpage-crumb-btn" onClick={closeFullPage}>
+            ← Chat
+          </button>
+          <span className="tools-fullpage-crumb-sep">/</span>
+          {fullPageView === "detail" ? (
+            <button type="button" className="tools-fullpage-crumb-btn" onClick={backToToolsOverview}>
+              All Tools
+            </button>
+          ) : (
+            <span className="tools-fullpage-crumb-current">All Tools</span>
+          )}
+          {fullPageView === "detail" && activeTool && (
+            <>
+              <span className="tools-fullpage-crumb-sep">/</span>
+              <span className="tools-fullpage-crumb-current">
+                <ToolGlyph tool={activeTool} size={15} />
+                {activeTool.label}
+              </span>
+            </>
+          )}
+        </div>
+        <div className={`tools-fullpage-body${isWorkbenchDetail ? " workbench-embed" : ""}`}>
+          {fullPageView === "overview" ? renderToolsOverview() : renderToolDetailPage()}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`app ${resolvedTheme}${resizingPane ? " pane-resizing" : ""}`}
@@ -4242,15 +4380,15 @@ export default function App() {
           border-left: 1px solid rgba(255, 255, 255, 0.12);
         }
 
-        /* Workbench mode has no sidebar/tools panel to resize, so these
-           dividers (normally paired with the resize handles right next to
-           them) would imply a draggable boundary that isn't there. */
-        .top-header-workbench .top-header-left {
-          border-right: none;
-        }
-
-        .top-header-workbench .top-header-right {
-          border-left: none;
+        /* Groups the tools-panel toggle and the new expand-all-tools button
+           together as a pair, so they read as two related controls instead
+           of being pushed to opposite ends by .top-header-right's own
+           space-between (which still applies between the "Tools" label and
+           this whole group). */
+        .top-header-right-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
         }
 
         .top-header-center {
@@ -4808,42 +4946,157 @@ export default function App() {
           min-height: 0;
         }
 
-        .chat-mode-toggle {
-          /* Centered on the whole header (not .top-header-center), so it
-             doesn't shift when the left/right section widths differ between
-             chat and workbench mode -- see the comment at its JSX. */
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%);
-          z-index: 7;
-          display: inline-flex;
-          align-items: center;
-          gap: 2px;
-          padding: 3px;
-          border-radius: 999px;
-          background: rgba(255, 255, 255, 0.12);
+        /* Full-page tools takeover (renderToolsFullPage): the "all tools"
+           overview grid and each Tool's own full-page detail page, both
+           replacing the whole sidebar+main+Tools-panel row the same way
+           the old top-level Workbench viewMode used to. */
+        .tools-fullpage {
+          flex-direction: column;
+          overflow: hidden;
+          background: var(--bg);
         }
 
-        .chat-mode-toggle-btn {
-          border: none;
-          background: transparent;
-          color: rgba(255, 255, 255, 0.7);
-          font-family: inherit;
-          font-size: 12px;
-          font-weight: 600;
-          padding: 6px 14px;
-          border-radius: 999px;
-          cursor: pointer;
-          display: inline-flex;
+        .tools-fullpage-header {
+          display: flex;
           align-items: center;
           gap: 6px;
+          padding: 14px 24px;
+          border-bottom: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+
+        .tools-fullpage-crumb-btn {
+          border: none;
+          background: transparent;
+          color: var(--muted);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          padding: 5px 9px;
+          border-radius: 8px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
           transition: all 0.14s ease;
         }
 
-        .chat-mode-toggle-btn.active {
-          background: #ffffff;
-          color: var(--brand-header);
+        .tools-fullpage-crumb-btn:hover {
+          background: var(--bg-soft);
+          color: var(--text);
+        }
+
+        .tools-fullpage-crumb-sep {
+          color: var(--subtle);
+          font-size: 13px;
+        }
+
+        .tools-fullpage-crumb-current {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text);
+          padding: 5px 9px;
+        }
+
+        .tools-fullpage-body {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .tools-overview-grid {
+          width: min(1080px, calc(100% - 64px));
+          margin: 0 auto;
+          padding: 32px 0 48px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+          gap: 16px;
+        }
+
+        .tools-overview-card {
+          border: 1px solid var(--border);
+          background: var(--bg-elev);
+          border-radius: 16px;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+          text-align: left;
+          cursor: pointer;
+          font-family: inherit;
+          color: inherit;
+          position: relative;
+          transition: all 0.14s ease;
+        }
+
+        .tools-overview-card:hover {
+          background: var(--bg-soft);
+          border-color: color-mix(in srgb, var(--tool-color, var(--accent)) 40%, var(--border));
+          transform: translateY(-1px);
+        }
+
+        .tools-overview-card-icon {
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          background: color-mix(in srgb, var(--tool-color, var(--accent)) 14%, var(--bg-elev));
+          color: var(--tool-color, var(--accent));
+        }
+
+        .tools-overview-card-copy strong {
+          display: block;
+          font-size: 15px;
+          margin-bottom: 4px;
+        }
+
+        .tools-overview-card-copy span {
+          display: block;
+          font-size: 12px;
+          color: var(--muted);
+          line-height: 1.5;
+        }
+
+        .tools-overview-expand-btn {
+          position: absolute;
+          top: 16px;
+          right: 16px;
+          width: 26px;
+          height: 26px;
+          border-radius: 8px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--subtle);
+          background: var(--bg-soft);
+          transition: color 0.14s ease;
+        }
+
+        .tools-overview-card:hover .tools-overview-expand-btn {
+          color: var(--tool-color, var(--accent));
+        }
+
+        /* Full-page detail body for the five Tools that reuse their inline
+           side-panel content (renderToolDetailPage) -- same workspace-body
+           padding as the side panel (see .workspace-body below) so the
+           sticky .workspace-tool-header inside stays correctly positioned,
+           just centered and wider instead of pinned to the aside's width.
+           DFT Workbench's detail (the real embedded goldilocks-core
+           Workbench) does NOT use this -- it renders full-bleed via
+           .workbench-embed instead, see the JSX. */
+        .tool-detail-content {
+          width: 100%;
+          max-width: 900px;
+          margin: 0 auto;
+          padding: 0 14px 14px;
+          box-sizing: border-box;
         }
 
         .workbench-embed {
@@ -8029,36 +8282,32 @@ export default function App() {
         }
       `}</style>
 
-      <header className={`top-header${viewMode === "workbench" ? " top-header-workbench" : ""}`}>
+      <header className="top-header">
         <div
           className="top-header-left"
-          style={{ width: viewMode === "workbench" ? sidebarWidth : sbOpen ? sidebarWidth : 100 }}
+          style={{ width: sbOpen ? sidebarWidth : 100 }}
         >
           <div className="brand">
             <div className="brand-icon">
               <LogoImage alt="Goldilocks logo" />
             </div>
-            {(viewMode === "workbench" || sbOpen) && (
+            {sbOpen && (
               <div className="brand-copy">
                 <span className="brand-name brand-ink">Goldilocks</span>
                 <span className="brand-slogan">Towards Greener Computation</span>
               </div>
             )}
           </div>
-          {/* Sidebar collapse only means something in chat mode -- Workbench
-              doesn't have a sidebar of its own to toggle. */}
-          {viewMode === "chat" && (
-            <button
-              className="icon-btn"
-              onClick={() => setSbOpen((open) => !open)}
-              title={sbOpen ? "Collapse sidebar" : "Expand sidebar"}
-            >
-              <MenuIcon />
-            </button>
-          )}
+          <button
+            className="icon-btn"
+            onClick={() => setSbOpen((open) => !open)}
+            title={sbOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <MenuIcon />
+          </button>
         </div>
 
-        {viewMode === "chat" && sbOpen && (
+        {sbOpen && (
           <div
             className={`resize-handle${hoveredHandle === "sidebar" || resizingPane === "sidebar" ? " handle-active" : ""}`}
             onMouseEnter={() => setHoveredHandle("sidebar")}
@@ -8077,32 +8326,6 @@ export default function App() {
           />
         )}
 
-        {/* Anchored to <header> itself (not .top-header-center) so it stays
-            in the exact same spot regardless of how wide the left/right
-            sections are -- .top-header-center's width (and therefore its
-            own centerpoint) shifts with sidebar/tools width and with
-            viewMode, which made the pill visibly jump when switching tabs. */}
-        <div className="chat-mode-toggle" role="tablist" aria-label="View">
-          <button
-            type="button"
-            className={`chat-mode-toggle-btn${viewMode === "chat" ? " active" : ""}`}
-            role="tab"
-            aria-selected={viewMode === "chat"}
-            onClick={() => setViewMode("chat")}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            className={`chat-mode-toggle-btn${viewMode === "workbench" ? " active" : ""}`}
-            role="tab"
-            aria-selected={viewMode === "workbench"}
-            onClick={() => setViewMode("workbench")}
-          >
-            Workbench
-          </button>
-        </div>
-
         <div className="top-header-center">
           <button
             className="top-header-theme-btn"
@@ -8112,7 +8335,7 @@ export default function App() {
           </button>
         </div>
 
-        {viewMode === "chat" && toolsOpen && (
+        {toolsOpen && (
           <div
             className={`resize-handle${hoveredHandle === "tools" || resizingPane === "tools" ? " handle-active" : ""}`}
             onMouseEnter={() => setHoveredHandle("tools")}
@@ -8131,12 +8354,9 @@ export default function App() {
           />
         )}
 
-        {/* Tools panel only exists in chat mode -- collapse this section to
-            its minimal width instead of showing controls for a panel that
-            isn't there in Workbench mode. */}
-        <div className="top-header-right" style={{ width: viewMode === "workbench" ? 64 : toolsOpen ? toolsWidth : 64 }}>
-          {viewMode === "chat" && toolsOpen && <span className="brand-ink">Tools</span>}
-          {viewMode === "chat" && (
+        <div className="top-header-right" style={{ width: toolsOpen ? toolsWidth : 100 }}>
+          {toolsOpen && <span className="brand-ink">Tools</span>}
+          <div className="top-header-right-actions">
             <button
               className="icon-btn"
               onClick={() => setToolsOpen((open) => !open)}
@@ -8144,25 +8364,25 @@ export default function App() {
             >
               <MenuIcon />
             </button>
-          )}
+            {/* New, additive: takes over the whole main content area with a
+                full-page grid of all six Tools (renderToolsOverview) -- kept
+                as its own button right next to the one above rather than
+                repurposing it, since that one's "show/hide the side panel"
+                job is unchanged and still needs to work on its own. */}
+            <button
+              className="icon-btn"
+              onClick={openToolsOverview}
+              title={fullPageView === "none" ? "Expand all tools" : "Close tools overview"}
+            >
+              <ExpandIcon />
+            </button>
+          </div>
         </div>
       </header>
 
-      {viewMode === "workbench" && (
-        <div className="app-row workbench-embed">
-          <MantineProvider
-            theme={workbenchTheme}
-            colorSchemeManager={coreColorSchemeManager}
-            defaultColorScheme="light"
-          >
-            <CoreWorkspaceProvider workspace={coreWorkspace}>
-              <CoreWorkbenchContent />
-            </CoreWorkspaceProvider>
-          </MantineProvider>
-        </div>
-      )}
-
-      {viewMode === "chat" && (
+      {fullPageView !== "none" ? (
+        renderToolsFullPage()
+      ) : (
       <div className="app-row">
         {dragOver && (
           <div className="drag-overlay">
