@@ -214,7 +214,7 @@ const DEFAULT_MLIP_STATE = {
 // Beyond DFT's own "Code"/"Machine" pickers are purely decorative context
 // (it already carries the honest `.workspace-no-backing` badge -- nothing
 // it shows is backed by a real API either way), kept deliberately separate
-// from DFT Workspace's real, session-scoped state above so redoing DFT
+// from DFT Workbench's real, session-scoped state above so redoing DFT
 // Workspace against v2 doesn't have to touch Beyond DFT at all. `scarf` is
 // the one real HPC profile confirmed installed on this checkout (verified
 // 2026-09-15 via `/capabilities`'s `hpc_profiles[]`) -- not a discovered
@@ -1459,7 +1459,7 @@ export default function App() {
   const [dftOverrideDraftKey, setDftOverrideDraftKey] = useState("");
   const [dftBundleLoading, setDftBundleLoading] = useState(false);
   const [dftBundleError, setDftBundleError] = useState(null);
-  // DFT Workspace's own `code`/`task`/`hpc`/`overrides`/results are
+  // DFT Workbench's own `code`/`task`/`hpc`/`overrides`/results are
   // session-scoped below (see `dftState`/`updateDftState`) -- these two
   // are Beyond DFT's own decorative, deliberately-decoupled state (see
   // `DEFAULT_DFT_STATE`'s comment).
@@ -1604,7 +1604,7 @@ export default function App() {
   const mlipNebFmax = mlipState.mlipNebFmax;
   const setMlipNebFmax = (v) => updateMlipState("mlipNebFmax", v);
 
-  // DFT Workspace panel state -- same per-chat fix, same reasoning as MLIP
+  // DFT Workbench panel state -- same per-chat fix, same reasoning as MLIP
   // (2026-09-15, redone against goldilocks-core's real v2 CLI -- see
   // DEFAULT_DFT_STATE's own comment for why `overrides` is sparse, not a
   // flat copy of every setting).
@@ -1634,7 +1634,7 @@ export default function App() {
   const setDftRunResult = (v) => updateDftState("runResult", v);
 
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
-  // DFT Workspace's own Code/Task groups are derived from the real fetched
+  // DFT Workbench's own Code/Task groups are derived from the real fetched
   // /api/dft/capabilities payload now that goldilocks-core#62 closed --
   // DFT_CODE_GROUPS/DFT_TASK_GROUPS stay as the loading/error fallback (and
   // Beyond DFT's own decorative picker keeps using them unconditionally,
@@ -1767,7 +1767,7 @@ export default function App() {
     }
   }, [activeTool, session?.rightPanelView]);
 
-  // Fetched once, lazily, the first time the DFT Workspace panel is
+  // Fetched once, lazily, the first time the DFT Workbench panel is
   // actually opened -- not on app load, since most sessions may never
   // touch this Tool and goldilocks-core might not even be configured.
   useEffect(() => {
@@ -6463,7 +6463,7 @@ export default function App() {
         /* .workspace-hint had no rule at all before this -- it rendered as
            unstyled system-default text, clashing with the styled
            WorkspacePicker/SimpleSelect controls next to it in every Tool
-           panel that uses it (not just DFT Workspace). */
+           panel that uses it (not just DFT Workbench). */
         .workspace-hint {
           font-size: 12px;
           line-height: 1.6;
