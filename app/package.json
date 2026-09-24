@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "dat.gui": "^0.7.9",
-    "goldilocks-workbench": "file:vendor/goldilocks-workbench-0.0.1.tgz",
+    "goldilocks-workbench": "file:vendor/goldilocks-workbench-0.0.2.tgz",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
