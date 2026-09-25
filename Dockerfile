@@ -3,7 +3,15 @@
 # --- frontend build ---------------------------------------------------
 FROM node:20-slim AS frontend-build
 WORKDIR /app/app
+# `vendor/` too, not just package.json/lock: package.json's goldilocks-workbench
+# dependency is a `file:vendor/goldilocks-workbench-*.tgz` -- `npm ci` needs
+# it to already exist, not just be promised by package.json (reproduced
+# directly 2026-09-25: `npm error enoent ... open '/app/app/vendor/
+# goldilocks-workbench-0.0.4.tgz'` without this). Still copied ahead of the
+# full `app/` tree below so this layer only invalidates when deps actually
+# change, not on every source edit.
 COPY app/package.json app/package-lock.json* ./
+COPY app/vendor/ ./vendor/
 RUN npm ci
 COPY app/ ./
 RUN npm run build
