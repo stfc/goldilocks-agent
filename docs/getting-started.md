@@ -36,7 +36,7 @@ inside the container, nothing to install for those.
 
 ```bash
 ollama pull qwen3.8
-git clone <this-repo> && cd 1-goldilocks-agent
+git clone <this-repo> && cd goldilocks-agent
 docker compose up
 ```
 
@@ -111,7 +111,7 @@ above, not containerized on either path).
    ```
 2. **Clone and install dependencies:**
    ```bash
-   git clone <this-repo> && cd 1-goldilocks-agent
+   git clone <this-repo> && cd goldilocks-agent
    uv sync --group dev        # backend: Python deps into ./.venv
    cd app && npm install      # frontend: JS deps into app/node_modules
    cd ..

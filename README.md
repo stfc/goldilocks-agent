@@ -63,7 +63,7 @@ Requires [Docker](https://docs.docker.com/get-docker/) (with Compose,
 included in current Docker Desktop/Engine installs) and Ollama (above).
 
 ```bash
-git clone <this-repo> && cd 1-goldilocks-agent
+git clone <this-repo> && cd goldilocks-agent
 docker compose up
 ```
 
@@ -100,7 +100,7 @@ optional: a [goldilocks-core](https://github.com/stfc/goldilocks-core)
 checkout (DFT Workbench).
 
 ```bash
-git clone <this-repo> && cd 1-goldilocks-agent
+git clone <this-repo> && cd goldilocks-agent
 uv sync --group dev        # backend: Python deps into ./.venv
 cd app && npm install      # frontend: JS deps into app/node_modules
 ```
