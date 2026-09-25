@@ -50,6 +50,7 @@ from langgraph.types import interrupt
 
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.tools import (
+    CLIENT_EXECUTED_TOOLS,
     CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED_TOOLS,
     TOOL_DISPATCH,
@@ -314,6 +315,31 @@ async def call_tool(state: MessagesState) -> dict:
                     }
                 )
                 continue
+        if name in CLIENT_EXECUTED_TOOLS:
+            # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
+            # three all just raise) never runs: the real work happens in
+            # the browser, via app/src/App.tsx's dispatchDftTool calling
+            # the embedded goldilocks-workbench panel's own
+            # `coreWorkspace.dispatch(...)`. A second interrupt hands
+            # control to it; its resume value *is* the tool's result, not
+            # an approve/decline decision.
+            outcome = interrupt(
+                {"tool": name, "args": call["args"], "client_execute": True}
+            )
+            output = (
+                {"error": outcome["error"]}
+                if "error" in outcome
+                else outcome.get("result", {})
+            )
+            writer({"type": "tool_result", "tool": name, "result": output})
+            results.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": json.dumps(output),
+                }
+            )
+            continue
         fn = TOOL_DISPATCH.get(name)
         if fn is None:
             output = {"error": f"Unknown tool: {name!r}"}

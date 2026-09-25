@@ -108,3 +108,16 @@ def test_conversation_reassign_and_delete_clears_checkpointer(
 
         history = client.get("/api/chat/thread-1").json()
         assert history["messages"] == []
+
+
+def test_pending_interrupt_event_distinguishes_client_execute() -> None:
+    from goldilocks_agent.server import _pending_interrupt_event
+
+    confirmation = {"tool": "dft_download_bundle", "args": {}, "label": "y"}
+    assert _pending_interrupt_event(confirmation) == "confirmation_needed"
+    assert (
+        _pending_interrupt_event(
+            {"tool": "dft_review", "args": {}, "client_execute": True}
+        )
+        == "client_tool_call"
+    )

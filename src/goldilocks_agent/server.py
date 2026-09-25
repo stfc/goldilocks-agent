@@ -91,10 +91,13 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     thread_id: str
     # Exactly one of `message`/`resume` is set. `message` is the normal
-    # "user sent a new turn" case. `resume` answers a pending
-    # `confirmation_needed` interrupt (design doc 17.10) -- e.g.
-    # `{"approved": true}` -- and carries no new message of its own; the
-    # graph was already paused mid-turn waiting for exactly this.
+    # "user sent a new turn" case. `resume` answers a pending interrupt and
+    # carries no new message of its own; the graph was already paused
+    # mid-turn waiting for exactly this. Two shapes, depending on which SSE
+    # event asked for it: `{"approved": true}` for a `confirmation_needed`
+    # card (design doc 17.10), or `{"result": {...}}`/`{"error": "..."}`
+    # for a `client_tool_call` (graph.py's CLIENT_EXECUTED_TOOLS) -- the
+    # browser reporting back what it actually did.
     message: ChatMessage | None = None
     resume: dict | None = None
     model_id: str | None = None
@@ -183,6 +186,18 @@ class StructureMatchRequest(BaseModel):
     structure_name: str | None = None
 
 
+def _pending_interrupt_event(pending: dict) -> str:
+    """Same paused-interrupt plumbing (design doc 17.10) serves two
+    different purposes, distinguished by `graph.py`'s `call_tool`: a plain
+    confirmation gate (show a card, wait for a human click) vs. a
+    `CLIENT_EXECUTED_TOOLS` handoff (run this in the browser via
+    `coreWorkspace.dispatch(...)`, report the real result back). The
+    frontend needs a different `event:` name to tell which one it got."""
+    if pending.get("client_execute"):
+        return "client_tool_call"
+    return "confirmation_needed"
+
+
 async def _stream_reply(
     graph,
     thread_id: str,
@@ -228,7 +243,8 @@ async def _stream_reply(
         snapshot = await graph.aget_state(config)
         if snapshot.next:
             pending = snapshot.tasks[0].interrupts[0].value
-            yield f"event: confirmation_needed\ndata: {json.dumps(pending)}\n\n"
+            event = _pending_interrupt_event(pending)
+            yield f"event: {event}\ndata: {json.dumps(pending)}\n\n"
     except openai.OpenAIError as exc:
         # litellm normalizes every provider's errors onto the openai-sdk hierarchy,
         # so this catches bad/missing API keys, unknown models, timeouts, etc.

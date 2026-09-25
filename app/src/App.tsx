@@ -181,6 +181,9 @@ const TOOL_CALL_TO_UI_TOOL = {
   run_mlip_equation_of_state: "ml-analysis",
   run_mlip_neb: "ml-analysis",
   run_mlip_phonons: "ml-analysis",
+  dft_open_structure: "dft-workbench",
+  dft_review: "dft-workbench",
+  dft_download_bundle: "dft-workbench",
 };
 
 // Only MACE is actually wired up (janus-core supports more, but exposing a
@@ -1710,6 +1713,13 @@ export default function App() {
   const modelRef = useRef(null);
   const widgetsAreaRef = useRef(null);
   const chatAreaRef = useRef(null);
+  // Bridges the gap between "just created a session because there wasn't
+  // one" and React's next render actually reflecting it in `session` below
+  // -- without this, two lazy-creating calls in the same synchronous burst
+  // (e.g. readFile's setSessionFiles then setAttachedFiles, both reading
+  // the same stale `session === null`) would each create their own new
+  // session and silently drop one of the two updates. See ensureSession().
+  const pendingSessionRef = useRef(null);
 
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
@@ -1755,14 +1765,22 @@ export default function App() {
   const sessionFiles = session?.modeState?.sessionFiles ?? EMPTY_ARRAY;
   const attachedFiles = session?.modeState?.attachedFiles ?? EMPTY_ARRAY;
   function setSessionFiles(updater) {
-    updateCurrentSession((current) => {
+    // Unlike updateCurrentSession's other callers (Tool-panel state that
+    // should stay a no-op until a real chat exists), a dropped/uploaded
+    // structure file *is* the reason to materialize a session -- otherwise
+    // uploading before ever sending a message silently did nothing (2026-
+    // 09-25, reported in real use: "why do I have to say something before
+    // I can upload a structure").
+    const target = ensureSession();
+    replaceSession(target.id, (current) => {
       const prev = current.modeState?.sessionFiles ?? [];
       const next = typeof updater === "function" ? updater(prev) : updater;
       return { ...current, modeState: { ...current.modeState, sessionFiles: next } };
     });
   }
   function setAttachedFiles(updater) {
-    updateCurrentSession((current) => {
+    const target = ensureSession();
+    replaceSession(target.id, (current) => {
       const prev = current.modeState?.attachedFiles ?? [];
       const next = typeof updater === "function" ? updater(prev) : updater;
       return { ...current, modeState: { ...current.modeState, attachedFiles: next } };
@@ -1969,7 +1987,26 @@ export default function App() {
     replaceSession(session.id, updater);
   }
 
+  // Returns the active session, lazily creating one first if there isn't
+  // one yet (a fresh "New chat" has `session === null` until the first
+  // message/attachment materializes it -- same session `send()` has always
+  // created on demand). `pendingSessionRef` makes repeated calls within the
+  // same synchronous burst (before React re-renders `session` itself)
+  // return the *same* freshly-created session instead of each spawning a
+  // new one.
+  function ensureSession() {
+    if (session) return session;
+    if (pendingSessionRef.current) return pendingSessionRef.current;
+    const created = createSession(draftProjectId);
+    pendingSessionRef.current = created;
+    setSessions((prev) => [created, ...prev]);
+    setActiveId(created.id);
+    setDraftProjectId(null);
+    return created;
+  }
+
   function newChat(projectId = null) {
+    pendingSessionRef.current = null;
     setActiveId(null);
     setDraftProjectId(projectId);
     setActiveProjectId(projectId);
@@ -2704,13 +2741,7 @@ export default function App() {
         ]
       : textContent;
 
-    let targetSession = session;
-    if (!targetSession) {
-      targetSession = createSession(draftProjectId);
-      setSessions((prev) => [targetSession, ...prev]);
-      setActiveId(targetSession.id);
-      setDraftProjectId(null);
-    }
+    const targetSession = ensureSession();
     setView("chats");
 
     const nextMessages = [...targetSession.messages, { role: "user", content, display, images: attachedImages }];
@@ -2783,13 +2814,168 @@ export default function App() {
     }
   }
 
+  // Ensures goldilocks-core's HTTP backend is up before a chat-driven DFT
+  // Workbench tool dispatches into `coreWorkspace` -- the polling effect
+  // above only starts once DFT Workbench is the *active* panel, but a chat
+  // tool call can arrive before the user has ever opened it. Reuses the
+  // same endpoint and keeps `coreServerStatus` in sync so the panel (once
+  // switched to, via `TOOL_CALL_TO_UI_TOOL`) shows the same "starting
+  // up..." state instead of two independent readiness tracks. Returns
+  // `null` on success, an error string otherwise.
+  async function ensureCoreServerReady(timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const resp = await fetch("/api/core-server/ensure", { method: "POST" });
+      const data = await resp.json();
+      setCoreServerStatus(data);
+      if (data.status === "ready") return null;
+      if (data.status === "not_configured" || data.status === "error") {
+        return data.detail ?? "DFT Workbench's backend isn't configured -- set GOLDILOCKS_CORE_PATH or GOLDILOCKS_AGENT_CORE_AUTOSTART.";
+      }
+      if (Date.now() > deadline) return "Timed out waiting for goldilocks-core's backend to start.";
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
+  // `source.open` (and everything downstream) silently no-ops if
+  // `workspace.start` hasn't completed yet (`capabilities === null`) --
+  // normally dispatched by goldilocks-workbench's own `WorkspaceProvider`
+  // mount effect, which a chat-only flow may never have triggered.
+  async function ensureWorkspaceStarted(workspace) {
+    if (workspace.getSnapshot().capabilities !== null) return;
+    await workspace.dispatch({ type: "workspace.start" });
+  }
+
+  function coreFailureMessage(failure) {
+    return `${failure.kind}: ${failure.message}`;
+  }
+
+  // Executes a client-executed DFT Workbench tool call (graph.py's
+  // CLIENT_EXECUTED_TOOLS) by dispatching into the exact same `coreWorkspace`
+  // the embedded panel's own buttons use -- one shared state object, not a
+  // second implementation calling goldilocks-core's HTTP API from Python.
+  // Pre-checks preconditions itself: `workspace.ts`'s actions silently
+  // no-op on an unmet precondition rather than throwing, which would
+  // otherwise be indistinguishable from "nothing to report." Returns
+  // `{result}` or `{error}` -- the exact shape `graph.py`'s second
+  // `interrupt()` expects back as its resume value.
+  async function dispatchDftTool(tool, args) {
+    const readyError = await ensureCoreServerReady();
+    if (readyError) return { error: readyError };
+    await ensureWorkspaceStarted(coreWorkspace);
+
+    if (tool === "dft_open_structure") {
+      await coreWorkspace.dispatch({
+        type: "source.open",
+        input: {
+          structure_content: args.structure_content,
+          structure_name: args.structure_name,
+          structure_format: args.structure_format
+            ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
+        },
+      });
+      const snapshot = coreWorkspace.getSnapshot();
+      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
+      return { result: snapshot.inspection ?? {} };
+    }
+
+    if (tool === "dft_review") {
+      if (coreWorkspace.getSnapshot().structureInput === null) {
+        return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
+      }
+      await coreWorkspace.dispatch({ type: "review.compute" });
+      const snapshot = coreWorkspace.getSnapshot();
+      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
+      return { result: snapshot.reviewed ?? {} };
+    }
+
+    if (tool === "dft_download_bundle") {
+      const before = coreWorkspace.getSnapshot();
+      if (before.structureInput === null) {
+        return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
+      }
+      if (before.reviewed === null) {
+        return { error: "No review has been run yet -- call dft_review first." };
+      }
+      if (before.outOfDate) await coreWorkspace.dispatch({ type: "review.compute" });
+      // Deliberately `review.refreshArchive`, not `review.download`: the
+      // latter ends in a real `saveArchiveToBrowser` -- an `<a>` click --
+      // which browsers silently drop unless it happens inside a *direct*
+      // user gesture's call stack. By the time this runs (an SSE event
+      // from the server, several `await`s past whatever click sent the
+      // chat message or approved the confirmation card), that gesture has
+      // long expired -- confirmed live: no file ever reached ~/Downloads.
+      // `refreshArchive` does the exact same server-side generation and
+      // fills `lastDownload` (so BundleCard shows "ready") without ever
+      // touching the DOM -- the user's own click on BundleCard's real
+      // "Download (.zip)" button then reuses that cached archive and
+      // *is* a direct gesture, so the browser actually saves it.
+      await coreWorkspace.dispatch({ type: "review.refreshArchive" });
+      const snapshot = coreWorkspace.getSnapshot();
+      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
+      if (snapshot.lastDownload === null) {
+        return { error: "Failed to generate the DFT input bundle." };
+      }
+      return {
+        result: {
+          filename: snapshot.lastDownload.filename,
+          note: "Ready -- a Download button for it appears in the chat right here, and the Bundle card on the right has the same file too (browsers won't let a chat action save it automatically, a real click is needed either way).",
+        },
+      };
+    }
+
+    return { error: `Unknown DFT Workbench tool: ${tool}` };
+  }
+
+  // The dft-bundle-ready card's own button (see the `messages.map` render
+  // below) -- a *direct* click here, unlike the automatic dispatch inside
+  // dispatchDftTool above, so the browser actually allows the resulting
+  // `saveArchiveToBrowser` call. Reuses the already-cached `lastDownload`
+  // (set by dispatchDftTool's `review.refreshArchive`) instead of
+  // regenerating it -- same `downloadReviewed()` path the Bundle card's own
+  // button already goes through.
+  function downloadDftBundle() {
+    void coreWorkspace.dispatch({ type: "review.download" });
+  }
+
+  // Automatic counterpart to `respondToConfirmation` -- no user click
+  // involved, the resume value is the tool's real result. Adds no
+  // transcript message of its own -- the `tool_result` SSE handler's own
+  // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
+  // narrated reply are what's user-visible for these tools.
+  async function runClientToolCall(sessionId, payload, baseMessages) {
+    let outcome;
+    try {
+      outcome = await dispatchDftTool(payload.tool, payload.args ?? {});
+    } catch (err) {
+      outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
+    }
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: sessionId, resume: outcome }),
+      });
+      if (!response.ok) throw new Error(`API error ${response.status}`);
+      await readChatStream(response, sessionId, baseMessages);
+    } catch (err) {
+      console.error("LLM error:", err);
+      const errMsg = "Error: could not reach the model.";
+      replaceSession(sessionId, (current) => ({
+        ...current,
+        messages: [...baseMessages, { role: "assistant", content: errMsg, display: errMsg }],
+      }));
+    }
+  }
+
   // Shared by `send()` and `respondToConfirmation()` -- both POST to
   // /api/chat and get back the same SSE contract (plain text deltas, typed
-  // `tool_status`/`tool_result`/`confirmation_needed` events), so both read
-  // it the same way. `baseMessages` is what a plain-text delta's assistant
-  // bubble gets appended after -- for `send()` that's the just-sent user
-  // turn (`nextMessages`); for a resume it's the transcript as of the
-  // moment the confirmation card was answered (no new user message).
+  // `tool_status`/`tool_result`/`confirmation_needed`/`client_tool_call`
+  // events), so both read it the same way. `baseMessages` is what a
+  // plain-text delta's assistant bubble gets appended after -- for `send()`
+  // that's the just-sent user turn (`nextMessages`); for a resume it's the
+  // transcript as of the moment the confirmation card was answered (no new
+  // user message).
   async function readChatStream(response, targetSessionId, baseMessages) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -2844,7 +3030,21 @@ export default function App() {
           // `runStructureSearch`.
           try {
             const payload = JSON.parse(data);
-            if (payload.tool === "find_in_databases") {
+            if (payload.tool === "dft_download_bundle" && payload.result?.filename) {
+              // Inline download affordance, not just the Bundle card: a
+              // real user click here is exactly as "direct a gesture" as
+              // clicking the card's own button (see downloadDftBundle),
+              // and having it live at the point in the transcript where it
+              // was generated is more discoverable than "go look at the
+              // right-side panel" (2026-09-25, requested after exactly
+              // that friction was flagged in real use).
+              replaceSession(targetSessionId, (current) => ({
+                ...current,
+                messages: [...current.messages, {
+                  role: "dft-bundle-ready", filename: payload.result.filename,
+                }],
+              }));
+            } else if (payload.tool === "find_in_databases") {
               replaceSession(targetSessionId, (current) => ({
                 ...current,
                 modeState: {
@@ -2896,6 +3096,18 @@ export default function App() {
                 label: payload.label, resolved: null,
               }],
             }));
+          } catch { /* malformed chunk -- skip */ }
+          currentEventType = null;
+          continue;
+        }
+        if (currentEventType === "client_tool_call") {
+          // graph.py's CLIENT_EXECUTED_TOOLS: the graph is paused waiting
+          // for the browser to actually run this (via coreWorkspace), not
+          // for a human click -- no transcript message, just execute and
+          // resume automatically.
+          try {
+            const payload = JSON.parse(data);
+            await runClientToolCall(targetSessionId, payload, baseMessages);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -8524,6 +8736,30 @@ export default function App() {
                                     {message.resolved ? "✓ Approved" : "✗ Declined"}
                                   </div>
                                 )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (message.role === "dft-bundle-ready") {
+                        return (
+                          <div key={`dft-bundle-${index}`} className="message-row">
+                            <div className="avatar assistant">
+                              <LogoImage alt="Goldilocks logo" />
+                            </div>
+                            <div className="message-content">
+                              <div className="confirmation-card">
+                                <div className="confirmation-card-label">
+                                  {message.filename} is ready
+                                </div>
+                                <div className="confirmation-card-actions">
+                                  <button
+                                    className="primary-btn compact"
+                                    onClick={downloadDftBundle}
+                                  >
+                                    Download
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           </div>
