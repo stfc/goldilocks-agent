@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  CalculationContextControls,
   HttpCoreClient,
   MantineProvider,
   WorkbenchContent as CoreWorkbenchContent,
@@ -1355,6 +1356,93 @@ function CoreWorkbenchTree({ workspace }: { workspace: any }) {
   );
 }
 
+// Replaces core's own real Structure Setup card (StructureSourceControls +
+// the .structure-stage 3D viewer) in the inline tabbed view only -- the
+// full-page grid keeps core's real card unmodified. Two reasons: (1) the
+// composer already has its own "Structure Viewer" widget showing the same
+// structure, so a second embedded 3D view in a narrow side panel is pure
+// duplication; (2) uploading a structure here should behave like every
+// other Tool's own structure picker (MLIP Playground's `StructureUploadControl`
+// and its Files/Structure Viewer sync via `readFile`), not like a second,
+// disconnected upload path core's own component owns. `CalculationContextControls`
+// (Code/Task/HPC) is core's real, unmodified component -- reused verbatim,
+// not reimplemented, and re-exported from goldilocks-workbench specifically
+// for this (2026-09-25).
+//
+// Selecting or uploading a structure here dispatches the same
+// `{type: "source.open", input}` action StructureSourceControls itself
+// would have dispatched (same StructureInput shape core's API expects:
+// structure_content/structure_name/structure_format) -- so Analysis/
+// Advisors/Bundle (still core's real, unmodified cards) see a real
+// structure exactly as if it had come through core's own upload UI.
+function DftWorkbenchStructureTab({
+  workspace,
+  chatStructures,
+  onFileUpload,
+}: {
+  workspace: any;
+  chatStructures: { name: string; content: string }[];
+  onFileUpload: (file: File) => void;
+}) {
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  function openStructureInCore(name: string, content: string) {
+    void workspace.dispatch({
+      type: "source.open",
+      input: {
+        structure_content: content,
+        structure_name: name,
+        structure_format: name.toLowerCase().endsWith(".cif") ? "cif" : "poscar",
+      },
+    });
+  }
+
+  function handleUpload(file: File) {
+    // Sync into the composer's own Structure Viewer/Files widgets first --
+    // same pipeline every other Tool's upload already goes through.
+    onFileUpload(file);
+    void file.text().then((content) => {
+      openStructureInCore(file.name, content);
+    });
+  }
+
+  return (
+    <MantineProvider
+      theme={workbenchTheme}
+      colorSchemeManager={coreColorSchemeManager}
+      defaultColorScheme="light"
+    >
+      <CoreWorkspaceProvider workspace={workspace}>
+        <div className="workspace-content">
+          <div className="workspace-section">
+            <div className="workspace-title">Structure</div>
+            <SimpleSelect
+              label="Structure"
+              value={selectedIdx ?? -1}
+              items={chatStructures.length === 0
+                ? [{ id: -1, label: "No structures loaded" }]
+                : chatStructures.map((s, i) => ({ id: i, label: s.name }))
+              }
+              isOpen={pickerOpen}
+              onToggle={() => setPickerOpen((open) => !open)}
+              onSelect={(id) => {
+                setSelectedIdx(id);
+                setPickerOpen(false);
+                const s = chatStructures[id];
+                if (s) openStructureInCore(s.name, s.content);
+              }}
+              disabled={chatStructures.length === 0}
+            />
+            <StructureUploadControl onFile={handleUpload} />
+          </div>
+          <CalculationContextControls />
+        </div>
+      </CoreWorkspaceProvider>
+    </MantineProvider>
+  );
+}
+
 // Inline side-panel presentation of the same embedded goldilocks-core
 // Workbench the full-page detail view renders via CoreWorkbenchTree
 // directly -- one card visible at a time, tab-switcher style, instead of
@@ -1384,7 +1472,20 @@ function CoreWorkbenchTree({ workspace }: { workspace: any }) {
 // (the same tab-bar look the old CLI panel's own Setup/Inputs/Checks tabs,
 // and Beyond DFT's own tab, already use) rather than inventing a third tab
 // visual style.
-function CoreWorkbenchTabs({ workspace }: { workspace: any }) {
+// `STRUCTURE_CARD_ID` (real DOM id core's own StructureCard renders, see
+// StructureCard.tsx's `id="structure-panel"`) is kept permanently inactive
+// below and replaced with DftWorkbenchStructureTab instead.
+const STRUCTURE_CARD_ID = "structure-panel";
+
+function CoreWorkbenchTabs({
+  workspace,
+  chatStructures,
+  onFileUpload,
+}: {
+  workspace: any;
+  chatStructures: { name: string; content: string }[];
+  onFileUpload: (file: File) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [cards, setCards] = useState<{ id: string; kicker: string; title: string }[]>([]);
   // The user's explicit tab click, if any -- NOT the effective active card
@@ -1425,7 +1526,10 @@ function CoreWorkbenchTabs({ workspace }: { workspace: any }) {
     const container = containerRef.current;
     if (!container) return;
     container.querySelectorAll<HTMLElement>(".workbench-grid > .workbench-card").forEach((node) => {
-      node.classList.toggle("workbench-card--active", node.id === activeCardId);
+      // Real Structure card stays hidden always -- DftWorkbenchStructureTab
+      // renders in its place instead, see below.
+      const isActive = node.id === activeCardId && node.id !== STRUCTURE_CARD_ID;
+      node.classList.toggle("workbench-card--active", isActive);
     });
   }, [activeCardId, cards]);
 
@@ -1445,7 +1549,18 @@ function CoreWorkbenchTabs({ workspace }: { workspace: any }) {
           ))}
         </div>
       )}
-      <div className="workbench-embed-tabs-body" ref={containerRef}>
+      {activeCardId === STRUCTURE_CARD_ID && (
+        <DftWorkbenchStructureTab
+          workspace={workspace}
+          chatStructures={chatStructures}
+          onFileUpload={onFileUpload}
+        />
+      )}
+      <div
+        className="workbench-embed-tabs-body"
+        ref={containerRef}
+        style={activeCardId === STRUCTURE_CARD_ID ? { display: "none" } : undefined}
+      >
         <CoreWorkbenchTree workspace={workspace} />
       </div>
     </div>
@@ -3293,7 +3408,11 @@ export default function App() {
             </div>
           </div>
           {coreServerStatus?.status === "ready" ? (
-            <CoreWorkbenchTabs workspace={coreWorkspace} />
+            <CoreWorkbenchTabs
+              workspace={coreWorkspace}
+              chatStructures={chatStructures}
+              onFileUpload={readFile}
+            />
           ) : (
             <div className="workspace-stack">
               <div className="workspace-hint">{coreWorkbenchStatusMessage(coreServerStatus)}</div>
