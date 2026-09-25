@@ -162,3 +162,22 @@ def test_core_proxy_forwards_every_registered_path(tmp_path, monkeypatch) -> Non
         f"{core_server.CORE_SERVER_BASE_URL}/inspect",
         b'{"a": 1}',
     ) in calls
+
+
+def test_core_proxy_returns_a_clean_503_while_core_is_still_starting(
+    tmp_path, monkeypatch
+) -> None:
+    """goldilocks-core is lazy-started and, with mMACE enabled, its cold
+    start can take several minutes -- a request that lands during that
+    window used to leak an unhandled `httpx.ConnectError` as a bare 500."""
+    import httpx
+
+    async def fake_request(self, method, url, content=None, headers=None):
+        raise httpx.ConnectError("Connection refused", request=None)
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+
+    with _make_client(tmp_path, monkeypatch) as client:
+        response = client.get("/capabilities")
+        assert response.status_code == 503
+        assert "still be starting" in response.json()["detail"]

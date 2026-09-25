@@ -537,18 +537,40 @@ async def _proxy_to_core(request: Request) -> Response:
     `CORE_PROXIED_PATHS` below, not a catch-all -- this only ever forwards
     the exact known set, everything else still falls through to the SPA
     mount (registered after this, so it never shadows these).
+
+    goldilocks-core isn't always there to answer yet: `ensure_running()` is
+    lazy (only triggered by `/api/core-server/ensure`, called when the
+    frontend opens the DFT Workbench Tool) and, with mMACE enabled, its
+    first-ever cold start can take several minutes. The frontend's own
+    polling already waits for `coreServerStatus.status == "ready"` before
+    mounting anything that calls these paths, but that's a client-side
+    convention, not something this route can rely on (a stale tab, a
+    direct call, anything). Without a `try`/`except` here, a plain
+    `httpx.ConnectError` during that window used to propagate unhandled
+    and surface as a bare, uninformative 500.
     """
-    async with httpx.AsyncClient(timeout=None) as client:
-        core_response = await client.request(
-            request.method,
-            f"{core_server.CORE_SERVER_BASE_URL}{request.url.path}",
-            content=await request.body(),
-            headers={
-                k: v
-                for k, v in request.headers.items()
-                if k.lower() not in _CORE_PROXY_HOP_BY_HOP_HEADERS
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            core_response = await client.request(
+                request.method,
+                f"{core_server.CORE_SERVER_BASE_URL}{request.url.path}",
+                content=await request.body(),
+                headers={
+                    k: v
+                    for k, v in request.headers.items()
+                    if k.lower() not in _CORE_PROXY_HOP_BY_HOP_HEADERS
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "goldilocks-core isn't answering yet -- it may still be "
+                "starting (mMACE's first-time setup can take several "
+                "minutes). Wait for the Tool's own status message and "
+                "retry."
+            ),
+        ) from exc
     return Response(
         content=core_response.content,
         status_code=core_response.status_code,
