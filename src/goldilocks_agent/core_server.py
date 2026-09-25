@@ -80,13 +80,45 @@ _MMACE_FORK_SPEC = (
     "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
 )
 
-# Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000) and
-# `app/vite.config.js`'s dev-proxy target for `/capabilities`, `/explain`,
-# `/run`, `/inspect`, `/health`, `/ready`, `/openapi.json` -- all forwarded
-# to this same origin. Not user-configurable: this is goldilocks-core's own
-# hardcoded default (`goldilocks serve http --host 127.0.0.1 --port 8000`),
-# same value hardcoded on the frontend's side of that proxy.
+# Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000). Not
+# user-configurable: this is goldilocks-core's own hardcoded default
+# (`goldilocks serve http --host 127.0.0.1 --port 8000`).
 CORE_SERVER_BASE_URL = "http://127.0.0.1:8000"
+
+# The embedded `goldilocks-workbench` frontend's `HttpCoreClient` calls
+# these paths relative to its own origin -- fine in dev, where
+# `app/vite.config.js` proxies each one to `CORE_SERVER_BASE_URL` (mirroring
+# `goldilocks-core/web`'s own `vite.config.ts`, the canonical list this is
+# kept in sync with -- confirmed live 2026-09-25 that a missing entry there
+# silently breaks that one feature, e.g. `/magnetic-orderings` once). In a
+# built/production deployment there is no dev server to do that proxying,
+# so `server.py`'s own routes forward these instead -- same list, same
+# target, just a real HTTP hop instead of Vite's dev-only one. Confirmed
+# live 2026-09-25 that without this, every one of these calls 404s/405s
+# against goldilocks-agent's own StaticFiles-served SPA instead of ever
+# reaching core -- DFT Workbench (and everything downstream: mMACE,
+# magnetic orderings, bundle downloads) is completely broken in Docker/any
+# built deployment without it, not just the one feature missing a proxy
+# entry the way the dev-only bug was.
+#
+# Deliberately excludes `/openapi.json`, unlike the dev-proxy lists above:
+# goldilocks-agent's own FastAPI app already serves its *own* schema at
+# that exact path (auto-registered at app construction, wins over anything
+# added later) -- confirmed live 2026-09-25 that proxying it too just
+# shadows nothing (the earlier-registered route always wins) while adding
+# route-name collisions for no benefit. `HttpCoreClient` never fetches this
+# at runtime anyway (`coreClient.ts`'s own comment: it's a codegen input
+# for generating the TS client's types, a dev-time step against core's own
+# dev server, not something the running app calls).
+CORE_PROXIED_PATHS = (
+    "/capabilities",
+    "/explain",
+    "/run",
+    "/inspect",
+    "/magnetic-orderings",
+    "/health",
+    "/ready",
+)
 
 # `/health` (verified live 2026-09-24 against a real goldilocks-core
 # checkout): `{"status": "ok"}` the instant the FastAPI app itself is

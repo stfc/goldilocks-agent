@@ -27,8 +27,8 @@ from pathlib import Path
 
 import httpx
 import openai
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
 from langgraph.types import Command
@@ -516,6 +516,58 @@ async def core_server_ensure() -> dict:
     reports ``ready``/``error``/``not_configured`` rather than waiting on
     one long request."""
     return core_server.ensure_running()
+
+
+_CORE_PROXY_HOP_BY_HOP_HEADERS = {
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "host",
+}
+
+
+async def _proxy_to_core(request: Request) -> Response:
+    """Forwards one of `core_server.CORE_PROXIED_PATHS` to goldilocks-core's
+    own HTTP backend (`core_server.ensure_running()`'s spawned process,
+    same container in Docker, `127.0.0.1:8000`) -- see that module's own
+    comment for why this exists: the embedded `goldilocks-workbench`
+    frontend calls these paths relative to its own origin, which a dev
+    server's proxy handles but a built/production deployment has no dev
+    server to do for it. One handler registered once per path in
+    `CORE_PROXIED_PATHS` below, not a catch-all -- this only ever forwards
+    the exact known set, everything else still falls through to the SPA
+    mount (registered after this, so it never shadows these).
+    """
+    async with httpx.AsyncClient(timeout=None) as client:
+        core_response = await client.request(
+            request.method,
+            f"{core_server.CORE_SERVER_BASE_URL}{request.url.path}",
+            content=await request.body(),
+            headers={
+                k: v
+                for k, v in request.headers.items()
+                if k.lower() not in _CORE_PROXY_HOP_BY_HOP_HEADERS
+            },
+        )
+    return Response(
+        content=core_response.content,
+        status_code=core_response.status_code,
+        headers={
+            k: v
+            for k, v in core_response.headers.items()
+            if k.lower() not in _CORE_PROXY_HOP_BY_HOP_HEADERS
+        },
+        media_type=core_response.headers.get("content-type"),
+    )
+
+
+for _core_path in core_server.CORE_PROXIED_PATHS:
+    app.add_api_route(
+        _core_path,
+        _proxy_to_core,
+        methods=["GET", "POST"],
+        name=f"proxy_to_core{_core_path.replace('/', '_').replace('-', '_')}",
+    )
 
 
 # Opt-in only (unset in normal dev, where the frontend is vite's own dev

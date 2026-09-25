@@ -121,3 +121,44 @@ def test_pending_interrupt_event_distinguishes_client_execute() -> None:
         )
         == "client_tool_call"
     )
+
+
+def test_core_proxy_forwards_every_registered_path(tmp_path, monkeypatch) -> None:
+    """Without this route, every one of these calls 404s/405s against
+    goldilocks-agent's own SPA instead of ever reaching goldilocks-core --
+    confirmed live 2026-09-25 in a real Docker deployment (`GET
+    /capabilities` -> 404, `POST /inspect` -> 405). No real core process
+    involved here -- `httpx.AsyncClient.request` is faked so this only
+    checks the forwarding contract (method/path/body/response passthrough),
+    not core's own behavior."""
+    import httpx
+
+    from goldilocks_agent import core_server
+
+    calls = []
+
+    async def fake_request(self, method, url, content=None, headers=None):
+        calls.append((method, url, content))
+        return httpx.Response(
+            200,
+            content=b'{"ok": true}',
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+
+    with _make_client(tmp_path, monkeypatch) as client:
+        for path in core_server.CORE_PROXIED_PATHS:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json() == {"ok": True}
+
+        response = client.post("/inspect", content=b'{"a": 1}')
+        assert response.status_code == 200
+
+    assert ("GET", f"{core_server.CORE_SERVER_BASE_URL}/capabilities", b"") in calls
+    assert (
+        "POST",
+        f"{core_server.CORE_SERVER_BASE_URL}/inspect",
+        b'{"a": 1}',
+    ) in calls
