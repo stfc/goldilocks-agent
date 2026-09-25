@@ -24,10 +24,10 @@ RUN npm run build
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 WORKDIR /app
 
-# None of `git`/`curl`/`build-essential` are in the base slim image -- all
-# needed at *runtime*, not just here, by checkout mode's own lazy
-# `--extra http` sync (core_server.py's `_spawn_command()`), long after
-# this build finishes:
+# None of `git`/`curl`/`build-essential`/`gfortran` are in the base slim
+# image -- all needed at *runtime*, not just here, by checkout mode's own
+# lazy `--extra http` sync (core_server.py's `_spawn_command()`), long
+# after this build finishes:
 # - `git`: mMACE's fork is a `uv pip install`ed git dependency
 #   (GOLDILOCKS_AGENT_MMACE_ENABLED).
 # - `curl`: mMACE's checkpoint download.
@@ -37,9 +37,32 @@ WORKDIR /app
 #   with mMACE -- fails with `error: [Errno 2] No such file or directory:
 #   'g++'` compiling dscribe's C++ extensions from source) -- required for
 #   plain checkout-mode DFT Workbench on such platforms, not just mMACE.
+# - `gfortran`: builds enumlib below (also used to install `libgfortran5`,
+#   the shared library enum.x links against at runtime -- apt pulls it in
+#   as gfortran's own dependency, no separate line needed).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl build-essential \
+    && apt-get install -y --no-install-recommends git curl build-essential gfortran \
     && rm -rf /var/lib/apt/lists/*
+
+# enumlib (external dependency for AFM magnetic-ordering enumeration --
+# see goldilocks-core's advisors/magnetic_config.py, which checks
+# `shutil.which("enum.x")` and silently degrades to FM-only, with a
+# warning, if it's missing rather than erroring). Built from source the
+# same way stfc/goldilocks-core#227 builds it for *that* repo's own
+# Dockerfile -- this repo has no enumlib-providing package of its own
+# either (Fortran, not pip-installable). `makeStr.py`'s shebang points at
+# goldilocks-core's own venv (not this image's `/app/.venv`) since that's
+# whose pymatgen actually shells out to it -- the path doesn't exist yet
+# at build time (that venv is synced lazily at container runtime, see
+# `git clone` below), only needs to by the time this script actually runs.
+RUN git clone --recursive --depth 1 https://github.com/msg-byu/enumlib.git /tmp/enumlib \
+    && make -C /tmp/enumlib/symlib/src F90=gfortran \
+    && make -C /tmp/enumlib/src F90=gfortran \
+    && make -C /tmp/enumlib/src F90=gfortran enum.x \
+    && install /tmp/enumlib/src/enum.x /usr/local/bin/enum.x \
+    && sed '1s|.*|#!/opt/goldilocks-core/.venv/bin/python3|' /tmp/enumlib/aux_src/makeStr.py > /usr/local/bin/makeStr.py \
+    && chmod +x /usr/local/bin/makeStr.py \
+    && rm -rf /tmp/enumlib
 
 # `mlip-cli/` must stay a sibling of `src/` -- config.py's mlip_cli_path()
 # resolves it relative to the installed package's own file location, not cwd.
