@@ -13,6 +13,7 @@ export default defineConfig({
       // server (`uv run` with the `http` extra, port 8000).
       '/capabilities': 'http://127.0.0.1:8000',
       '/explain': 'http://127.0.0.1:8000',
+      '/magnetic-orderings': 'http://127.0.0.1:8000',
       '/run': 'http://127.0.0.1:8000',
       '/inspect': 'http://127.0.0.1:8000',
       '/health': 'http://127.0.0.1:8000',
