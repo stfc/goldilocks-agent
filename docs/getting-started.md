@@ -7,26 +7,35 @@ organized for someone who's going to edit the code, not just run it.
 
 Pick one of the two paths below.
 
-> **RAM note (both paths):** the local chat model (`qwen3.8`) is actually a
-> 27B-parameter model, not a small one despite the name -- it's ~16GB on
-> disk and needs comparable RAM headroom to load. Confirmed the hard way:
-> running it under Docker Desktop's default memory allocation gets the
-> model's own inference process killed by the kernel (`signal: killed`) as
-> soon as it tries to load. If you're on Docker, raise Docker Desktop's
-> memory limit (Settings -> Resources -> Memory) to at least ~20GB before
-> your first chat message; if you're on Path B (bare-metal Ollama), make
-> sure your machine has that much RAM free overall. The app itself starts
-> fine regardless -- you'll only hit this once you actually send a chat
-> message without enough memory available for the model.
+> **Ollama runs natively, not in a container, on both paths.** 2026-09-25:
+> confirmed live that Docker Desktop for Mac gives containers no GPU/Metal
+> passthrough, so a containerized Ollama runs `qwen3.8` (see the RAM note
+> below -- it's a real 27B-parameter model) on pure CPU inference alone --
+> measured a single chat reply taking ~3 minutes, and long enough that the
+> request eventually timed out mid-stream rather than ever completing.
+> Install Ollama on your own machine ([ollama.com](https://ollama.com),
+> then `ollama pull qwen3.8`) for *either* path -- Path A's `agent`
+> container reaches it via `host.docker.internal`, the same model running
+> with real GPU/Metal acceleration instead.
+
+> **RAM note (both paths):** `qwen3.8` is actually a 27B-parameter model,
+> not a small one despite the name -- it's ~16GB on disk and needs
+> comparable RAM headroom to load, or its own inference process gets killed
+> by the kernel (`signal: killed`) as soon as it tries to load. Make sure
+> your machine has that much RAM free overall before your first chat
+> message. The app itself starts fine regardless -- you'll only hit this
+> once you actually send a chat message without enough memory available.
 
 ## Path A: Docker (recommended, fewest steps)
 
 Requires [Docker](https://docs.docker.com/get-docker/) (with Compose,
-included in current Docker Desktop/Engine installs) **with at least ~20GB of
-memory allocated to it** (see the RAM note above). Nothing else -- Python,
-Node, and Ollama all run inside containers, you don't install them yourself.
+included in current Docker Desktop/Engine installs) and a native
+[Ollama](https://ollama.com) install (see the note above -- this is the one
+thing Path A doesn't containerize). Python and Node still run entirely
+inside the container, nothing to install for those.
 
 ```bash
+ollama pull qwen3.8
 git clone <this-repo> && cd 1-goldilocks-agent
 docker compose up
 ```
@@ -42,10 +51,8 @@ need to modify the app itself. `build: .` is kept in the compose file purely
 as a local-dev fallback (`docker compose up --build` forces a rebuild from
 source instead of pulling).
 
-The first run also pulls the `ollama/ollama` image and downloads the local
-chat model (`qwen3.8`, ~16GB) in the background -- this can take a while
-depending on your connection. Once it's done, open
-<http://localhost:8080>.
+Once Ollama has `qwen3.8` pulled (same one-time ~16GB download either way),
+open <http://localhost:8080>.
 
 What's on by default:
 - Chat with the local model, and **Find in Databases** (Materials
@@ -55,11 +62,23 @@ What's on by default:
   multi-GB download inside the container (installing `janus-core[mace]`) --
   this is independent of the Ollama model download above and only happens
   when you actually use it.
-- **DFT Workbench** is enabled too -- goldilocks-core is
-  [on PyPI](https://pypi.org/project/goldilocks-core/) now, so no checkout
-  needed: the first time you open the Tool, goldilocks-agent auto-starts it
-  for you inside the container via `uvx` (needs outbound network to
-  pypi.org that first time, otherwise nothing to set up).
+- **DFT Workbench** is enabled too -- the image bakes in goldilocks-core's
+  own source (a pinned release), so the first time you open the Tool,
+  goldilocks-agent auto-starts it for you inside the container; that first
+  open triggers its own one-time download of goldilocks-core's own
+  dependencies, independent of Ollama/MLIP Playground's above.
+- **Magnetism ML tier (mMACE)** is enabled too -- `is_magnetic`
+  classification and magnetic-ordering ranking in DFT Workbench run on a
+  real ML model, not the heuristic/LLM fallback. Piggybacks on DFT
+  Workbench's first-open download above with its own extra one-time cost
+  (a checkpoint plus a few manually-pinned packages) -- several GB total,
+  cached afterward the same way.
+- **AFM magnetic-ordering enumeration** works too -- the image builds
+  `enum.x`/`makeStr.py` (enumlib) from source, the same way
+  [stfc/goldilocks-core#227](https://github.com/stfc/goldilocks-core/pull/227)
+  does for that repo's own image. Without these, goldilocks-core doesn't
+  error -- it silently degrades to listing only the FM ordering, with a
+  warning -- so this is easy to miss if it's ever *not* working.
 
 What needs extra setup:
 - If you're actively developing goldilocks-core itself and want your own
@@ -79,10 +98,11 @@ Your chat history, saved credentials, and downloaded datasets/models persist
 across `docker compose down`/`up` (they live in named Docker volumes, not
 inside the container) -- you won't lose anything by restarting.
 
-## Path B: manual local install (bring your own Ollama)
+## Path B: manual local install
 
 Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and Node.js
-18+/npm on your own machine.
+18+/npm on your own machine (Ollama too -- same native install as Path A
+above, not containerized on either path).
 
 1. **Install Ollama** from [ollama.com](https://ollama.com), then pull the
    model the chat engine uses:
