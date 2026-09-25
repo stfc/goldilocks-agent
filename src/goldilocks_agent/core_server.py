@@ -51,13 +51,34 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import os
+import shlex
 import subprocess
 
 import httpx
 
-from goldilocks_agent.config import read_core_autostart_enabled, read_core_path
+from goldilocks_agent.config import (
+    mmace_checkpoint_path,
+    read_core_autostart_enabled,
+    read_core_path,
+    read_mmace_enabled,
+)
 
 logger = logging.getLogger(__name__)
+
+# mMACE's fork (see README.md's Configuration section for the full manual
+# recipe this mirrors) has no PyPI release -- PyPI itself rejects a git
+# dependency in a published package's metadata, so this can never become a
+# `uv sync` extra, only an explicit `uv pip install` chained ahead of
+# `poe serve` when `read_mmace_enabled()` is set.
+_MMACE_CHECKPOINT_URL = (
+    "https://data-collections.psdi.ac.uk/api/records/1g8rw-q8128/files/"
+    "mace_matpes_pbe_baseline_run-3.model/content"
+)
+_MMACE_FORK_SPEC = (
+    "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git"
+    "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
+)
 
 # Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000) and
 # `app/vite.config.js`'s dev-proxy target for `/capabilities`, `/explain`,
@@ -83,6 +104,14 @@ _HEALTH_TIMEOUT = 2.0
 # install workbench` still has to download models/pseudopotentials
 # (several hundred MB) before the server can start listening at all.
 _STARTUP_TIMEOUT = 180.0
+# mMACE's first-ever setup chains a lot more before `poe serve` even starts
+# listening: goldilocks-core's own deps (torch et al., via `--extra http`'s
+# lazy sync), then the manual `ase`/`e3nn`/`sphericart`/mace-torch-fork
+# installs, then the ~84MB checkpoint download -- several GB total, same
+# order of magnitude as MLIP Playground's own `_TIMEOUT = 300.0` "cold
+# MACE-MP model load plus uv sync" budget, but with more steps chained in
+# sequence, hence more headroom.
+_STARTUP_TIMEOUT_MMACE = 900.0
 _POLL_INTERVAL = 0.5
 
 _process: subprocess.Popen | None = None
@@ -100,26 +129,91 @@ async def _is_healthy(client: httpx.AsyncClient) -> bool:
 
 def _spawn_command(core_path: str | None) -> list[str]:
     """Checkout mode (`core_path` set): `uv run --directory <core_path>
-    poe serve` -- verified live 2026-09-24 against a real goldilocks-core
-    checkout: installs/confirms its own ML/pseudopotential assets, then
-    serves on :8000. `poe serve`'s own shell script already refuses to
-    start (exit 1) if port 8000 is already answering -- `ensure_running()`
-    health-checks first precisely to avoid ever hitting that path, not to
-    work around it.
+    --extra http poe serve` -- verified live 2026-09-24 against a real
+    goldilocks-core checkout: installs/confirms its own ML/pseudopotential
+    assets, then serves on :8000. `--extra http` is required, not optional:
+    `uv run`'s own implicit sync only resolves the *default* dependency set,
+    never optional extras, so a fresh checkout that was never manually
+    `uv sync --extra http`'d first fails with `ImportError: The HTTP
+    transport requires goldilocks-core[http]` -- reproduced firsthand
+    2026-09-25 (this bug predates mMACE; it's a real gap in the plain
+    checkout-mode path this happened to surface while wiring up mMACE, which
+    *requires* checkout mode and so hits it every time). `poe serve`'s own
+    shell script already refuses to start (exit 1) if port 8000 is already
+    answering -- `ensure_running()` health-checks first precisely to avoid
+    ever hitting that path, not to work around it.
+
+    If `read_mmace_enabled()` is also set, the same command is wrapped in
+    `sh -c` to chain mMACE's one-time manual setup ahead of it (see
+    README.md's Configuration section for the same recipe run by hand):
+    download the checkpoint (skipped if already present -- persists across
+    restarts via `$HOME`, see `mmace_checkpoint_path()`), then `uv pip
+    install` the three packages goldilocks-ml has no PyPI extra for. Order
+    matters, verified 2026-09-25: these must run *after* `--extra http`'s
+    own sync, since an explicit `uv sync` wipes them, but `uv run`'s own
+    implicit sync (left last here, as `poe serve` itself) does not touch
+    packages outside the resolved dependency set. Each step is idempotent/
+    cache-backed (`uv pip install` of an already-satisfied exact version is
+    a fast no-op) -- no hand-rolled "already done" flag needed, same as
+    `mlip_cli`'s own `uv run --project` never checking that either.
 
     PyPI mode (`core_path` is ``None``): `uvx --from goldilocks-core[http]
     goldilocks serve http --host 127.0.0.1 --port 8000` -- verified live
     2026-09-24 against the real published package, no checkout anywhere on
-    disk. The bare ``goldilocks`` CLI's `http` transport needs the `[http]`
-    extra (`uvicorn`/FastAPI) -- the base package doesn't pull those in,
-    confirmed by hitting `ImportError: The HTTP transport requires
-    goldilocks-core[http]` without it. Deliberately doesn't pass
-    `--static-root`: goldilocks-agent embeds the Workbench UI itself via
-    the `goldilocks-workbench` npm package, so this process only needs to
-    serve the JSON API, never core's own standalone frontend build.
+    disk. mMACE can never run this way -- there is no persistent, addressable
+    venv to install its fork into (see `read_mmace_enabled()`'s docstring) --
+    so `read_mmace_enabled()` is only ever consulted in the `core_path`
+    branch above. Deliberately doesn't pass `--static-root`: goldilocks-agent
+    embeds the Workbench UI itself via the `goldilocks-workbench` npm
+    package, so this process only needs to serve the JSON API, never core's
+    own standalone frontend build.
     """
     if core_path:
-        return ["uv", "run", "--directory", core_path, "poe", "serve"]
+        serve_cmd = [
+            "uv",
+            "run",
+            "--directory",
+            core_path,
+            "--extra",
+            "http",
+            "poe",
+            "serve",
+        ]
+        if read_mmace_enabled():
+            checkpoint = mmace_checkpoint_path()
+            checkpoint_q = shlex.quote(str(checkpoint))
+            fork_q = shlex.quote(_MMACE_FORK_SPEC)
+            core_path_q = shlex.quote(core_path)
+            venv_python_q = shlex.quote(f"{core_path}/.venv/bin/python")
+            # Explicit `--python <venv>/bin/python`, not `--project <path>`
+            # or a bare `cd <path>` + inherited `VIRTUAL_ENV` -- both
+            # confirmed live 2026-09-25 to silently install into
+            # goldilocks-agent's own `.venv` instead (real environment
+            # pollution, since cleaned up, while reporting success): this
+            # whole command is itself a child of `poe serve`'s own `uv run`
+            # (`UV_RUN_RECURSION_DEPTH` is already 1 by the time this runs),
+            # and neither `--project` nor an overridden `VIRTUAL_ENV` env
+            # var actually wins against that nested context -- only naming
+            # the target interpreter directly is unambiguous. That target
+            # has to actually *exist* first, though: on a brand-new
+            # (first-ever) `goldilocks_core_venv` volume, `.venv/bin/python`
+            # doesn't exist until something creates it -- confirmed live
+            # 2026-09-25 (`error: No virtual environment ... found for path`)
+            # -- hence the explicit `uv sync --directory ... --extra http`
+            # ahead of the manual installs, not just relying on `poe serve`'s
+            # own trailing sync to have created it first.
+            script = (
+                f"mkdir -p {shlex.quote(str(checkpoint.parent))} && "
+                f"[ -f {checkpoint_q} ] || "
+                f"curl -fsSL -o {checkpoint_q} {shlex.quote(_MMACE_CHECKPOINT_URL)} && "
+                f"uv sync --directory {core_path_q} --extra http && "
+                f"uv pip install --python {venv_python_q} ase==3.28.0 e3nn==0.4.4 "
+                "sphericart==1.0.9 sphericart-torch==1.0.9 && "
+                f"uv pip install --python {venv_python_q} {fork_q} && "
+                + shlex.join(serve_cmd)
+            )
+            return ["sh", "-c", script]
+        return serve_cmd
     return [
         "uvx",
         "--from",
@@ -145,12 +239,28 @@ def _spawn(core_path: str | None) -> subprocess.Popen:
     cleanly took down every descendant, including the actual `goldilocks
     serve http` process several levels down in its own process group) --
     no `os.killpg` needed.
+
+    `env`: merged with (never replacing) this process's own environment --
+    `GOLDILOCKS_MACE_BACKBONE` only needs adding when mMACE is enabled, so
+    `poe serve`'s own `goldilocks_core.analysis.is_magnetic`/
+    `advisors.magnetic_ordering_ml` can find the checkpoint this same
+    command just downloaded. Note this process is itself launched via
+    `uv run` (`poe serve`'s own `CMD`), which sets `VIRTUAL_ENV` to
+    goldilocks-agent's own `.venv` in *this* environment -- inherited as-is,
+    that's what made `_spawn_command()`'s mMACE setup need an explicit
+    `--python <venv>/bin/python` on its `uv pip install` calls rather than
+    relying on `cd`/an overridden `VIRTUAL_ENV` here (confirmed live
+    2026-09-25: neither actually wins against the nested `uv run` context).
     """
+    env = os.environ.copy()
+    if core_path and read_mmace_enabled():
+        env["GOLDILOCKS_MACE_BACKBONE"] = str(mmace_checkpoint_path())
     return subprocess.Popen(
         _spawn_command(core_path),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=env,
     )
 
 
@@ -210,7 +320,12 @@ async def _bring_up(core_path: str | None) -> None:
             _state = {"status": "error", "base_url": None, "detail": str(exc)}
             return
 
-        deadline = asyncio.get_event_loop().time() + _STARTUP_TIMEOUT
+        startup_timeout = (
+            _STARTUP_TIMEOUT_MMACE
+            if core_path and read_mmace_enabled()
+            else _STARTUP_TIMEOUT
+        )
+        deadline = asyncio.get_event_loop().time() + startup_timeout
         while asyncio.get_event_loop().time() < deadline:
             if await _is_healthy(client):
                 logger.info("goldilocks-core is up at %s", CORE_SERVER_BASE_URL)
@@ -223,7 +338,8 @@ async def _bring_up(core_path: str | None) -> None:
             if _process.poll() is not None:
                 hint = (
                     "check GOLDILOCKS_CORE_PATH and that "
-                    "`uv run --directory <path> poe serve` works on its own"
+                    "`uv run --directory <path> --extra http poe serve` "
+                    "works on its own"
                     if core_path
                     else "check that "
                     "`uvx --from goldilocks-core[http] goldilocks serve http` "
@@ -240,7 +356,7 @@ async def _bring_up(core_path: str | None) -> None:
 
     detail = (
         f"goldilocks-core did not answer at {CORE_SERVER_BASE_URL}{_HEALTH_PATH} "
-        f"within {_STARTUP_TIMEOUT:.0f}s of starting."
+        f"within {startup_timeout:.0f}s of starting."
     )
     logger.error(detail)
     _state = {"status": "error", "base_url": None, "detail": detail}

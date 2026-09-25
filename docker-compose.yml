@@ -41,14 +41,29 @@ services:
       # GEMINI_API_KEY:
       # MP_API_KEY:
       GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
-      # goldilocks-core is on PyPI, so DFT Workbench needs no checkout/mount
-      # by default -- goldilocks-agent auto-starts `goldilocks serve http`
-      # via `uvx` the first time the Tool is opened (needs outbound network
-      # to pypi.org the first time, same one-time-cost shape as MLIP
-      # Playground's own multi-GB first-call download above).
-      GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
-      # If you're developing goldilocks-core itself, point at your own
-      # checkout instead (takes priority over the PyPI package above) --
+      # This image bakes in goldilocks-core's own *source* (Dockerfile,
+      # /opt/goldilocks-core, pinned to a real release tag) as the default
+      # DFT Workbench backend -- checkout mode, not the PyPI/uvx autostart
+      # path, since that's the only mode the magnetism ML tier below can
+      # ever use (no addressable, persistent venv to install its fork
+      # into). Its own deps (torch et al.) are still a lazy, first-open-of-
+      # the-Tool download into the goldilocks_core_venv volume below, same
+      # shape as MLIP Playground's own mlip_cli_venv.
+      GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
+      # DFT Workbench's magnetism ML tier (mMACE: real ML is_magnetic
+      # classification + magnetic-ordering ranking, not the heuristic/LLM
+      # fallback) -- on by default in this image for the same reason MLIP
+      # Playground is above: this compose file's job is the full local
+      # experience, not the minimal one. First real DFT Workbench open
+      # additionally downloads a checkpoint plus a handful of manually-
+      # pinned packages goldilocks-ml has no PyPI extra for (see
+      # core_server.py's `_spawn_command()` and README.md's Configuration
+      # section for the same recipe run by hand) -- several GB, one-time,
+      # cached in the same goldilocks_core_venv volume.
+      GOLDILOCKS_AGENT_MMACE_ENABLED: "1"
+      # Developing goldilocks-core itself instead of using the baked-in
+      # checkout above? Point at your own -- this overrides the default
+      # (not "opts into checkout mode": that's already the default now) --
       # mount it and uncomment both lines to match:
       # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/getting-started.md
     ports:
@@ -56,6 +71,7 @@ services:
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
+      - goldilocks_core_venv:/opt/goldilocks-core/.venv
       # - /path/to/your/goldilocks-core:/goldilocks-core
     restart: unless-stopped
 
@@ -63,3 +79,4 @@ volumes:
   ollama_data:
   goldilocks_home:
   mlip_cli_venv:
+  goldilocks_core_venv:

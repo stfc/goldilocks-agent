@@ -16,6 +16,23 @@ RUN npm run build
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 WORKDIR /app
 
+# None of `git`/`curl`/`build-essential` are in the base slim image -- all
+# needed at *runtime*, not just here, by checkout mode's own lazy
+# `--extra http` sync (core_server.py's `_spawn_command()`), long after
+# this build finishes:
+# - `git`: mMACE's fork is a `uv pip install`ed git dependency
+#   (GOLDILOCKS_AGENT_MMACE_ENABLED).
+# - `curl`: mMACE's checkpoint download.
+# - `build-essential` (g++/gcc/make): goldilocks-ml's own `dscribe` dependency
+#   has no prebuilt wheel for every platform (confirmed missing on
+#   linux/arm64, 2026-09-25: `uv sync --extra http` alone -- nothing to do
+#   with mMACE -- fails with `error: [Errno 2] No such file or directory:
+#   'g++'` compiling dscribe's C++ extensions from source) -- required for
+#   plain checkout-mode DFT Workbench on such platforms, not just mMACE.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 # `mlip-cli/` must stay a sibling of `src/` -- config.py's mlip_cli_path()
 # resolves it relative to the installed package's own file location, not cwd.
 COPY pyproject.toml uv.lock ./
@@ -26,15 +43,31 @@ RUN uv sync --locked --no-group dev
 
 COPY --from=frontend-build /app/app/dist ./app/dist
 
-# Pre-create the mount point for the mlip_cli_venv volume (compose service
-# `agent`) with the right ownership before it exists -- Docker seeds a
-# fresh named volume from whatever's already at that path in the image, so
-# an empty dir owned by `goldilocks` here means `uv sync`'s later write (the
-# lazy janus-core[mace] install, see mlip_playground/client.py) isn't
-# blocked by a root-owned auto-created mount point.
+# goldilocks-core's *source* only (a few MB) -- the default DFT Workbench
+# backend (docker-compose.yml's GOLDILOCKS_CORE_PATH) for anyone using this
+# image, not just mMACE users, since checkout mode is what mMACE requires
+# and is a strict superset of the PyPI/uvx autostart path otherwise. Pinned
+# to v0.1.1: verified 2026-09-25 as the newest tag on the real
+# stfc/goldilocks-core remote that both matches a real PyPI release
+# (pyproject.toml's own version = "0.1.1") and already has full
+# magnetism/mMACE support (is_magnetic.py/magnetic_ordering_ml.py present,
+# goldilocks-ml==0.2.3 pinned) -- one trivial, frontend-only commit behind
+# the v2 branch tip. Its own deps (torch et al.) are deliberately NOT
+# installed here -- see core_server.py's lazy `--extra http` sync, same
+# "first real use pays the cost" pattern as mlip-cli/.venv below.
+RUN git clone --branch v0.1.1 --depth 1 \
+    https://github.com/stfc/goldilocks-core.git /opt/goldilocks-core
+
+# Pre-create the mount points for the mlip_cli_venv/goldilocks_core_venv
+# volumes (compose service `agent`) with the right ownership before they
+# exist -- Docker seeds a fresh named volume from whatever's already at
+# that path in the image, so an empty dir owned by `goldilocks` here means
+# the later lazy `uv sync`/`uv pip install` writes (janus-core[mace] for
+# MLIP Playground, goldilocks-core's own deps plus mMACE's manual packages
+# for DFT Workbench) aren't blocked by a root-owned auto-created mount point.
 RUN useradd --create-home --home-dir /home/goldilocks goldilocks \
-    && mkdir -p /app/mlip-cli/.venv \
-    && chown -R goldilocks:goldilocks /app
+    && mkdir -p /app/mlip-cli/.venv /opt/goldilocks-core/.venv \
+    && chown -R goldilocks:goldilocks /app /opt/goldilocks-core
 USER goldilocks
 ENV HOME=/home/goldilocks \
     GOLDILOCKS_AGENT_STATIC_DIR=/app/app/dist

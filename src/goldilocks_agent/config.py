@@ -134,3 +134,30 @@ def read_core_autostart_enabled() -> bool:
     if env_value is not None:
         return env_value.strip().lower() not in ("", "0", "false", "no")
     return bool(read_config().get("core", {}).get("autostart"))
+
+
+# mMACE (DFT Workbench's magnetism ML tier -- is_magnetic classification and
+# magnetic-ordering ranking) needs a manually-installed, non-PyPI `mace` git
+# fork plus a checkpoint file, and only works with checkout mode
+# (`read_core_path()` set) -- the PyPI/uvx autostart path has no addressable,
+# persistent venv to install the fork into. `core_server.py` reads this to
+# decide whether to chain that one-time setup ahead of `poe serve` -- same
+# "off unless configured" gate as `read_mlip_enabled()`, except the Docker
+# image's own `docker-compose.yml` turns it on by default (its job is "the
+# full local experience," same precedent MLIP Playground already set there).
+def read_mmace_enabled() -> bool:
+    env_value = os.environ.get("GOLDILOCKS_AGENT_MMACE_ENABLED")
+    if env_value is not None:
+        return env_value.strip().lower() not in ("", "0", "false", "no")
+    return bool(read_config().get("core", {}).get("mmace_enabled"))
+
+
+def mmace_checkpoint_path() -> Path:
+    """Where the mMACE checkpoint lives once downloaded -- `$HOME`-relative
+    so it survives container restarts via the same volume mechanism
+    `~/.cache`/`~/.local/share` already rely on (docker-compose.yml's
+    `goldilocks_home`), not something `core_server.py` has to manage itself."""
+    return (
+        Path.home()
+        / ".local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model"
+    )
