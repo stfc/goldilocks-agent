@@ -38,41 +38,62 @@ docs/                   Design documents
 ## Installation
 
 Two ways to get this running: Docker (fewest steps, no Python/Node
-toolchain needed) or a manual `uv`/`npm` install. Either way, install
-[Ollama](https://ollama.com) natively on your own machine first if you want
-local-model chat -- 2026-09-25, confirmed live that Docker Desktop gives
-containers no GPU/Metal passthrough, so a *containerized* Ollama running
-`qwen3.8` (a real 27B-parameter model despite the name) is CPU-only and
-dramatically slower (measured: a single reply took ~3 minutes, sometimes
-timing out before finishing, vs. ~20 seconds native with Metal) -- this
-repo deliberately doesn't run Ollama in a container on either path:
+toolchain needed) or a manual `uv`/`npm` install. Either way, pick a
+conversation engine first -- this choice is independent of Docker vs
+manual, and the two options never share a code path (an API key never
+routes through Ollama, and vice versa):
 
-```bash
-# Install from https://ollama.com, then:
-ollama pull qwen3.8
-```
+- **Cloud API key (fastest, recommended for a quick try)** -- get a key
+  from Anthropic/OpenAI/Gemini and set it as an environment variable, or
+  add it later from the app's own Settings panel. No download, no GPU
+  needed, nothing else to install. See Configuration below for the env var
+  names.
+- **Local model via Ollama (private -- nothing leaves your machine, but a
+  ~16GB one-time download)** -- install [Ollama](https://ollama.com)
+  natively on your own machine, *not* in a container -- 2026-09-25,
+  confirmed live that Docker Desktop gives containers no GPU/Metal
+  passthrough, so a *containerized* Ollama running `qwen3.8` (a real
+  27B-parameter model despite the name) is CPU-only and dramatically slower
+  (measured: a single reply took ~3 minutes, sometimes timing out before
+  finishing, vs. ~20 seconds native with Metal) -- this repo deliberately
+  doesn't run Ollama in a container on either path:
 
-`qwen3.8` is ~16GB on disk and needs comparable RAM headroom to load -- see
-the RAM note in [`docs/getting-started.md`](docs/getting-started.md) if
-your first chat message gets its inference process killed instead of
-replying.
+  ```bash
+  # Install from https://ollama.com, then:
+  ollama pull qwen3.8
+  ```
+
+  `qwen3.8` is ~16GB on disk and needs comparable RAM headroom to load --
+  see the RAM note in [`docs/getting-started.md`](docs/getting-started.md)
+  if your first chat message gets its inference process killed instead of
+  replying.
 
 ### Docker
 
 Requires [Docker](https://docs.docker.com/get-docker/) (with Compose,
-included in current Docker Desktop/Engine installs) and Ollama (above).
+included in current Docker Desktop/Engine installs) and whichever
+conversation engine you picked above. Only one file needed, no clone:
 
 ```bash
-git clone <this-repo> && cd goldilocks-agent
+mkdir goldilocks-agent && cd goldilocks-agent
+curl -O https://raw.githubusercontent.com/stfc/goldilocks-agent/main/docker-compose.yml
 docker compose up
 ```
 
-This pulls the published `agent` image (`ghcr.io/junwen94/goldilocks-agent`,
-built on every push to `main`) rather than building locally, so it's fast
-even on a machine with no Python/Node toolchain -- `build: .` in
-`docker-compose.yml` is only a local-dev fallback (`docker compose up
---build` forces a rebuild from source). Once Ollama has `qwen3.8` pulled,
-open <http://localhost:8080>.
+This pulls the published `agent` image
+(`ghcr.io/stfc/goldilocks-agent:latest` by default, built on every push to
+`main`) rather than building locally, so it's fast even on a machine with
+no Python/Node toolchain -- `build: .` in `docker-compose.yml` is only a
+local-dev fallback (`docker compose up --build` forces a rebuild from
+source, which does need a real clone). Override
+`GOLDILOCKS_AGENT_IMAGE_OWNER`/`GOLDILOCKS_AGENT_IMAGE_TAG` (env vars, or a
+sibling `.env` file) if you want `junwen94`'s build instead, or a specific
+commit's `sha-xxxxxxx` tag rather than whatever `latest` currently points
+to -- both repos publish from the same source, just to different `ghcr.io`
+namespaces. If you're going the API-key route, either set it in that same
+`.env` before `docker compose up`, or leave it unset and add it from the
+running app's Settings panel instead. Once you've picked an engine, open
+<http://localhost:8080>.
 
 What's on by default in this image, no extra config needed: chat, **Find in
 Databases**, **MLIP Playground** (real local MACE calculations), **DFT
