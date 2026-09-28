@@ -1,0 +1,48 @@
+site_name: goldilocks-agent
+site_description: >-
+  LLM orchestration, feedback-driven scientific workflow, and AiiDA execution
+  layer for goldilocks-core.
+repo_url: https://github.com/junwen94/goldilocks-agent
+repo_name: goldilocks-agent
+
+# `docs/` also holds the internal, dated design log (Chinese-language,
+# in-progress reasoning, not curated for an external reader) -- exclude it
+# from the built site rather than moving it, so every existing
+# `docs/goldilocks-agent-design.md`-style link (README, code comments,
+# issues) keeps resolving.
+exclude_docs: |
+  goldilocks-agent-design.md
+  goldilocks-agent-implementation-plan.md
+  goldilocks-ecosystem-design.md
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - search.suggest
+
+validation:
+  links:
+    # These docs deliberately cross-link to ../README.md (outside docs_dir)
+    # the same way goldilocks-core's own mkdocs.yml does -- not broken
+    # links, just outside what MkDocs' own sandbox can resolve without a
+    # plugin.
+    not_found: info
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Configuration: configuration.md
+  - Tools: tools.md
