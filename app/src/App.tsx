@@ -786,14 +786,25 @@ const TRANSLATIONS = {
 const EMPTY_MESSAGES = [];
 const EMPTY_ARRAY = [];
 
+// STFC Cloud shared deployment only (design doc §19) -- baked in at build
+// time via `.env.stfc-cloud`/`npm run build:stfc-cloud`, never set for the
+// default local/desktop build. No account system there: every persisted
+// bit of state should die with the tab, not survive across visits the way
+// a single local user's own state should.
+const SHARED_DEPLOYMENT = import.meta.env.VITE_SHARED_DEPLOYMENT === "1";
+
+function browserStorage() {
+  return SHARED_DEPLOYMENT ? window.sessionStorage : window.localStorage;
+}
+
 function readStorage(key, fallback = "") {
   if (typeof window === "undefined") return fallback;
-  return window.localStorage.getItem(key) ?? fallback;
+  return browserStorage().getItem(key) ?? fallback;
 }
 
 function writeStorage(key, value) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, value);
+  browserStorage().setItem(key, value);
 }
 
 // localStorage is string-only -- readStorage's raw string would produce
@@ -1906,9 +1917,15 @@ export default function App() {
 
   useEffect(() => {
     refreshConfiguredProviders();
-    refreshProjects();
-    loadConversationsOnce();
-    hydrateExperienceLevel();
+    // Projects/history/experience-level are all single-local-user concepts
+    // with no per-user isolation on the server (design doc §19.2) -- the
+    // shared deployment's backend 404s these routes anyway, so skip calling
+    // them at all rather than surfacing that as a startup error.
+    if (!SHARED_DEPLOYMENT) {
+      refreshProjects();
+      loadConversationsOnce();
+      hydrateExperienceLevel();
+    }
   }, []);
 
   useEffect(() => {
@@ -8555,6 +8572,10 @@ export default function App() {
 
           <div className="sidebar-divider" />
 
+          {/* Projects/history: single-local-user concepts with no per-user
+              isolation server-side (design doc §19.2) -- hidden entirely in
+              the shared deployment rather than showing an empty/broken list. */}
+          {!SHARED_DEPLOYMENT && (
           <div className="session-list">
             <div className="group-label">{t("projects")}</div>
             <button className="nav-row sidebar-project-create" onClick={() => setCreateProjectOpen(true)}>
@@ -8628,6 +8649,7 @@ export default function App() {
             </div>
 
           </div>
+          )}
 
           <div className="sidebar-footer">
             <button className="settings-row" onClick={() => setSettingsOpen(true)}>

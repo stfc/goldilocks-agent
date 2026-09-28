@@ -88,13 +88,23 @@ CLOUD_MODELS = {
 def resolve_model(model_id: str | None = None) -> tuple[str, dict]:
     """Pick the conversation engine model and any extra litellm kwargs (e.g. api_key).
 
-    `GOLDILOCKS_AGENT_MODEL` env var wins over everything (dev/test escape hatch).
+    `GOLDILOCKS_AGENT_MODEL` env var wins over everything (dev/test escape hatch,
+    and also how the STFC Cloud shared deployment points at vLLM instead of
+    Ollama -- `GOLDILOCKS_AGENT_MODEL=hosted_vllm/<model>` plus `VLLM_API_BASE`).
     Otherwise: a recognized cloud `model_id` routes to that provider using its
     stored credential (design doc 11.2); anything else falls back to local Ollama.
     """
     override = os.environ.get("GOLDILOCKS_AGENT_MODEL")
     if override:
-        return override, {}
+        extra = {}
+        # litellm's `hosted_vllm/` provider (for a self-hosted OpenAI-compatible
+        # vLLM server) needs an explicit `api_base` kwarg -- unlike `ollama_chat/`,
+        # it doesn't read a well-known env var on its own.
+        if override.startswith("hosted_vllm/"):
+            api_base = os.environ.get("VLLM_API_BASE")
+            if api_base:
+                extra["api_base"] = api_base
+        return override, extra
     if model_id in CLOUD_MODELS:
         provider, litellm_model = CLOUD_MODELS[model_id]
         api_key = get_api_key(provider)

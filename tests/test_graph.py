@@ -28,6 +28,7 @@ from goldilocks_agent.graph import (
     _repair_orphaned_tool_calls,
     build_graph,
     experience_level_system_message,
+    resolve_model,
 )
 
 _OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
@@ -636,6 +637,39 @@ def test_experience_level_system_message_shape() -> None:
         # values/parameters, only explanation depth -- the guardrail sentence
         # is the mechanism for that, so its presence is worth asserting on.
         assert "never change which values" in message["content"]
+
+
+def test_resolve_model_wires_vllm_api_base_for_hosted_vllm_override(
+    monkeypatch,
+) -> None:
+    """The STFC Cloud shared deployment points at vLLM via
+    `GOLDILOCKS_AGENT_MODEL=hosted_vllm/<model>` -- litellm's `hosted_vllm/`
+    provider (unlike `ollama_chat/`) needs an explicit `api_base` kwarg, not
+    an env var it reads on its own."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/Qwen/Qwen3.8-27B")
+    monkeypatch.setenv("VLLM_API_BASE", "http://vllm:8000/v1")
+    model, extra = resolve_model()
+    assert model == "hosted_vllm/Qwen/Qwen3.8-27B"
+    assert extra == {"api_base": "http://vllm:8000/v1"}
+
+
+def test_resolve_model_override_without_vllm_api_base_omits_it(monkeypatch) -> None:
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/Qwen/Qwen3.8-27B")
+    monkeypatch.delenv("VLLM_API_BASE", raising=False)
+    model, extra = resolve_model()
+    assert model == "hosted_vllm/Qwen/Qwen3.8-27B"
+    assert extra == {}
+
+
+def test_resolve_model_non_vllm_override_ignores_vllm_api_base(monkeypatch) -> None:
+    """`VLLM_API_BASE` is only ever threaded through for a `hosted_vllm/`
+    model string -- an unrelated override (e.g. a plain litellm dev escape
+    hatch) shouldn't pick it up by accident."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "not-a-real-provider/nope")
+    monkeypatch.setenv("VLLM_API_BASE", "http://vllm:8000/v1")
+    model, extra = resolve_model()
+    assert model == "not-a-real-provider/nope"
+    assert extra == {}
 
 
 @pytest.mark.integration

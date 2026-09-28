@@ -3312,11 +3312,53 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
       Barbican）最早要等 2027 年夏天的停机窗口，不是近期选项。
       ⚠️ **卡点**：STFC Cloud 分配的子域名/floating IP 还没到手（2026-09-24），证书申请要等它
       落地才能真正跑。
-- [ ] **`app/vite.config.js` 按 `base: '/agent/'` 的构建流程**——需要区分"独立部署/Docker"
-      （根路径构建）与"挂在 goldilocks 网站下"（`/agent/` 前缀构建）两种产物，
-      具体怎么切换（环境变量？独立的 `npm run build:mounted` 脚本？）还没定
+- [x] ~~**`app/vite.config.js` 按 `base: '/agent/'` 的构建流程**~~ → **已实现（2026-09-25）**：
+      独立的 `npm run build:stfc-cloud` 脚本（`vite build --mode stfc-cloud`），走 Vite 自己的
+      `loadEnv` 读 `app/.env.stfc-cloud`（`VITE_BASE_PATH=/agent/`），不是环境变量切换——
+      本地/Docker 默认构建完全不受影响（该文件不存在时 `base` 落回 `/`）。同一个
+      `.env.stfc-cloud` 顺带把 §19.1/19.2 的共享部署 UI 标记（`VITE_SHARED_DEPLOYMENT=1`）也
+      一起带上，见下一条。Dockerfile 新增 `FRONTEND_BUILD_SCRIPT` build arg 让
+      `deploy/stfc-cloud/docker-compose.yml` 选这个脚本，不用维护第二份 Dockerfile。
+- [x] ~~**`experience_level` 全局配置文件在共享部署下怎么处理**~~ → **已定并实现（2026-09-25）**：
+      选了 19.2 提到的更简单那个选项——共享部署下直接忽略这个文件（`server.py` 的
+      `_stream_reply` 在 `read_shared_deployment_enabled()` 时永远传 `None`，走 graph 自己的
+      默认值），不是按标签页接一套单独的偏好设置。同一次实现顺带把 19.2 那条"真正的坑"也堵上了：
+      新的 `GOLDILOCKS_AGENT_SHARED_DEPLOYMENT` 环境变量（同 `read_mlip_enabled()` 那套
+      真值解析）让 `GET/POST/DELETE /api/projects`、`GET/PATCH/DELETE /api/conversations` 在
+      共享部署下直接 404（不是前端不调用就完事，防的是裸调用/未来前端 bug），`POST /api/chat`
+      也不再写 `touch_conversation` 索引行。前端侧 `App.tsx` 的 `readStorage`/`writeStorage`
+      单一出口在共享部署下切到 `sessionStorage`（不是 `localStorage`），侧边栏的
+      项目/历史区块整段隐藏，挂载时也不再拉 `/api/projects`/`/api/conversations`/`/api/preferences`。
+- [x] ~~**vLLM 接入**~~ → **已实现（2026-09-25，新增需求）**：复用 `graph.py`
+      `resolve_model()` 现成的 `GOLDILOCKS_AGENT_MODEL` 逃生舱，不是另开一条并行分支——
+      `hosted_vllm/<model>` 前缀 + 新的 `VLLM_API_BASE` 环境变量（litellm 的 `hosted_vllm/`
+      provider 不像 `ollama_chat/` 那样自己认环境变量，需要显式传 `api_base`）。模型定为
+      `Qwen/Qwen3.8-27B`（HuggingFace 上确认可直接 `vllm serve`，官方模型卡自带这条命令）。
+      ⚠️ 未验证：这个模型在 vLLM 下的 tool-calling 是否需要专门的 `--tool-call-parser`——v1 的
+      Qwen3 vLLM 部署需要 `--tool-call-parser qwen3_xml` 外加一层应用层 XML 兜底，Qwen3.8-27B
+      是不同的新架构，模型卡没写 vLLM 场景下的 tool-call parser，上线前必须实测，不能照抄
+      `qwen3_xml` 这个名字。`deploy/stfc-cloud/docker-compose.yml` 把 vLLM 的物理位置当配置
+      而非代码——`VLLM_API_BASE` 可以指向同一台机器上的 sibling 容器，也可以指向 v1 那种独立
+      GPU VM，代码不关心是哪种。
+- [x] ~~**并发上限机制**~~ → **已实现机制，数字待测（2026-09-25）**：`server.py` 新增
+      `GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT`（未设置=不限，本地单用户场景完全不受影响），
+      超过时对 `/api/chat` 直接返回 `429`，不排队——19.7 自己的结论是真实并发上限需要在目标
+      VM 上实测，不是猜的，所以这里只做机制，具体数字留给以后那次实测去填。访问日志（19.6 的
+      另一半需求）确认不需要新代码：uvicorn 默认就打印每个请求的客户端 IP/方法/路径/状态码，
+      nginx 侧只要透传 `X-Real-IP`/`X-Forwarded-For`（`deploy/stfc-cloud/nginx-agent.conf`
+      已经这么配了）就够了。
+- [x] ~~**部署配置放哪个仓库、Docker vs. systemd**~~ → 前半已定（见
+      `docs/goldilocks-ecosystem-design.md`：`goldilocks-agent` 自己仓库的 `deploy/stfc-cloud/`）。
+      后半（Docker vs. systemd）**本次已定：Docker**——但范围只到 agent 自己这一块
+      （`deploy/stfc-cloud/docker-compose.yml`，agent + 可选 vllm，只绑 `127.0.0.1:8080`）。
+      ⚠️ 域名级别的 nginx/TLS/certbot **不属于这个仓库**——`/agent/` 只是共享域名下的一段路径，
+      `/`（门户）和 `/workbench`（goldilocks-core/web）是另外两个仓库的内容，参照 v1 的真实先例
+      （`old-goldilcoks-webapp`：后端只绑 `127.0.0.1`，域名级别的系统 nginx 配置放在
+      `goldilocks-web` 自己的 deploy 目录）——这次同理，`deploy/stfc-cloud/nginx-agent.conf`
+      只是一段 `location /agent/ { ... }` 片段，要交给管理那个共享入口的人去 `include`，不是
+      本仓库自己起一个包办全域名的 nginx+certbot 容器。
 - [ ] **`Duration`/`Data Category` 等工单字段的最终措辞**——由用户自己定，不是技术决策
 - [ ] **Security Group 层面的纵深防御**——见 19.4 末尾，等 agent 拿到独立 floating IP
       再补
-- [ ] **`experience_level` 全局配置文件在共享部署下怎么处理**——见 19.2，是直接忽略还是
-      给这个部署模式单独接一套，还没定
+- [ ] **STFC 内网/VPN 的具体 CIDR 段**——`nginx-agent.conf` 的 `allow` 那行需要从 STFC IT
+      那边拿到真实值，占位符不能上线

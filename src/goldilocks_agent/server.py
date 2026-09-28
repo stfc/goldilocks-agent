@@ -38,6 +38,7 @@ from goldilocks_agent import core_server, store
 from goldilocks_agent.config import (
     configured_providers,
     read_experience_level,
+    read_shared_deployment_enabled,
     write_credential,
     write_experience_level,
 )
@@ -198,6 +199,28 @@ def _pending_interrupt_event(pending: dict) -> str:
     return "confirmation_needed"
 
 
+_active_chat_requests = 0
+
+
+def _chat_concurrency_limit() -> int:
+    """0 = unlimited (unset by default -- local single-user mode never hits
+    this). Design doc §19.7's own conclusion: a shared deployment's real
+    safe concurrency needs measuring on the target VM, not guessing -- this
+    is the knob for whatever number that measurement produces, not a
+    pre-picked default."""
+    raw = os.environ.get("GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT")
+    return int(raw) if raw else 0
+
+
+def _reject_if_over_chat_concurrency_limit() -> None:
+    limit = _chat_concurrency_limit()
+    if limit and _active_chat_requests >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many concurrent requests right now -- try again shortly.",
+        )
+
+
 async def _stream_reply(
     graph,
     thread_id: str,
@@ -212,8 +235,14 @@ async def _stream_reply(
             "model_id": model_id,
             # Read server-side, not client-supplied -- one source of truth
             # (design doc 16), and it means changing the setting in Settings
-            # takes effect on the very next turn of every open chat.
-            "experience_level": read_experience_level(),
+            # takes effect on the very next turn of every open chat. Except
+            # in the shared deployment (§19.2): that one global file would
+            # otherwise apply one person's preference to every concurrent
+            # anonymous user, so it's never consulted there -- always the
+            # graph's own default instead.
+            "experience_level": (
+                None if read_shared_deployment_enabled() else read_experience_level()
+            ),
         }
     }
     # A resume answers a pending interrupt (see ChatRequest) -- the graph is
@@ -222,6 +251,8 @@ async def _stream_reply(
     graph_input = (
         Command(resume=resume) if resume is not None else {"messages": [message]}
     )
+    global _active_chat_requests
+    _active_chat_requests += 1
     try:
         async for chunk in graph.astream(
             graph_input, config=config, stream_mode="custom"
@@ -250,11 +281,14 @@ async def _stream_reply(
         # so this catches bad/missing API keys, unknown models, timeouts, etc.
         # uniformly, whichever provider the caller was routed to.
         yield f"data: {json.dumps(f'⚠️ {exc}')}\n\n"
+    finally:
+        _active_chat_requests -= 1
     yield "data: [DONE]\n\n"
 
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest) -> StreamingResponse:
+    _reject_if_over_chat_concurrency_limit()
     if request.resume is not None:
         # Answering a pending confirmation card isn't a new conversation
         # turn from the sidebar's point of view -- nothing to (re)index.
@@ -271,15 +305,19 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="message or resume is required")
     # Indexed before the model call, not after -- a chat that errors mid-stream
     # still happened and still belongs in the sidebar (design doc 16: the index
-    # tracks conversations, not successful completions).
-    content = request.message.content
-    fallback_title = content[:48] if isinstance(content, str) else "New chat"
-    await store.touch_conversation(
-        app.state.store,
-        request.thread_id,
-        title=request.title or fallback_title or "New chat",
-        project_id=request.project_id,
-    )
+    # tracks conversations, not successful completions). Skipped entirely in
+    # the shared deployment: there's no sidebar to show it in there (§19.2),
+    # and it would otherwise grow an unbounded shared `conversations` table
+    # out of anonymous, ephemeral, per-tab sessions.
+    if not read_shared_deployment_enabled():
+        content = request.message.content
+        fallback_title = content[:48] if isinstance(content, str) else "New chat"
+        await store.touch_conversation(
+            app.state.store,
+            request.thread_id,
+            title=request.title or fallback_title or "New chat",
+            project_id=request.project_id,
+        )
     return StreamingResponse(
         _stream_reply(
             app.state.graph,
@@ -332,13 +370,28 @@ async def save_preferences(request: PreferencesUpdate) -> dict:
     return {"ok": True}
 
 
+def _reject_in_shared_deployment() -> None:
+    """`projects`/`conversations` have no per-user column and never will
+    (design doc §19.2) -- on a shared server, listing "all rows" means
+    listing everyone's chat history. This isn't a cosmetic gap the frontend
+    just happens not to expose in that build; a stray direct call has to be
+    refused here too."""
+    if read_shared_deployment_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Not available in the shared deployment (no account system).",
+        )
+
+
 @app.get("/api/projects")
 async def list_projects() -> list[dict]:
+    _reject_in_shared_deployment()
     return await store.list_projects(app.state.store)
 
 
 @app.post("/api/projects")
 async def create_project(request: ProjectCreate) -> dict:
+    _reject_in_shared_deployment()
     return await store.create_project(
         app.state.store, request.name, request.color, request.description
     )
@@ -346,12 +399,14 @@ async def create_project(request: ProjectCreate) -> dict:
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str) -> dict:
+    _reject_in_shared_deployment()
     await store.delete_project(app.state.store, project_id)
     return {"ok": True}
 
 
 @app.get("/api/conversations")
 async def list_conversations() -> list[dict]:
+    _reject_in_shared_deployment()
     return await store.list_conversations(app.state.store)
 
 
@@ -359,6 +414,7 @@ async def list_conversations() -> list[dict]:
 async def update_conversation(
     conversation_id: str, request: ConversationUpdate
 ) -> dict:
+    _reject_in_shared_deployment()
     await store.set_conversation_project(
         app.state.store, conversation_id, request.project_id
     )
@@ -367,6 +423,7 @@ async def update_conversation(
 
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str) -> dict:
+    _reject_in_shared_deployment()
     checkpointer = app.state.graph.checkpointer
     if checkpointer is None:
         raise HTTPException(status_code=500, detail="checkpointer not configured")

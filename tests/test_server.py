@@ -20,6 +20,101 @@ def _make_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
+def test_read_shared_deployment_enabled_env_var(monkeypatch) -> None:
+    from goldilocks_agent.config import read_shared_deployment_enabled
+
+    monkeypatch.delenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", raising=False)
+    assert read_shared_deployment_enabled() is False
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    assert read_shared_deployment_enabled() is True
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "0")
+    assert read_shared_deployment_enabled() is False
+
+
+def test_shared_deployment_blocks_projects_and_conversations_routes(
+    tmp_path, monkeypatch
+) -> None:
+    """Design doc §19.2: `projects`/`conversations` have no per-user column
+    and never will -- on a shared server, listing "all rows" means listing
+    everyone's history. This has to be refused at the route, not just left
+    unused by the shared-mode frontend build."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        assert client.get("/api/projects").status_code == 404
+        create_response = client.post(
+            "/api/projects", json={"name": "x", "color": "#fff"}
+        )
+        assert create_response.status_code == 404
+        assert client.delete("/api/projects/some-id").status_code == 404
+        assert client.get("/api/conversations").status_code == 404
+        assert (
+            client.patch(
+                "/api/conversations/some-id", json={"project_id": None}
+            ).status_code
+            == 404
+        )
+        assert client.delete("/api/conversations/some-id").status_code == 404
+
+
+def test_shared_deployment_skips_conversation_indexing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    calls = []
+
+    async def fake_touch_conversation(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "goldilocks_agent.server.store.touch_conversation", fake_touch_conversation
+    )
+    with _make_client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "thread-1",
+                "message": {"role": "user", "content": "Hello"},
+            },
+        )
+        assert response.status_code == 200
+    assert calls == []
+
+
+def test_chat_concurrency_limit_returns_429_when_saturated(
+    tmp_path, monkeypatch
+) -> None:
+    """Design doc §19.7: the real safe number needs measuring on the target
+    VM, not guessing -- this only tests the mechanism (fail fast, don't
+    queue), with the limit set to an arbitrary 1 for determinism."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        import goldilocks_agent.server as server_module
+
+        monkeypatch.setattr(server_module, "_active_chat_requests", 1)
+        response = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "thread-1",
+                "message": {"role": "user", "content": "Hello"},
+            },
+        )
+        assert response.status_code == 429
+
+
+def test_chat_concurrency_limit_unset_by_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT", raising=False)
+    with _make_client(tmp_path, monkeypatch) as client:
+        import goldilocks_agent.server as server_module
+
+        monkeypatch.setattr(server_module, "_active_chat_requests", 10_000)
+        response = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "thread-1",
+                "message": {"role": "user", "content": "Hello"},
+            },
+        )
+        assert response.status_code == 200
+
+
 def test_project_crud_round_trip(tmp_path, monkeypatch) -> None:
     with _make_client(tmp_path, monkeypatch) as client:
         created = client.post(

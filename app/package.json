@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:stfc-cloud": "vite build --mode stfc-cloud",
     "lint": "eslint .",
     "preview": "vite preview"
   },

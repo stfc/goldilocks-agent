@@ -14,7 +14,13 @@ COPY app/package.json app/package-lock.json* ./
 COPY app/vendor/ ./vendor/
 RUN npm ci
 COPY app/ ./
-RUN npm run build
+# Overridden by deploy/stfc-cloud/docker-compose.yml (`build:stfc-cloud`,
+# Vite's `--mode stfc-cloud` reading `app/.env.stfc-cloud`) -- that build is
+# mounted at `/agent/` under a shared domain, not served from `/` (design
+# doc §19.3), and bakes in the shared-deployment UI flag (§19.1/§19.2).
+# Default here is the plain local/desktop build, unchanged.
+ARG FRONTEND_BUILD_SCRIPT=build
+RUN npm run ${FRONTEND_BUILD_SCRIPT}
 
 # --- runtime ------------------------------------------------------------
 # Ships uv + Python 3.12 preinstalled (matches pyproject.toml's

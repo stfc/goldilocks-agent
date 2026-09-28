@@ -161,3 +161,18 @@ def mmace_checkpoint_path() -> Path:
         Path.home()
         / ".local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model"
     )
+
+
+# Shared/anonymous multi-user deployment (STFC Cloud, design doc §19) --
+# distinct from the single local user this package otherwise assumes.
+# `server.py` reads this to stop leaking cross-user state that only makes
+# sense for one person on their own machine: the `projects`/`conversations`
+# tables have no per-user column and never will (§19.2 -- retrofitting
+# isolation onto them was explicitly rejected in favor of just not exposing
+# the feature at all here), and the global `experience_level` preference
+# file would otherwise apply one person's setting to every concurrent user.
+def read_shared_deployment_enabled() -> bool:
+    env_value = os.environ.get("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT")
+    if env_value is not None:
+        return env_value.strip().lower() not in ("", "0", "false", "no")
+    return bool(read_config().get("shared_deployment", {}).get("enabled"))

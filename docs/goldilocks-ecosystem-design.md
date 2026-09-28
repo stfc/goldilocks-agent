@@ -657,5 +657,9 @@ desktop app 确认了**表单**路线，不是终端对话路线。
       CI（`docker-publish.yml`）**会** push，但目标是 `ghcr.io/junwen94/goldilocks-agent`
       （个人 fork 命名空间，不是 `stfc`），且它的 `docker-compose.yml` 绑定 `127.0.0.1:8080`，
       是给**本地桌面**自跑用的，不是对外服务——这些描述仍然成立，只是"配置放哪个仓库"这一条
-      已经定了。**Docker vs. systemd 这个形式问题仍未定**，可以参考 v1 的 systemd 先例，也可以
-      延续 v2 agent 已有的 Dockerfile 路线，留到实际写 `deploy/stfc-cloud/` 时再定。
+      已经定了。**Docker vs. systemd 已定（2026-09-25）：Docker**——延续 v2 agent 已有的
+      Dockerfile 路线，`deploy/stfc-cloud/docker-compose.yml` 已经写出来了（agent + 可选
+      vllm，只绑 `127.0.0.1:8080`）。⚠️ 范围只到 agent 自己这一块——域名级别的 nginx/TLS/
+      certbot 不在这个 compose 文件里，`/agent/` 只是共享域名下的一段路径，参照 v1 的真实先例
+      （后端只绑 `127.0.0.1`，域名级别的系统 nginx 配置放在 `goldilocks-web` 自己的 deploy
+      目录），这次同理——见 `goldilocks-agent` 自己的 `docs/goldilocks-agent-design.md` §19.8。
