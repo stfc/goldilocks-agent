@@ -13,12 +13,23 @@ authorization). No dedicated graph node/edge was needed for this --
 conditional edge) is unchanged.
 
 Because LangGraph replays a node's whole function body from the top on
-each resume, a turn with *two* gated calls pauses twice in sequence: the
-first `Command(resume=...)` unblocks call 1's interrupt (which then runs
-for real, for the first time) and execution immediately reaches call 2's
-still-fresh interrupt, pausing again. This is expected, not a bug --
-`server.py`/the frontend must be able to handle a sequence of
-confirmation cards for one turn, not assume exactly one.
+each resume, `call_tool` handles exactly *one* tool call per execution,
+never the whole batch on `state["messages"][-1].tool_calls` in a Python
+loop (2026-09-28, #7): a loop with two-or-more interrupt-gated calls in
+one execution replays every already-answered call's code -- including its
+real dispatch (`await fn(**call["args"])`), not just its `writer()` status
+-- every time a *later* call's interrupt resolves. For a real side effect
+(an actual MACE run, an actual Materials Project request) that means
+genuine duplicate execution, not just a duplicate status line. `route_after_tool`
+sends control back to `tool` for the next still-unanswered call (found via
+`_find_next_tool_call`, diffing tool call ids already answered from the
+`ToolMessage`s LangGraph's `add_messages` has accumulated), or on to `llm`
+once none remain -- so a turn with several gated calls still pauses once
+per call, in sequence, but each pause lives in its own node execution with
+at most one `interrupt()` and nothing risky before or after it.
+`server.py`/the frontend still see one interrupt event at a time, same as
+before -- this is purely a `graph.py`-internal restructuring, no wire
+protocol change.
 
 Conversation engine, not a contract model: no ``target_contract``, never
 refuses to answer (see design doc 11.3).
@@ -39,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 import litellm
-from langchain_core.messages import AIMessage, convert_to_openai_messages
+from langchain_core.messages import AIMessage, ToolMessage, convert_to_openai_messages
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -288,100 +299,132 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     }
 
 
+def _find_next_tool_call(state: MessagesState) -> dict | None:
+    """The most recent AIMessage's first tool call that doesn't have a
+    matching ToolMessage in state yet, or None if every call on it is
+    already answered. Scans backward for the nearest AIMessage rather than
+    assuming `state["messages"][-1]` is it -- once `call_tool` starts
+    appending ToolMessages one at a time (#7), the tool-calling AIMessage
+    is no longer the last element."""
+    messages = state["messages"]
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if isinstance(msg, AIMessage):
+            if not msg.tool_calls:
+                return None
+            answered_ids = {
+                m.tool_call_id for m in messages[i + 1 :] if isinstance(m, ToolMessage)
+            }
+            for call in msg.tool_calls:
+                if call["id"] not in answered_ids:
+                    return call
+            return None
+    return None
+
+
 async def call_tool(state: MessagesState) -> dict:
-    """Dispatch every tool call on the last (assistant) message.
+    """Dispatch exactly one tool call -- the first unanswered one on the
+    most recent AIMessage (`_find_next_tool_call`) -- never the whole
+    batch in one execution (see the module docstring's #7 note on why:
+    LangGraph replays everything before an `interrupt()` on resume, so a
+    Python loop handling several interrupt-gated calls in one execution
+    re-runs earlier calls' real dispatch too, not just their status,
+    every time a later call's interrupt resolves). `route_after_tool`
+    loops control back here for the next unanswered call, or on to `llm`
+    once none remain.
 
     `state["messages"][-1].tool_calls` is LangChain's own normalized shape
     (`{"name", "args", "id"}, args already JSON-decoded`) -- `add_messages`
     did that conversion when `call_llm`'s raw OpenAI-shaped dict landed in
     state, see `_create_message_from_message_type` in langchain_core.
     """
-    last = state["messages"][-1]
-    if not isinstance(last, AIMessage):
-        # route_after_llm only sends control here when the last message has
-        # tool_calls -- only AIMessage carries that attribute, so this would
-        # mean the routing invariant itself broke, not a normal runtime case.
-        raise TypeError(f"tool node reached with a non-AIMessage: {type(last)}")
+    call = _find_next_tool_call(state)
+    if call is None:
+        # route_after_tool only sends control here when there's an
+        # unanswered call left -- this would mean the routing invariant
+        # itself broke, not a normal runtime case.
+        raise RuntimeError("tool node reached with no unanswered tool call")
+    name = call["name"]
     writer = get_stream_writer()
-    results = []
-    for call in last.tool_calls:
-        name = call["name"]
-        if name in CONFIRMATION_REQUIRED_TOOLS:
-            decision = interrupt(
-                {
-                    "tool": name,
-                    "args": call["args"],
-                    "label": CONFIRMATION_LABELS[name](call["args"]),
-                }
-            )
-            if not decision.get("approved"):
-                output: Any = {"error": "User declined to run this calculation."}
-                writer({"type": "tool_result", "tool": name, "result": output})
-                results.append(
+    if name in CONFIRMATION_REQUIRED_TOOLS:
+        decision = interrupt(
+            {
+                "tool": name,
+                "args": call["args"],
+                "label": CONFIRMATION_LABELS[name](call["args"]),
+            }
+        )
+        if not decision.get("approved"):
+            output: Any = {"error": "User declined to run this calculation."}
+            writer({"type": "tool_result", "tool": name, "result": output})
+            return {
+                "messages": [
                     {
                         "role": "tool",
                         "tool_call_id": call["id"],
                         "content": json.dumps(output),
                     }
-                )
-                continue
-        if name in CLIENT_EXECUTED_TOOLS:
-            # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
-            # three all just raise) never runs: the real work happens in
-            # the browser, via app/src/App.tsx's dispatchDftTool calling
-            # the embedded goldilocks-workbench panel's own
-            # `coreWorkspace.dispatch(...)`. A second interrupt hands
-            # control to it; its resume value *is* the tool's result, not
-            # an approve/decline decision.
-            outcome = interrupt(
-                {"tool": name, "args": call["args"], "client_execute": True}
-            )
-            output = (
-                {"error": outcome["error"]}
-                if "error" in outcome
-                else outcome.get("result", {})
-            )
-            writer({"type": "tool_result", "tool": name, "result": output})
-            results.append(
+                ]
+            }
+    if name in CLIENT_EXECUTED_TOOLS:
+        # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
+        # three all just raise) never runs: the real work happens in
+        # the browser, via app/src/App.tsx's dispatchDftTool calling
+        # the embedded goldilocks-workbench panel's own
+        # `coreWorkspace.dispatch(...)`. A second interrupt hands
+        # control to it; its resume value *is* the tool's result, not
+        # an approve/decline decision.
+        outcome = interrupt(
+            {"tool": name, "args": call["args"], "client_execute": True}
+        )
+        output = (
+            {"error": outcome["error"]}
+            if "error" in outcome
+            else outcome.get("result", {})
+        )
+        writer({"type": "tool_result", "tool": name, "result": output})
+        return {
+            "messages": [
                 {
                     "role": "tool",
                     "tool_call_id": call["id"],
                     "content": json.dumps(output),
                 }
-            )
-            continue
-        fn = TOOL_DISPATCH.get(name)
-        if fn is None:
-            output = {"error": f"Unknown tool: {name!r}"}
-        else:
-            try:
-                output = await fn(**call["args"])
-            except Exception as exc:  # noqa: BLE001
-                # A failed lookup (bad formula, unknown source/entry_id, a
-                # source's API erroring) is data the LLM should narrate to
-                # the user, not a crashed graph run.
-                output = {"error": str(exc)}
-        # Panel gets the full result (design doc 12.3: the moment a tool
-        # call lands, the right-side panel's matching fields update too,
-        # over its own `event: tool_result` SSE frame) -- but the LLM's own
-        # copy prefers `model_dump_for_llm()` when the tool defines one
-        # (heavy visual/array fields like SVG plots trimmed out, since this
-        # json.dumps() lands in the checkpointer's history forever, unlike
-        # the panel's one-shot render).
-        panel_output = output.model_dump() if hasattr(output, "model_dump") else output
-        if hasattr(output, "model_dump_for_llm"):
-            llm_output = output.model_dump_for_llm()
-        else:
-            llm_output = panel_output
-        writer({"type": "tool_result", "tool": name, "result": panel_output})
-        results.append(
+            ]
+        }
+    fn = TOOL_DISPATCH.get(name)
+    if fn is None:
+        output = {"error": f"Unknown tool: {name!r}"}
+    else:
+        try:
+            output = await fn(**call["args"])
+        except Exception as exc:  # noqa: BLE001
+            # A failed lookup (bad formula, unknown source/entry_id, a
+            # source's API erroring) is data the LLM should narrate to
+            # the user, not a crashed graph run.
+            output = {"error": str(exc)}
+    # Panel gets the full result (design doc 12.3: the moment a tool
+    # call lands, the right-side panel's matching fields update too,
+    # over its own `event: tool_result` SSE frame) -- but the LLM's own
+    # copy prefers `model_dump_for_llm()` when the tool defines one
+    # (heavy visual/array fields like SVG plots trimmed out, since this
+    # json.dumps() lands in the checkpointer's history forever, unlike
+    # the panel's one-shot render).
+    panel_output = output.model_dump() if hasattr(output, "model_dump") else output
+    if hasattr(output, "model_dump_for_llm"):
+        llm_output = output.model_dump_for_llm()
+    else:
+        llm_output = panel_output
+    writer({"type": "tool_result", "tool": name, "result": panel_output})
+    return {
+        "messages": [
             {
                 "role": "tool",
                 "tool_call_id": call["id"],
                 "content": json.dumps(llm_output),
             }
-        )
-    return {"messages": results}
+        ]
+    }
 
 
 def route_after_llm(state: MessagesState) -> str:
@@ -391,11 +434,21 @@ def route_after_llm(state: MessagesState) -> str:
     return END
 
 
+def route_after_tool(state: MessagesState) -> str:
+    """Loop back to `tool` while the most recent AIMessage still has an
+    unanswered tool call (#7 -- one call per `call_tool` execution, never
+    the whole batch); once every call has a ToolMessage, hand control back
+    to `llm` to see the full result set."""
+    if _find_next_tool_call(state) is not None:
+        return "tool"
+    return "llm"
+
+
 def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     graph = StateGraph(MessagesState)
     graph.add_node("llm", call_llm)
     graph.add_node("tool", call_tool)
     graph.add_edge(START, "llm")
     graph.add_conditional_edges("llm", route_after_llm, {"tool": "tool", END: END})
-    graph.add_edge("tool", "llm")
+    graph.add_conditional_edges("tool", route_after_tool, {"tool": "tool", "llm": "llm"})
     return graph.compile(checkpointer=checkpointer)
