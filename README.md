@@ -77,6 +77,24 @@ conversation engine you picked above. Only one file needed, no clone:
 ```bash
 mkdir goldilocks-agent && cd goldilocks-agent
 curl -O https://raw.githubusercontent.com/stfc/goldilocks-agent/main/docker-compose.yml
+```
+
+**Using a cloud API key?** Drop it in a `.env` file next to
+`docker-compose.yml` before starting -- Compose reads this automatically,
+no need to edit the YAML itself:
+
+```bash
+cat > .env <<'EOF'
+ANTHROPIC_API_KEY=<your key>
+EOF
+```
+
+(swap in `OPENAI_API_KEY`/`GEMINI_API_KEY` for those providers -- see
+Configuration below for the full list.) Skipping this is fine too: leave it
+unset for now and add the key later from the running app's own Settings
+panel instead. Going the local-Ollama route needs no `.env` at all.
+
+```bash
 docker compose up
 ```
 
@@ -85,15 +103,14 @@ This pulls the published `agent` image
 `main`) rather than building locally, so it's fast even on a machine with
 no Python/Node toolchain -- `build: .` in `docker-compose.yml` is only a
 local-dev fallback (`docker compose up --build` forces a rebuild from
-source, which does need a real clone). Override
-`GOLDILOCKS_AGENT_IMAGE_OWNER`/`GOLDILOCKS_AGENT_IMAGE_TAG` (env vars, or a
-sibling `.env` file) if you want `junwen94`'s build instead, or a specific
-commit's `sha-xxxxxxx` tag rather than whatever `latest` currently points
-to -- both repos publish from the same source, just to different `ghcr.io`
-namespaces. If you're going the API-key route, either set it in that same
-`.env` before `docker compose up`, or leave it unset and add it from the
-running app's Settings panel instead. Once you've picked an engine, open
-<http://localhost:8080>.
+source, which does need a real clone). Add
+`GOLDILOCKS_AGENT_IMAGE_OWNER`/`GOLDILOCKS_AGENT_IMAGE_TAG` to that same
+`.env` if you want `junwen94`'s build instead, or a specific commit's
+`sha-xxxxxxx` tag rather than `latest` (only useful for reproducing one
+exact build -- for everyday use, `latest` already tracks the newest
+successful publish automatically, no manual bumping needed). Both repos
+publish from the same source, just to different `ghcr.io` namespaces. Once
+you've picked an engine, open <http://localhost:8080>.
 
 What's on by default in this image, no extra config needed: chat, **Find in
 Databases**, **MLIP Playground** (real local MACE calculations), **DFT
