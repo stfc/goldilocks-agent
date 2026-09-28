@@ -74,8 +74,14 @@ sequence = [
 help = "Lint and build the agent frontend"
 shell = "cd app && npm run lint && npm run build"
 
+[tool.poe.tasks.docs]
+help = "Serve the docs site locally with live reload"
+cmd = "mkdocs serve"
+
 [dependency-groups]
 dev = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.0",
     "poethepoet>=0.35",
     "pre-commit>=4.5.1",
     "pytest>=9.0.3",
