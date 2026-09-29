@@ -18,10 +18,13 @@ services:
     build:
       context: ../..
       args:
-        # Mounted at /agent/ under a shared domain, not served from `/`
-        # (design doc §19.3) -- see app/.env.stfc-cloud for what this
-        # Vite mode actually sets.
-        FRONTEND_BUILD_SCRIPT: build:stfc-cloud
+        # This VM is reached directly at its own address (see the `ports`
+        # comment below), not via a shared domain's /agent/ subpath -- so
+        # the frontend must be built with root-relative asset paths, not
+        # /agent/-prefixed ones. Switch to `build:stfc-cloud-public` (see
+        # app/.env.stfc-cloud-public) once this sits behind the shared-domain
+        # nginx instead (design doc §19.3).
+        FRONTEND_BUILD_SCRIPT: build:stfc-cloud-internal
     image: goldilocks-agent-stfc-cloud:latest
     environment:
       GOLDILOCKS_AGENT_SHARED_DEPLOYMENT: "1"

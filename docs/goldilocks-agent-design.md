@@ -3329,7 +3329,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
       也不再写 `touch_conversation` 索引行。前端侧 `App.tsx` 的 `readStorage`/`writeStorage`
       单一出口在共享部署下切到 `sessionStorage`（不是 `localStorage`），侧边栏的
       项目/历史区块整段隐藏，挂载时也不再拉 `/api/projects`/`/api/conversations`/`/api/preferences`。
-- [x] ~~**vLLM 接入**~~ → **已实现（2026-09-25，新增需求）**：复用 `graph.py`
+- [x] ~~**vLLM 接入**~~ → **已实现（2026-09-25），后被推翻（2026-09-29，见本节末尾新条目）**：复用 `graph.py`
       `resolve_model()` 现成的 `GOLDILOCKS_AGENT_MODEL` 逃生舱，不是另开一条并行分支——
       `hosted_vllm/<model>` 前缀 + 新的 `VLLM_API_BASE` 环境变量（litellm 的 `hosted_vllm/`
       provider 不像 `ollama_chat/` 那样自己认环境变量，需要显式传 `api_base`）。模型定为
@@ -3350,13 +3350,46 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
 - [x] ~~**部署配置放哪个仓库、Docker vs. systemd**~~ → 前半已定（见
       `docs/goldilocks-ecosystem-design.md`：`goldilocks-agent` 自己仓库的 `deploy/stfc-cloud/`）。
       后半（Docker vs. systemd）**本次已定：Docker**——但范围只到 agent 自己这一块
-      （`deploy/stfc-cloud/docker-compose.yml`，agent + 可选 vllm，只绑 `127.0.0.1:8080`）。
+      （`deploy/stfc-cloud/docker-compose.yml`，agent + Ollama；端口绑定见本节末尾
+      2026-09-29 条目，vLLM 早已移出这份 compose）。
       ⚠️ 域名级别的 nginx/TLS/certbot **不属于这个仓库**——`/agent/` 只是共享域名下的一段路径，
       `/`（门户）和 `/workbench`（goldilocks-core/web）是另外两个仓库的内容，参照 v1 的真实先例
       （`old-goldilcoks-webapp`：后端只绑 `127.0.0.1`，域名级别的系统 nginx 配置放在
       `goldilocks-web` 自己的 deploy 目录）——这次同理，`deploy/stfc-cloud/nginx-agent.conf`
       只是一段 `location /agent/ { ... }` 片段，要交给管理那个共享入口的人去 `include`，不是
       本仓库自己起一个包办全域名的 nginx+certbot 容器。
+- [x] ~~**vLLM 接入（推翻）**~~ → **改回 Ollama（2026-09-29）**：`goldilocks-agent-gpu`
+      VM 的驱动/Docker/`nvidia-container-toolkit` 都装好后，实测发现 vLLM 的 tool-call
+      parser 风险（19.8 上一条已标注的未验证项）跟当时还在并行修的 chat reliability bug
+      叠在一起不好排查，且用户本地一直用 Ollama、`qwen3.8:27b` 已确认能跑。决定权衡后
+      直接放弃 vLLM，`deploy/stfc-cloud/docker-compose.yml` 改成 `agent` + `ollama` +
+      一次性 `ollama-pull` 三个 service，`GOLDILOCKS_AGENT_MODEL=ollama_chat/qwen3.8:27b`
+      + `OLLAMA_API_BASE=http://ollama:11434`（显式钉住 `:27b`，不依赖 `resolve_model()`
+      里 `LOCAL_MODEL` 硬编码的 `:latest`默认值，因为没确认两者是不是同一个尺寸）。实测
+      `qwen3.8:27b` 下载约 17GB（Q4 量级），A100 80GB 显存跑起来只占 35.8GB（15.3GB 权重
+      + 887MB 视觉投影层——这个模型其实带视觉——+ 16GB 满 262144 上下文的 KV cache），
+      并发扩展空间还很大，但具体数字仍按 19.7 的结论留给以后实测。vLLM 未来如果 Ollama
+      并发实测确实不够用再重新评估，不是这次直接判死刑。
+- [x] ~~**agent-gpu 直连 STFC 内网（临时，偏离本节子路径设计）**~~ → **2026-09-29 决定**：
+      `goldilocks-agent-gpu` 拿到了自己独立的 VM（虽然还是内网 `172.16.x.x` 地址，不是
+      floating IP），实际上提前撞上了 19.4 末尾"以后 agent 拿到独立 floating IP"那条待记
+      场景——STFC floating IP/子域名分配还没到（19.8 開頭那条卡点），但又想让 STFC 内网
+      所有同事现在就能试用，于是先按 DFTworkbench-stable 那台 VM 的先例（直接绑端口 +
+      OpenStack Security Group 开对应端口 `0.0.0.0/0` + VM 自己的 `ufw allow`）把 agent
+      也临时直连出去，不等 nginx/TLS 落地。**两层独立缺一不可**：Security Group 和 ufw
+      都要开，漏一层就是"看起来没生效"。`0.0.0.0/0` 在这个项目里不等于公网可达——项目
+      floating IP 配额是 0，这台 VM 永远只有内网地址，真正的边界还是"在不在 STFC 内网/
+      VPN 上"。`docker-compose.yml` 的 `ports` 从 `127.0.0.1:8080:8080` 改成了
+      `8080:8080`，明确标注为临时偏离，nginx/TLS 真正上线后要改回去。
+      连带发现并修的坑：前端构建原本只有 `build:stfc-cloud`（`base: '/agent/'`），直接
+      绑端口访问根路径时资源全部 404（白屏，`<title>` 能读到是因为 `server.py:670` 把
+      整个 dist 挂在根路径 `/`，但 index.html 里的资源引用是 `/agent/assets/...`，没有
+      nginx 做前缀转发就找不到）。拆成两个正式构建变体：`build:stfc-cloud-public`
+      （`.env.stfc-cloud-public`，`VITE_BASE_PATH=/agent/`，给以后真正的共享域名 nginx
+      用）和 `build:stfc-cloud-internal`（`.env.stfc-cloud-internal`，不设
+      `VITE_BASE_PATH`，落回根路径，给现在这种直连 VM 用）——`docker-compose.yml`
+      的 `FRONTEND_BUILD_SCRIPT` 现在选后者，换回共享域名部署时记得连同 `ports`
+      一起切回去，两者不能只改一个。
 - [ ] **`Duration`/`Data Category` 等工单字段的最终措辞**——由用户自己定，不是技术决策
 - [ ] **Security Group 层面的纵深防御**——见 19.4 末尾，等 agent 拿到独立 floating IP
       再补
