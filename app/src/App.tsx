@@ -4937,6 +4937,11 @@ export default function App() {
           border-top: 1px solid var(--border);
           padding: 12px;
           position: relative;
+          /* Pin to the bottom of the flex-column .sidebar regardless of how
+             much (if any) content is above it -- shared deployment renders
+             no Projects/history list (§19.1/19.2), which otherwise leaves
+             this sitting right under the header instead of at the bottom. */
+          margin-top: auto;
         }
 
         .settings-row {
