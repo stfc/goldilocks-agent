@@ -45,12 +45,15 @@ services:
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
       GOLDILOCKS_AGENT_MMACE_ENABLED: "1"
     ports:
-      # Loopback only -- the shared nginx (not this compose file) is the
-      # only thing that should ever reach this port directly (design doc
-      # §19.4: the OpenStack Security Group can't filter by path, only by
-      # port, so this loopback binding plus nginx's own IP allowlist for
-      # /agent/ are the actual access-control layers, not this port mapping).
-      - "127.0.0.1:8080:8080"
+      # Direct STFC-internal access (2026-09-29, same pattern as
+      # goldilocks-core-DFTworkbench-stable's :8000) -- interim mode while
+      # the shared-domain nginx/TLS setup (design doc §19.4/§19.8) is still
+      # blocked on the pending STFC floating-IP/subdomain allocation.
+      # Reachable from anyone on the STFC internal network/VPN once the
+      # OpenStack Security Group and this VM's own ufw both allow 8080/tcp
+      # (see README.md). Revert to "127.0.0.1:8080:8080" once nginx/TLS is
+      # ready and path-based access control at /agent/ takes over instead.
+      - "8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
