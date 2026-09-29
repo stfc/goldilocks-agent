@@ -71,6 +71,14 @@ services:
   # OLLAMA_API_BASE above.
   ollama:
     image: ollama/ollama:latest
+    environment:
+      # Default OLLAMA_KEEP_ALIVE (5m) unloads the model from VRAM after
+      # every idle gap that long -- on a low-traffic shared instance, that
+      # means most first messages pay a full reload (measured: a few
+      # seconds once warm vs. 10-55s to reload, see design doc §19.7).
+      # 80GB card has ~46GB free with this one model loaded, no reason to
+      # ever unload it.
+      OLLAMA_KEEP_ALIVE: "-1"
     deploy:
       resources:
         reservations:
