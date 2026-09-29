@@ -284,7 +284,7 @@ talk to (see Configuration above) -- you'll briefly see a "starting up..."
 state while that happens, or a clear error if neither
 `GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The published-package
 pipeline is currently a local tarball
-(`app/vendor/goldilocks-workbench-0.0.4.tgz`, rebuilt from `core/web` via
+(`app/vendor/goldilocks-workbench-0.0.5.tgz`, rebuilt from `core/web` via
 `npm run build:lib && npm pack`) rather than a real registry -- see issue #1
 for the GitHub Packages follow-up.
 

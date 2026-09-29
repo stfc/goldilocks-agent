@@ -117,6 +117,57 @@ const MODEL_GROUPS = [
   },
 ];
 
+// Flattens MODEL_GROUPS to look up a persisted selection by id (#4 -- reload
+// restores it from storage, but the id alone can't tell us the display group,
+// so this recovers the full model object). Skips `disabled` entries: they
+// were never selectable in the first place, so a stale persisted id pointing
+// at one (or at a model dropped in a later release) should fall back, not
+// resurrect an unselectable option.
+function findModelById(id) {
+  if (!id) return null;
+  for (const group of MODEL_GROUPS) {
+    const match = group.items.find((item) => item.id === id && !item.disabled);
+    if (match) return match;
+  }
+  return null;
+}
+
+// Rehydrates one conversation's raw OpenAI-format history (from GET
+// /api/chat/{id}) into the same shape the live SSE path builds `messages`
+// in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
+// content-less assistant turns -- design doc 12.3: chat never shows raw
+// tool args/results) but also recognizes a past `dft_download_bundle` result
+// and re-inserts its `dft-bundle-ready` card (#5) -- the checkpointer has no
+// concept of that card, only the raw tool call/result pair, and OpenAI's
+// wire format puts the tool's *name* on the preceding assistant message's
+// `tool_calls[]`, not on the tool-role reply itself, so the id needs to be
+// cross-referenced.
+function rehydrateMessages(rawMessages) {
+  const toolNameByCallId = new Map();
+  for (const m of rawMessages) {
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      for (const call of m.tool_calls) {
+        if (call.id && call.function?.name) toolNameByCallId.set(call.id, call.function.name);
+      }
+    }
+  }
+  const messages = [];
+  for (const m of rawMessages) {
+    if (m.role === "tool") {
+      if (toolNameByCallId.get(m.tool_call_id) === "dft_download_bundle") {
+        try {
+          const parsed = JSON.parse(m.content);
+          if (parsed?.filename) messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
+        } catch { /* malformed tool payload -- skip */ }
+      }
+      continue;
+    }
+    if (m.role === "assistant" && !m.content) continue;
+    messages.push({ role: m.role, content: m.content });
+  }
+  return messages;
+}
+
 // Mirrors goldilocks_agent.tools.structure_search.grouping._PROPERTY_FIELDS --
 // only the fields a CandidateGroup can actually carry, in display order.
 const DB_PROPERTY_DISPLAY = [
@@ -432,6 +483,9 @@ const STORAGE_KEYS = {
   language: "goldilocks-language",
   sidebarWidth: "goldilocks-sidebar-width",
   toolsWidth: "goldilocks-tools-width",
+  activeChatId: "goldilocks-active-chat-id",
+  selectedModelId: "goldilocks-selected-model-id",
+  dftWorkspaceState: "goldilocks-dft-workspace-state",
 };
 
 const TRANSLATIONS = {
@@ -1406,6 +1460,14 @@ function DftWorkbenchStructureTab({
 }) {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Name of an upload whose dropdown selection is still pending --
+  // `onFileUpload` (=`readFile`) updates `sessionFiles` asynchronously,
+  // so the new entry's eventual index in `chatStructures` isn't known yet
+  // when `handleUpload` runs; matched by name once it actually appears,
+  // rather than predicting the index up front (`readFile` de-dupes by
+  // name and always appends, so a same-name re-upload lands at a
+  // different slot than a fresh one -- matching by name gets both right).
+  const pendingUploadNameRef = useRef<string | null>(null);
 
   function openStructureInCore(name: string, content: string) {
     void workspace.dispatch({
@@ -1418,10 +1480,26 @@ function DftWorkbenchStructureTab({
     });
   }
 
+  // Auto-selects a just-uploaded structure once it lands in `chatStructures`
+  // -- previously the dropdown stayed on "No structures loaded"/"--" until
+  // the user manually reopened it and re-picked the very file they'd just
+  // uploaded, even though `openStructureInCore` below had already loaded it
+  // into DFT Workbench for real.
+  useEffect(() => {
+    const name = pendingUploadNameRef.current;
+    if (name === null) return;
+    const idx = chatStructures.findIndex((s) => s.name === name);
+    if (idx !== -1) {
+      setSelectedIdx(idx);
+      pendingUploadNameRef.current = null;
+    }
+  }, [chatStructures]);
+
   function handleUpload(file: File) {
     // Sync into the composer's own Structure Viewer/Files widgets first --
     // same pipeline every other Tool's upload already goes through.
     onFileUpload(file);
+    pendingUploadNameRef.current = file.name;
     void file.text().then((content) => {
       openStructureInCore(file.name, content);
     });
@@ -1599,7 +1677,14 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   if (status?.status === "error") {
     return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
   }
-  return "Starting goldilocks-core's Workbench backend...";
+  // (#3) The first-ever start downloads several hundred MB of models and
+  // pseudopotentials before goldilocks-core can even begin listening
+  // (core_server.py's `_STARTUP_TIMEOUT` budgets 3 minutes for that; a
+  // subsequent cold start with everything already cached is ~1s). This
+  // message can't tell which case it's in -- `/api/core-server/ensure`
+  // doesn't expose that -- so it names the slow case rather than implying
+  // every start takes this long.
+  return "Starting goldilocks-core's Workbench backend -- first-time setup downloads models and pseudopotentials and can take a few minutes (up to ~15 minutes if MLIP's mMACE model is enabled); it's fast on every start after that.";
 }
 
 function getToolById(id) {
@@ -1655,6 +1740,13 @@ export default function App() {
   const [projectTab, setProjectTab] = useState("chats");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState(null);
+  // Captured once, on the very first render (`useRef`'s argument is only
+  // ever used the first time) -- both restore paths below need the id that
+  // was saved *before this page load*, but the write-side effect further
+  // down persists `activeId ?? ""` on every change, including the initial
+  // `null` render, which would otherwise stomp the real saved value to ""
+  // before either restore path gets a chance to read it back.
+  const savedActiveIdRef = useRef(readStorage(STORAGE_KEYS.activeChatId, ""));
   const [draftProjectId, setDraftProjectId] = useState(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1685,9 +1777,13 @@ export default function App() {
   // Web app is LLM-locked to the local model regardless of selection
   // (resolve_model()'s GOLDILOCKS_AGENT_MODEL env-var override always wins
   // server-side) -- defaulting to Claude there would misrepresent which
-  // model actually answers.
-  const [selectedModel, setSelectedModel] = useState(
-    SHARED_DEPLOYMENT ? MODEL_GROUPS[1].items[0] : MODEL_GROUPS[0].items[0],
+  // model actually answers. Elsewhere (non-shared), reload used to always
+  // reset this to Claude (#4) -- restore whatever was last picked instead,
+  // same browserStorage()/STORAGE_KEYS pattern as activeChatId.
+  const [selectedModel, setSelectedModel] = useState(() =>
+    SHARED_DEPLOYMENT
+      ? MODEL_GROUPS[1].items[0]
+      : findModelById(readStorage(STORAGE_KEYS.selectedModelId, "")) ?? MODEL_GROUPS[0].items[0],
   );
   // Ephemeral UI-only state (which dropdown is open, is a calc in flight) --
   // fine to stay global, same as structure-search's own loading flag/open
@@ -1937,7 +2033,115 @@ export default function App() {
       refreshProjects();
       loadConversationsOnce();
       hydrateExperienceLevel();
+    } else {
+      // No conversation list to check against in shared mode (#9) -- the
+      // persisted id is this tab's own `sessionStorage` entry (never
+      // another visitor's, browserStorage() already picked sessionStorage
+      // for SHARED_DEPLOYMENT), so it's safe to trust directly. Synthesize
+      // a placeholder session for it and let the messagesLoaded effect
+      // below fetch its real messages.
+      const savedId = savedActiveIdRef.current;
+      if (savedId) {
+        setSessions((prev) => (prev.some((s) => s.id === savedId) ? prev : [
+          { ...createSession(), id: savedId, messagesLoaded: false },
+          ...prev,
+        ]));
+        setActiveId(savedId);
+      }
     }
+  }, []);
+
+  // Restores which conversation was open before a reload (#9 -- previously
+  // nothing did, so a refresh always landed on a blank "no chat selected"
+  // screen even though the conversation itself was still on the server).
+  // Local-mode only: waits for `loadConversationsOnce()` above to actually
+  // populate the real list before trusting a saved id against it, and only
+  // ever fires once (`restoredActiveIdRef`) -- otherwise it would fight
+  // `newChat()`'s own `setActiveId(null)` on every subsequent `sessions`
+  // change for the rest of the tab's life.
+  const restoredActiveIdRef = useRef(false);
+  useEffect(() => {
+    if (SHARED_DEPLOYMENT || restoredActiveIdRef.current) return;
+    if (activeId !== null || sessions.length === 0) return;
+    restoredActiveIdRef.current = true;
+    const savedId = savedActiveIdRef.current;
+    if (savedId && sessions.some((s) => s.id === savedId)) {
+      setActiveId(savedId);
+    }
+  }, [sessions, activeId]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.activeChatId, activeId ?? "");
+  }, [activeId]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.selectedModelId, selectedModel.id);
+  }, [selectedModel]);
+
+  // Persists `coreWorkspace`'s structure + calc settings on every real change
+  // (#5 -- previously a reload silently dropped all of it, since `coreWorkspace`
+  // itself is recreated empty by the `useMemo` above). Deliberately excludes
+  // `lastDownload`: it's a real `Blob`, not JSON-serializable, and the restore
+  // effect below regenerates it fresh via `review.refreshArchive` instead of
+  // trying to freeze the exact old bytes.
+  useEffect(() => {
+    return coreWorkspace.subscribe(() => {
+      const snapshot = coreWorkspace.getSnapshot();
+      if (!snapshot.structureInput) {
+        writeStorage(STORAGE_KEYS.dftWorkspaceState, "");
+        return;
+      }
+      writeStorage(
+        STORAGE_KEYS.dftWorkspaceState,
+        JSON.stringify({ structureInput: snapshot.structureInput, draft: snapshot.draft }),
+      );
+    });
+  }, [coreWorkspace]);
+
+  // Replays the persisted structure/settings back into `coreWorkspace` once,
+  // on mount (#5). A real re-run of inspect/review/generate against
+  // goldilocks-core's backend, not a cheap local restore -- there's no
+  // "just set the state" action in goldilocks-workbench's `Workspace`
+  // interface, only real actions -- so this deliberately trades the #7
+  // no-silent-duplicate-real-execution principle for a seamless reload here
+  // (explicit call, 2026-09-28, after weighing that tradeoff against the
+  // cheaper alternatives). Best-effort: swallows failures so a structure that
+  // goldilocks-core can no longer reproduce (e.g. after a version change)
+  // just falls back to an empty panel instead of surfacing a startup error.
+  useEffect(() => {
+    const raw = readStorage(STORAGE_KEYS.dftWorkspaceState, "");
+    if (!raw) return;
+    let saved;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!saved?.structureInput) return;
+    (async () => {
+      try {
+        await ensureWorkspaceStarted(coreWorkspace);
+        await coreWorkspace.dispatch({ type: "source.open", input: saved.structureInput });
+        if (saved.draft) {
+          await coreWorkspace.dispatch({
+            type: "draft.patch",
+            code: saved.draft.code,
+            task: saved.draft.task,
+            hpc: saved.draft.hpc,
+            overrides: saved.draft.overrides,
+          });
+        }
+        await coreWorkspace.dispatch({ type: "review.compute" });
+        await coreWorkspace.dispatch({ type: "review.refreshArchive" });
+      } catch {
+        // Best-effort restore -- leave the panel at whatever state the
+        // failed replay stopped on, same as any other real backend error.
+      }
+    })();
+    // Deliberately once-only: `coreWorkspace` is a stable useMemo instance
+    // for the app's whole lifetime, so listing it would add nothing except
+    // a lint-satisfying no-op re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -2732,20 +2936,7 @@ export default function App() {
       const data = await res.json();
       replaceSession(sessionId, (current) => ({
         ...current,
-        // `role: "tool"` entries are the raw tool-call result JSON fed back
-        // to the LLM (design doc 12.3: chat never shows raw args/results,
-        // only a narrated reply) -- the live SSE path never adds these to
-        // `messages` (they go to `modeState` instead), so rehydrating a
-        // past conversation from the checkpointer must filter them out the
-        // same way, or reopening any chat that ever called a tool dumps
-        // the whole JSON payload as its own bubble. Same reasoning for a
-        // content-less assistant turn (one that only carried tool_calls,
-        // no lead-in text) -- the live path never renders an empty bubble
-        // for it either (`writer(delta.content)` only fires when there's
-        // real content), so this keeps rehydration consistent with that.
-        messages: data.messages
-          .filter((m) => m.role !== "tool" && !(m.role === "assistant" && !m.content))
-          .map((m) => ({ role: m.role, content: m.content })),
+        messages: rehydrateMessages(data.messages),
         messagesLoaded: true,
       }));
     } catch {
@@ -2847,7 +3038,7 @@ export default function App() {
       });
 
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, targetSession.id, nextMessages);
+      await readChatStream(response, targetSession.id);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
@@ -2994,7 +3185,7 @@ export default function App() {
   // transcript message of its own -- the `tool_result` SSE handler's own
   // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
   // narrated reply are what's user-visible for these tools.
-  async function runClientToolCall(sessionId, payload, baseMessages) {
+  async function runClientToolCall(sessionId, payload) {
     let outcome;
     try {
       outcome = await dispatchDftTool(payload.tool, payload.args ?? {});
@@ -3008,13 +3199,13 @@ export default function App() {
         body: JSON.stringify({ thread_id: sessionId, resume: outcome }),
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, baseMessages);
+      await readChatStream(response, sessionId);
     } catch (err) {
       console.error("LLM error:", err);
       const errMsg = "Error: could not reach the model.";
       replaceSession(sessionId, (current) => ({
         ...current,
-        messages: [...baseMessages, { role: "assistant", content: errMsg, display: errMsg }],
+        messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
       }));
     }
   }
@@ -3022,15 +3213,23 @@ export default function App() {
   // Shared by `send()` and `respondToConfirmation()` -- both POST to
   // /api/chat and get back the same SSE contract (plain text deltas, typed
   // `tool_status`/`tool_result`/`confirmation_needed`/`client_tool_call`
-  // events), so both read it the same way. `baseMessages` is what a
-  // plain-text delta's assistant bubble gets appended after -- for `send()`
-  // that's the just-sent user turn (`nextMessages`); for a resume it's the
-  // transcript as of the moment the confirmation card was answered (no new
-  // user message).
-  async function readChatStream(response, targetSessionId, baseMessages) {
+  // events), so both read it the same way.
+  //
+  // The streaming assistant bubble is tracked by object reference
+  // (`assistantMessageRef`), not by rebuilding the array from a snapshot
+  // taken once at the start of the call (#6, 2026-09-28): a `tool_result`/
+  // `client_tool_call` handler earlier in this same stream may already have
+  // appended something (a `dft-bundle-ready` card, a confirmation card) via
+  // `current.messages` -- reconstructing from a frozen snapshot on every
+  // text delta silently dropped those. Finding-and-replacing by reference
+  // against the live `current.messages` on each delta means the bubble
+  // updates in place wherever it actually is, and never clobbers anything
+  // appended around it.
+  async function readChatStream(response, targetSessionId) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let assistantContent = "";
+    let assistantMessageRef = null;
     let buffer = "";
     let currentEventType = null;
 
@@ -3158,7 +3357,7 @@ export default function App() {
           // resume automatically.
           try {
             const payload = JSON.parse(data);
-            await runClientToolCall(targetSessionId, payload, baseMessages);
+            await runClientToolCall(targetSessionId, payload);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -3166,10 +3365,17 @@ export default function App() {
         currentEventType = null;
         if (!assistantContent) setToolStatus(null);
         try { assistantContent += JSON.parse(data); } catch { assistantContent += data; }
-        replaceSession(targetSessionId, (current) => ({
-          ...current,
-          messages: [...baseMessages, { role: "assistant", content: assistantContent, display: assistantContent }],
-        }));
+        replaceSession(targetSessionId, (current) => {
+          if (assistantMessageRef && current.messages.includes(assistantMessageRef)) {
+            const updated = { ...assistantMessageRef, content: assistantContent, display: assistantContent };
+            const messages = current.messages.map((m) => (m === assistantMessageRef ? updated : m));
+            assistantMessageRef = updated;
+            return { ...current, messages };
+          }
+          const created = { role: "assistant", content: assistantContent, display: assistantContent };
+          assistantMessageRef = created;
+          return { ...current, messages: [...current.messages, created] };
+        });
       }
     }
   }
@@ -3177,14 +3383,12 @@ export default function App() {
   // Answers a pending confirmation card (design doc 17.10) -- resumes the
   // paused graph via /api/chat's `resume` field, no new user message.
   async function respondToConfirmation(sessionId, messageIndex, approved) {
-    let baseMessages = null;
-    replaceSession(sessionId, (current) => {
-      const messages = current.messages.map((m, i) =>
+    replaceSession(sessionId, (current) => ({
+      ...current,
+      messages: current.messages.map((m, i) =>
         i === messageIndex ? { ...m, resolved: approved } : m
-      );
-      baseMessages = messages;
-      return { ...current, messages };
-    });
+      ),
+    }));
     setLoading(true);
     try {
       const response = await fetch("/api/chat", {
@@ -3193,13 +3397,13 @@ export default function App() {
         body: JSON.stringify({ thread_id: sessionId, resume: { approved } }),
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, baseMessages ?? []);
+      await readChatStream(response, sessionId);
     } catch (err) {
       console.error("LLM error:", err);
       const errMsg = "Error: could not reach the model.";
       replaceSession(sessionId, (current) => ({
         ...current,
-        messages: [...(baseMessages ?? current.messages), { role: "assistant", content: errMsg, display: errMsg }],
+        messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
       }));
     } finally {
       setLoading(false);
