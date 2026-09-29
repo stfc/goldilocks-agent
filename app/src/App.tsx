@@ -787,7 +787,8 @@ const EMPTY_MESSAGES = [];
 const EMPTY_ARRAY = [];
 
 // STFC Cloud shared deployment only (design doc §19) -- baked in at build
-// time via `.env.stfc-cloud`/`npm run build:stfc-cloud`, never set for the
+// time via `.env.stfc-cloud-public`/`.env.stfc-cloud-internal` (`npm run
+// build:stfc-cloud-public`/`build:stfc-cloud-internal`), never set for the
 // default local/desktop build. No account system there: every persisted
 // bit of state should die with the tab, not survive across visits the way
 // a single local user's own state should.

@@ -1,9 +1,18 @@
 # STFC Cloud deployment
 
-Shared, multi-user, anonymous (no account system) deployment of goldilocks-agent
-under `goldilocks.stfc.ac.uk/agent/` -- see `docs/goldilocks-agent-design.md`
-§19 for the full design rationale. This is a different deployment from the
-repo-root `docker-compose.yml`, which is the single-local-user build.
+Shared, multi-user, anonymous (no account system) deployment of goldilocks-agent,
+eventually reachable under `goldilocks.stfc.ac.uk/agent/` -- see
+`docs/goldilocks-agent-design.md` §19 for the full design rationale. This is a
+different deployment from the repo-root `docker-compose.yml`, which is the
+single-local-user build.
+
+The frontend has two build variants for this deployment (`app/package.json`):
+`build:stfc-cloud-public` (root-relative asset paths swapped for `/agent/`,
+`.env.stfc-cloud-public`) for once this sits behind the shared-domain nginx,
+and `build:stfc-cloud-internal` (`.env.stfc-cloud-internal`, root-relative
+paths kept) for direct access to this VM's own address in the meantime --
+`docker-compose.yml`'s `FRONTEND_BUILD_SCRIPT` picks one explicitly; they are
+not interchangeable without also changing the `ports` binding below.
 
 ## Scope of this directory
 
@@ -16,8 +25,12 @@ not this repo. v1's own STFC deployment (`old-goldilcoks-webapp`) used
 exactly this split: the backend only ever bound to `127.0.0.1`, and the
 domain-wide nginx config lived in the portal repo's own deploy folder.
 
-- `docker-compose.yml` -- the agent container + `ollama` (GPU-backed) +
-  a one-shot `ollama-pull` service, agent bound to `127.0.0.1:8080` only.
+- `docker-compose.yml` -- the agent container + `ollama` (GPU-backed) + a
+  one-shot `ollama-pull` service. Currently binds `agent` to `8080:8080`
+  (reachable from anyone on the STFC internal network/VPN, once the
+  OpenStack Security Group and this VM's own `ufw` both allow 8080/tcp) --
+  an interim direct-access setup, not the eventual `127.0.0.1:8080:8080` +
+  shared-domain-nginx design (see the `ports` comment in that file).
 - `nginx-agent.conf` -- the `location /agent/ { ... }` snippet to hand to
   whoever owns the shared nginx config. Not a standalone site file.
 
