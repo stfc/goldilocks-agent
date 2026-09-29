@@ -450,5 +450,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
     graph.add_node("tool", call_tool)
     graph.add_edge(START, "llm")
     graph.add_conditional_edges("llm", route_after_llm, {"tool": "tool", END: END})
-    graph.add_conditional_edges("tool", route_after_tool, {"tool": "tool", "llm": "llm"})
+    graph.add_conditional_edges(
+        "tool", route_after_tool, {"tool": "tool", "llm": "llm"}
+    )
     return graph.compile(checkpointer=checkpointer)
