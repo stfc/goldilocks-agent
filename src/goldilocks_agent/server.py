@@ -346,6 +346,17 @@ async def get_chat_history(thread_id: str) -> dict:
 
 @app.post("/api/credentials")
 async def save_credential(request: CredentialRequest) -> dict:
+    # `~/.config/goldilocks/config.toml` is one file on the server, not a
+    # per-thread/per-user store (unlike the checkpointer) -- letting any
+    # visitor write to it in the shared deployment would mean the first
+    # person who opens Settings sets everyone else's provider key (their own
+    # account gets billed for the whole instance's traffic, silently). This
+    # deployment mode is LLM-locked to a fixed local model precisely so this
+    # can't come up (see resolve_model()'s env-var override) -- rejecting
+    # here too is defense in depth, not just the frontend happening not to
+    # show the field, same reasoning as `_reject_in_shared_deployment` below
+    # for projects/conversations.
+    _reject_in_shared_deployment()
     write_credential(request.provider, request.api_key)
     return {"ok": True}
 
@@ -353,6 +364,7 @@ async def save_credential(request: CredentialRequest) -> dict:
 @app.get("/api/credentials")
 async def get_credentials_status() -> dict[str, bool]:
     """Presence per provider only -- never returns the key itself."""
+    _reject_in_shared_deployment()
     return configured_providers()
 
 

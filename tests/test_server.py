@@ -56,6 +56,22 @@ def test_shared_deployment_blocks_projects_and_conversations_routes(
         assert client.delete("/api/conversations/some-id").status_code == 404
 
 
+def test_shared_deployment_blocks_credentials_routes(tmp_path, monkeypatch) -> None:
+    """`~/.config/goldilocks/config.toml` is one file on the server, not a
+    per-thread/per-user store -- letting any visitor write to it on a shared
+    server would mean the first person who opens Settings sets everyone
+    else's provider key (their own account gets billed for the whole
+    instance's traffic, silently). Refused at the route, not just left
+    unused by the shared-mode frontend build."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        assert client.get("/api/credentials").status_code == 404
+        save_response = client.post(
+            "/api/credentials", json={"provider": "anthropic", "api_key": "sk-test"}
+        )
+        assert save_response.status_code == 404
+
+
 def test_shared_deployment_skips_conversation_indexing(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
     calls = []
