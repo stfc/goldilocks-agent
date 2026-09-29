@@ -1,8 +1,9 @@
 # STFC Cloud shared deployment (design doc §19) -- distinct from the
 # repo-root docker-compose.yml, which is the single-local-user build.
 #
-# Scope of this file: the agent app itself (+ optionally vLLM), nothing
-# else. It does NOT run nginx or handle TLS -- this deployment is one path
+# Scope of this file: the agent app itself + Ollama (serving qwen3.8:27b
+# on this VM's own GPU), nothing else. It does NOT run nginx or handle TLS
+# -- this deployment is one path
 # segment (`/agent/`) under a domain shared with two other repos' own
 # content (`/` the portal, `/workbench` goldilocks-core/web), so the actual
 # internet-facing nginx + certbot setup is a domain-wide concern owned by
@@ -17,23 +18,23 @@ services:
     build:
       context: ../..
       args:
-        # Mounted at /agent/ under a shared domain, not served from `/`
-        # (design doc §19.3) -- see app/.env.stfc-cloud for what this
-        # Vite mode actually sets.
-        FRONTEND_BUILD_SCRIPT: build:stfc-cloud
+        # This VM is reached directly at its own address (see the `ports`
+        # comment below), not via a shared domain's /agent/ subpath -- so
+        # the frontend must be built with root-relative asset paths, not
+        # /agent/-prefixed ones. Switch to `build:stfc-cloud-public` (see
+        # app/.env.stfc-cloud-public) once this sits behind the shared-domain
+        # nginx instead (design doc §19.3).
+        FRONTEND_BUILD_SCRIPT: build:stfc-cloud-internal
     image: goldilocks-agent-stfc-cloud:latest
     environment:
       GOLDILOCKS_AGENT_SHARED_DEPLOYMENT: "1"
-      # Chat backend: vLLM, not Ollama (this deployment's whole reason for
-      # differing from the local build) -- see graph.py's resolve_model().
-      # VLLM_API_BASE is a placeholder: v1's own STFC deployment put vLLM on
-      # a *separate* GPU VM reached over the internal network, not a
-      # container on this same box -- confirm which applies here before
-      # relying on this value. If it does end up on this same box, uncomment
-      # the `vllm` service below and point this at `http://vllm:8000/v1`
-      # instead.
-      GOLDILOCKS_AGENT_MODEL: hosted_vllm/Qwen/Qwen3.8-27B
-      VLLM_API_BASE: http://<gpu-vm-internal-ip>:8000/v1
+      # Chat backend: Ollama, served by the `ollama` service below on this
+      # same VM's GPU -- see graph.py's resolve_model(). Pinned explicitly
+      # to `:27b` rather than relying on LOCAL_MODEL's hardcoded `:latest`
+      # default, since that tag hasn't been confirmed to resolve to the
+      # same size.
+      GOLDILOCKS_AGENT_MODEL: ollama_chat/qwen3.8:27b
+      OLLAMA_API_BASE: http://ollama:11434
       # Design doc §19.7: the real safe number needs measuring on this VM
       # under real load, not guessing -- leave unset (no limit) until that
       # measurement happens, then set it here.
@@ -47,62 +48,59 @@ services:
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
       GOLDILOCKS_AGENT_MMACE_ENABLED: "1"
     ports:
-      # Loopback only -- the shared nginx (not this compose file) is the
-      # only thing that should ever reach this port directly (design doc
-      # §19.4: the OpenStack Security Group can't filter by path, only by
-      # port, so this loopback binding plus nginx's own IP allowlist for
-      # /agent/ are the actual access-control layers, not this port mapping).
-      - "127.0.0.1:8080:8080"
+      # Direct STFC-internal access (2026-09-29, same pattern as
+      # goldilocks-core-DFTworkbench-stable's :8000) -- interim mode while
+      # the shared-domain nginx/TLS setup (design doc §19.4/§19.8) is still
+      # blocked on the pending STFC floating-IP/subdomain allocation.
+      # Reachable from anyone on the STFC internal network/VPN once the
+      # OpenStack Security Group and this VM's own ufw both allow 8080/tcp
+      # (see README.md). Revert to "127.0.0.1:8080:8080" once nginx/TLS is
+      # ready and path-based access control at /agent/ takes over instead.
+      - "8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
       - goldilocks_core_venv:/opt/goldilocks-core/.venv
+    depends_on:
+      - ollama
     restart: unless-stopped
 
-  # Optional -- only if vLLM ends up on this *same* VM as `agent` (uncomment
-  # this and switch VLLM_API_BASE above to `http://vllm:8000/v1`). Leave
-  # commented out if STFC provisions a separate GPU VM instead (v1's own
-  # precedent) -- point VLLM_API_BASE at that VM's address and this service
-  # is never needed at all.
-  #
-  # ⚠️ Untested against this exact model. v1's own Qwen3 vLLM setup needed
-  # `--enable-auto-tool-choice --tool-call-parser qwen3_xml` for tool-calling
-  # to work, and even then needed an application-level XML-parsing safety
-  # net for buggy emissions (goldilocks-api/app/services/llm.py:46-77 in
-  # old-goldilcoks-webapp). Qwen3.8-27B is a different, newer architecture
-  # (hybrid Gated DeltaNet/Gated Attention) with no documented vLLM
-  # tool-call parser -- verify tool-calling for real before trusting it in
-  # production, don't assume the old `qwen3_xml` parser name still applies.
-  # Also unverified: whether this GPU has enough VRAM for a 27B model at its
-  # native 262K context -- check `--gpu-memory-utilization`/`--max-model-len`
-  # against the real hardware before relying on these values.
-  #
-  # vllm:
-  #   image: vllm/vllm-openai:latest
-  #   command:
-  #     - --model
-  #     - Qwen/Qwen3.8-27B
-  #     - --served-model-name
-  #     - Qwen/Qwen3.8-27B
-  #     - --host
-  #     - "0.0.0.0"
-  #     - --port
-  #     - "8000"
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   ports:
-  #     - "127.0.0.1:8000:8000"
-  #   volumes:
-  #     - vllm_hf_cache:/root/.cache/huggingface
-  #   restart: unless-stopped
+  # Serves qwen3.8:27b on this VM's own GPU (requires nvidia-container-toolkit
+  # configured as the Docker runtime on the host -- see README.md). Not
+  # exposed outside the compose network; the `agent` service reaches it at
+  # OLLAMA_API_BASE above.
+  ollama:
+    image: ollama/ollama:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # One-shot: waits for `ollama` to answer, pulls the model the chat engine
+  # expects (pinned to :27b, see the agent service's GOLDILOCKS_AGENT_MODEL
+  # comment above), then exits. Re-running is a cheap no-op once the model
+  # is already pulled.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        until ollama list >/dev/null 2>&1; do sleep 1; done;
+        ollama pull qwen3.8:27b
+    restart: "no"
 
 volumes:
   goldilocks_home:
   mlip_cli_venv:
   goldilocks_core_venv:
-  # vllm_hf_cache:   # only needed if the optional vllm service above is used
+  ollama_data:
