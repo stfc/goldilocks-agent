@@ -498,6 +498,7 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
     settings_model_key_hint: "Stored locally on this machine only — a key is only sent to the provider it belongs to, never anywhere else.",
+    settings_model_key_unavailable_shared: "Not available in the web app — download the local version to use your own API key.",
     settings_databases_heading: "Databases",
     settings_databases_desc: "Materials Project needs a free API key to search. Get one at materialsproject.org/api.",
     settings_compute_heading: "Compute",
@@ -566,6 +567,7 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
     settings_model_key_hint: "Stockée uniquement en local sur cette machine — une clé n'est envoyée qu'au fournisseur auquel elle appartient, jamais ailleurs.",
+    settings_model_key_unavailable_shared: "Non disponible dans l'application web — téléchargez la version locale pour utiliser votre propre clé API.",
     settings_databases_heading: "Bases de données",
     settings_databases_desc: "Materials Project nécessite une clé API gratuite pour la recherche. Obtenez-en une sur materialsproject.org/api.",
     settings_compute_heading: "Calcul",
@@ -634,6 +636,7 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
     settings_model_key_hint: "Wird nur lokal auf diesem Rechner gespeichert — ein Schlüssel wird ausschließlich an den zugehörigen Anbieter gesendet, niemals anderswohin.",
+    settings_model_key_unavailable_shared: "In der Web-App nicht verfügbar — laden Sie die lokale Version herunter, um Ihren eigenen API-Schlüssel zu verwenden.",
     settings_databases_heading: "Datenbanken",
     settings_databases_desc: "Materials Project benötigt einen kostenlosen API-Schlüssel für die Suche. Holen Sie sich einen unter materialsproject.org/api.",
     settings_compute_heading: "Rechenressourcen",
@@ -702,6 +705,7 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
     settings_model_key_hint: "仅保存在本机——密钥只会发送给其所属的服务商，绝不会发往其他任何地方。",
+    settings_model_key_unavailable_shared: "网页版不支持——如需使用自己的 API 密钥，请下载本地版。",
     settings_databases_heading: "数据库",
     settings_databases_desc: "搜索 Materials Project 需要一个免费的 API key，可以在 materialsproject.org/api 申请。",
     settings_compute_heading: "计算",
@@ -770,6 +774,7 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
     settings_model_key_hint: "Salvata solo localmente su questa macchina — una chiave viene inviata solo al fornitore a cui appartiene, mai altrove.",
+    settings_model_key_unavailable_shared: "Non disponibile nell'app web — scarica la versione locale per usare la tua chiave API.",
     settings_databases_heading: "Banche dati",
     settings_databases_desc: "Materials Project richiede una chiave API gratuita per la ricerca. Ottienine una su materialsproject.org/api.",
     settings_compute_heading: "Calcolo",
@@ -1677,7 +1682,13 @@ export default function App() {
   const [newProjectChatTitle, setNewProjectChatTitle] = useState("");
   const [newProjectWithSources, setNewProjectWithSources] = useState(false);
   const [newProjectSourcesText, setNewProjectSourcesText] = useState("");
-  const [selectedModel, setSelectedModel] = useState(MODEL_GROUPS[0].items[0]);
+  // Web app is LLM-locked to the local model regardless of selection
+  // (resolve_model()'s GOLDILOCKS_AGENT_MODEL env-var override always wins
+  // server-side) -- defaulting to Claude there would misrepresent which
+  // model actually answers.
+  const [selectedModel, setSelectedModel] = useState(
+    SHARED_DEPLOYMENT ? MODEL_GROUPS[1].items[0] : MODEL_GROUPS[0].items[0],
+  );
   // Ephemeral UI-only state (which dropdown is open, is a calc in flight) --
   // fine to stay global, same as structure-search's own loading flag/open
   // dropdown state. Everything else MLIP-related lives in
@@ -1917,12 +1928,12 @@ export default function App() {
   }, [resolvedTheme]);
 
   useEffect(() => {
-    refreshConfiguredProviders();
-    // Projects/history/experience-level are all single-local-user concepts
-    // with no per-user isolation on the server (design doc §19.2) -- the
-    // shared deployment's backend 404s these routes anyway, so skip calling
-    // them at all rather than surfacing that as a startup error.
+    // Projects/history/experience-level/credentials are all single-local-user
+    // concepts with no per-user isolation on the server (design doc §19.2) --
+    // the shared deployment's backend 404s/rejects these routes anyway, so
+    // skip calling them at all rather than surfacing that as a startup error.
     if (!SHARED_DEPLOYMENT) {
+      refreshConfiguredProviders();
       refreshProjects();
       loadConversationsOnce();
       hydrateExperienceLevel();
@@ -2591,6 +2602,28 @@ export default function App() {
   // (to peek at it, to test something) used to commit whatever was typed the
   // moment focus left, silently overwriting a real saved key with no undo.
   function renderCredentialRow(id, label) {
+    if (SHARED_DEPLOYMENT) {
+      // Server-side, /api/credentials rejects writes here too (server.py) --
+      // this deployment is LLM-locked to the fixed local model regardless of
+      // what's typed here (resolve_model()'s env-var override always wins).
+      // Shown disabled rather than hidden so visitors can see cloud models
+      // exist and that the web app isn't where you'd use your own key.
+      return (
+        <div className="credential-row" key={id}>
+          <span className="credential-label">{label}</span>
+          <input
+            type="password"
+            className="credential-input"
+            value=""
+            placeholder={t("settings_model_key_unavailable_shared")}
+            disabled
+          />
+          <button type="button" className="secondary-btn compact" disabled>
+            {t("save")}
+          </button>
+        </div>
+      );
+    }
     const canSave = Boolean(cloudApiKeys[id]?.trim()) && credentialStatus[id] !== "saving";
     return (
       <div className="credential-row" key={id}>
@@ -9295,33 +9328,46 @@ export default function App() {
                               {MODEL_GROUPS.map((group, groupIndex) => (
                                 <div key={group.group}>
                                   {groupIndex > 0 && <div className="sidebar-divider" style={{ margin: "6px 6px 8px" }} />}
-                                  <div className="menu-label">{group.group}</div>
-                                  {group.items.map((model) => (
-                                    <div
-                                      key={model.id}
-                                      className={`menu-item${model.disabled ? " menu-item-disabled" : ""}`}
-                                      aria-disabled={model.disabled || undefined}
-                                      onClick={() => {
-                                        if (model.disabled) return;
-                                        setSelectedModel(model);
-                                        setModelOpen(false);
-                                      }}
-                                    >
-                                      <div className="menu-item-icon">
-                                        <span className="model-dot" style={{ background: MODEL_TAG_COLORS[model.tag] }} />
+                                  <div className="menu-label">
+                                    {group.group}
+                                    {SHARED_DEPLOYMENT && groupIndex === 0 ? " — unavailable in web app" : ""}
+                                  </div>
+                                  {group.items.map((model) => {
+                                    // Cloud items stay visible (so visitors know they
+                                    // exist) but unselectable here -- same reasoning
+                                    // as the Settings credential rows: no safe way to
+                                    // bring your own cloud key to a shared server.
+                                    const lockedByDeployment = SHARED_DEPLOYMENT && model.tag !== "default";
+                                    const isDisabled = model.disabled || lockedByDeployment;
+                                    return (
+                                      <div
+                                        key={model.id}
+                                        className={`menu-item${isDisabled ? " menu-item-disabled" : ""}`}
+                                        aria-disabled={isDisabled || undefined}
+                                        onClick={() => {
+                                          if (isDisabled) return;
+                                          setSelectedModel(model);
+                                          setModelOpen(false);
+                                        }}
+                                      >
+                                        <div className="menu-item-icon">
+                                          <span className="model-dot" style={{ background: MODEL_TAG_COLORS[model.tag] }} />
+                                        </div>
+                                        <div className="menu-item-copy">
+                                          <strong>{model.label}</strong>
+                                          {lockedByDeployment ? (
+                                            <span className="model-coming-soon">Unavailable in the web app</span>
+                                          ) : model.disabled ? (
+                                            <span className="model-coming-soon">{model.desc}</span>
+                                          ) : model.tag !== "default" && configuredProviders[model.tag] ? (
+                                            <span className="model-ready">✓ API key saved — ready to use</span>
+                                          ) : (
+                                            <span>{model.desc}</span>
+                                          )}
+                                        </div>
                                       </div>
-                                      <div className="menu-item-copy">
-                                        <strong>{model.label}</strong>
-                                        {model.disabled ? (
-                                          <span className="model-coming-soon">{model.desc}</span>
-                                        ) : model.tag !== "default" && configuredProviders[model.tag] ? (
-                                          <span className="model-ready">✓ API key saved — ready to use</span>
-                                        ) : (
-                                          <span>{model.desc}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               ))}
                             </div>
