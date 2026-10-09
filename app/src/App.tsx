@@ -8476,7 +8476,9 @@ export default function App() {
           position: absolute;
           inset: 0;
           border-radius: 28px;
-          background: var(--panel);
+          /* Opaque: it covers the settings list underneath, which would
+             otherwise read through var(--panel)'s 92% alpha. */
+          background: var(--bg-elev);
           padding: 24px;
           z-index: 4;
           box-shadow: var(--shadow);
@@ -8487,12 +8489,12 @@ export default function App() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 4px;
           position: sticky;
           top: -24px;
-          padding-top: 24px;
-          margin-top: -24px;
-          background: var(--panel);
+          margin: -24px -24px 4px;
+          padding: 24px 24px 0;
+          border-radius: 28px 28px 0 0;
+          background: var(--bg-elev);
           z-index: 3;
         }
 
@@ -8506,12 +8508,17 @@ export default function App() {
           align-items: center;
           justify-content: space-between;
           gap: 16px;
-          margin-bottom: 18px;
+          /* Pinned so the close button stays reachable in a long Settings
+             modal (the scrim has no click-to-close), and opaque + full-bleed
+             like .settings-overlay-head so scrolled content can't read
+             through or beside it -- the old pinned head used var(--panel)'s
+             92% alpha and overlapped the text underneath. */
           position: sticky;
           top: -24px;
-          padding-top: 24px;
-          margin-top: -24px;
-          background: var(--panel);
+          margin: -24px -24px 0;
+          padding: 24px 24px 18px;
+          border-radius: 28px 28px 0 0;
+          background: var(--bg-elev);
           z-index: 3;
         }
 
