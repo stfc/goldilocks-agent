@@ -106,11 +106,11 @@ no Python/Node toolchain -- `build: .` in `docker-compose.yml` is only a
 local-dev fallback (`docker compose up --build` forces a rebuild from
 source, which does need a real clone). Add
 `GOLDILOCKS_AGENT_IMAGE_OWNER`/`GOLDILOCKS_AGENT_IMAGE_TAG` to that same
-`.env` if you want `junwen94`'s build instead, or a specific commit's
+`.env` if you want a fork's build instead, or a specific commit's
 `sha-xxxxxxx` tag rather than `latest` (only useful for reproducing one
 exact build -- for everyday use, `latest` already tracks the newest
-successful publish automatically, no manual bumping needed). Both repos
-publish from the same source, just to different `ghcr.io` namespaces. Once
+successful publish automatically, no manual bumping needed). A fork
+publishes the same source to its own `ghcr.io` namespace. Once
 you've picked an engine, open <http://localhost:8080>.
 
 What's on by default in this image, no extra config needed: chat, **Find in
@@ -277,7 +277,7 @@ full-page (the Tools panel's own expand-all-tools button, top right, then
 DFT Workbench from the six-Tool grid) -- both render the exact same
 embedded goldilocks-core Workbench UI, published as an npm package and
 installed into `app/`'s dependencies (see
-[issue #1](https://github.com/junwen94/goldilocks-agent/issues/1)): the
+`docs/goldilocks-agent-design.md` §13): the
 full-page view shows all its cards (Structure/Analysis/Advisors/Bundles)
 side by side, the inline panel shows the same cards as tabs, one at a time.
 The first time either is opened, goldilocks-agent auto-starts

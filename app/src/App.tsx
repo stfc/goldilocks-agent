@@ -1788,7 +1788,7 @@ export default function App() {
   const [hoveredHandle, setHoveredHandle] = useState(null);
   // One workspace/client instance per app lifetime -- recreating it every
   // time DFT Workbench's detail page is opened would drop in-progress state
-  // (see junwen94/goldilocks-agent#1 -- this is the embedded
+  // (see design doc §13 -- this is the embedded
   // goldilocks-workbench package DFT Workbench's full-page detail and inline
   // panel both reuse, see CoreWorkbenchTree/CoreWorkbenchTabs).
   const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
@@ -9940,7 +9940,7 @@ export default function App() {
                 <h3>{t("contribute_heading")}</h3>
                 <p>{t("contribute_desc")}</p>
                 <div className="contact-list">
-                  <a className="contact-link contact-primary-link" href="https://github.com/junwen94/goldilocks-agent/issues" target="_blank" rel="noreferrer">
+                  <a className="contact-link contact-primary-link" href="https://github.com/stfc/goldilocks-agent/issues" target="_blank" rel="noreferrer">
                     {t("github_issues")}
                   </a>
                   <a

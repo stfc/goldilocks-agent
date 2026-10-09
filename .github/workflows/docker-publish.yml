@@ -1,8 +1,7 @@
 name: Build and publish Docker image
 
 # Publishes ghcr.io/<owner>/goldilocks-agent (whichever repo this runs in --
-# junwen94/goldilocks-agent and stfc/goldilocks-agent both use this same
-# file) so `docker compose pull` (or a plain `docker pull`) gives a
+# stfc/goldilocks-agent, or a fork under its own owner) so `docker compose pull` (or a plain `docker pull`) gives a
 # colleague a working image with no local clone/build/toolchain needed --
 # only `main` and version tags publish; other branches/PRs only run the
 # `test` gate below.
@@ -68,10 +67,10 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          # Derived from the running repo, not hardcoded to junwen94's --
-          # this same workflow also runs on stfc/goldilocks-agent (which has
-          # its own GITHUB_TOKEN, scoped to ghcr.io/stfc/*, not junwen94/*)
-          # and a hardcoded owner would just fail to push there.
+          # Derived from the running repo, not hardcoded: a fork runs this
+          # same workflow with its own GITHUB_TOKEN, scoped to its own
+          # ghcr.io/<owner>/* namespace, where a hardcoded owner would just
+          # fail to push.
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}

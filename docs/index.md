@@ -23,9 +23,9 @@ not built.
 This site covers running and configuring goldilocks-agent. For the full
 product design and a dated log of what's actually been built vs. still
 planned, see
-[`docs/goldilocks-agent-design.md`](https://github.com/junwen94/goldilocks-agent/blob/main/docs/goldilocks-agent-design.md)
+[`docs/goldilocks-agent-design.md`](https://github.com/stfc/goldilocks-agent/blob/main/docs/goldilocks-agent-design.md)
 and
-[`docs/goldilocks-agent-implementation-plan.md`](https://github.com/junwen94/goldilocks-agent/blob/main/docs/goldilocks-agent-implementation-plan.md)
+[`docs/goldilocks-agent-implementation-plan.md`](https://github.com/stfc/goldilocks-agent/blob/main/docs/goldilocks-agent-implementation-plan.md)
 in the repository -- internal working documents, not part of this site.
 
 ## Layout
