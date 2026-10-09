@@ -173,12 +173,48 @@ def test_chat_indexes_conversation_even_when_model_call_fails(
         assert conversations[0]["title"] == "Hello"
 
 
+def test_mlip_routes_404_while_unreleased(tmp_path, monkeypatch) -> None:
+    """MLIP Playground is "Coming soon" (`MLIP_PLAYGROUND_RELEASED`) -- every
+    `/api/mlip/*` route must refuse before touching the `janus` CLI, even
+    with GOLDILOCKS_AGENT_MLIP_ENABLED on (as the local docker-compose.yml
+    has it)."""
+    monkeypatch.setattr("goldilocks_agent.server.MLIP_PLAYGROUND_RELEASED", False)
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MLIP_ENABLED", "1")
+
+    # A gate regression must fail here, not start a multi-GB `uv sync` of
+    # ./mlip-cli on the way to the real CLI.
+    async def _cli_reached(*args):
+        raise AssertionError(f"MLIP gate bypassed: janus CLI reached with {args}")
+
+    monkeypatch.setattr(
+        "goldilocks_agent.tools.mlip_playground.client._run_in_mlip_cli", _cli_reached
+    )
+    structure = {"structure_content": "not a real cif", "structure_name": "x.cif"}
+    neb = {
+        "init_structure_content": "x",
+        "init_structure_name": "a.cif",
+        "final_structure_content": "y",
+        "final_structure_name": "b.cif",
+    }
+    with _make_client(tmp_path, monkeypatch) as client:
+        for path, body in [
+            ("/api/mlip/singlepoint", structure),
+            ("/api/mlip/geomopt", structure),
+            ("/api/mlip/eos", structure),
+            ("/api/mlip/neb", neb),
+            ("/api/mlip/phonons", structure),
+        ]:
+            assert client.post(path, json=body).status_code == 404, path
+
+
 def test_mlip_endpoint_degrades_clearly_when_not_configured(
     tmp_path, monkeypatch
 ) -> None:
     """No GOLDILOCKS_AGENT_MLIP_ENABLED in a fresh dev environment -- real
     code path, not a mock, exercising `client._require_enabled()`'s own
-    RuntimeError."""
+    RuntimeError. Forced released so this keeps covering the route body
+    while MLIP Playground is "Coming soon"."""
+    monkeypatch.setattr("goldilocks_agent.server.MLIP_PLAYGROUND_RELEASED", True)
     monkeypatch.delenv("GOLDILOCKS_AGENT_MLIP_ENABLED", raising=False)
     with _make_client(tmp_path, monkeypatch) as client:
         response = client.post(

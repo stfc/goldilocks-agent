@@ -8,16 +8,17 @@ submission).
 
 ## Status
 
-Real, working chat + tool-calling for two of the six planned Tools --
-**Find in Databases** (Materials Project/Materials Cloud/NOMAD/JARVIS
-search) and **MLIP Playground** (local MACE calculations via `janus-core`).
-**DFT Workbench** is real too, but not via chat tool-calling -- it embeds
-`goldilocks-core`'s own published Workbench UI directly (same content
-inline, as tabs, and full-page, as a grid), talking to a `goldilocks-core`
-HTTP backend goldilocks-agent auto-starts for you (see
-[Configuration](configuration.md)). **Beyond DFT**/**Post Analysis** are
-partial (panel-only, no real backing yet beyond Post Analysis's phonon
-visualizer). **AiiDA** is not built.
+Real, working chat + tool-calling for **Find in Databases** (Materials
+Project/Materials Cloud/NOMAD/JARVIS search). **DFT Workbench** is real
+too, but not via chat tool-calling -- it embeds `goldilocks-core`'s own
+published Workbench UI directly (same content inline, as tabs, and
+full-page, as a grid), talking to a `goldilocks-core` HTTP backend
+goldilocks-agent auto-starts for you (see
+[Configuration](configuration.md)). **MLIP Playground** (local MACE
+calculations via `janus-core`, built) and **Beyond DFT** (panel-only) are
+parked under *Coming soon* this release (see [Tools](tools.md)). **Post
+Analysis** is partial (only its phonon visualizer is real). **AiiDA** is
+not built.
 
 This site covers running and configuring goldilocks-agent. For the full
 product design and a dated log of what's actually been built vs. still

@@ -28,8 +28,10 @@ Ollama model -- for chat to actually respond; everything below this point
 is opt-in for extra Tools, not required to start using the app at all.
 
 **Optional: MLIP Playground** (local MACE calculations via `janus-core`) --
-off by default (the first real calculation triggers a multi-GB `uv sync`
-inside `./mlip-cli/`, so this needs to be opt-in):
+*Coming soon* this release, so this has no effect until it's re-enabled
+(see [Tools](tools.md)). Off by default (the first real calculation
+triggers a multi-GB `uv sync` inside `./mlip-cli/`, so this needs to be
+opt-in):
 
 ```bash
 export GOLDILOCKS_AGENT_MLIP_ENABLED=1

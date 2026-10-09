@@ -41,6 +41,11 @@ includes:
   since the browser already forces a genuine, unavoidable click on the
   Bundle card's own Download button before anything lands on the user's
   machine (see `dft_workbench/tool.py`'s `CONFIRMATION_REQUIRED` comment).
+
+A shipped Tool can also be parked as "Coming soon" without deleting it
+(2026-10-09, MLIP Playground): its subpackage and tests stay intact, but a
+`<TOOL>_RELEASED = False` flag below keeps it out of every collection here,
+so the LLM is never offered a tool whose UI panel can't be opened.
 """
 
 from __future__ import annotations
@@ -65,20 +70,34 @@ from goldilocks_agent.tools.structure_search.tool import (
     TOOL_SCHEMA as _STRUCTURE_SEARCH_SCHEMA,
 )
 
-TOOL_SCHEMAS: list[dict] = [*_STRUCTURE_SEARCH_SCHEMA, *_MLIP_SCHEMA, *_DFT_SCHEMA]
+# MLIP Playground is "Coming soon" this release (2026-10-09): App.tsx's
+# TOOLS entry is marked `comingSoon`, so its panel is unreachable, and this
+# flag keeps its `run_mlip_*` tools away from the LLM and makes server.py's
+# `/api/mlip/*` routes 404. To bring it back: set this True *and* drop
+# `comingSoon` from App.tsx's "ml-analysis" entry; the STFC Cloud web
+# deployment additionally needs its MLIP lines uncommented in
+# deploy/stfc-cloud/docker-compose.yml.
+MLIP_PLAYGROUND_RELEASED = False
+
+TOOL_SCHEMAS: list[dict] = [
+    *_STRUCTURE_SEARCH_SCHEMA,
+    *(_MLIP_SCHEMA if MLIP_PLAYGROUND_RELEASED else []),
+    *_DFT_SCHEMA,
+]
 TOOL_DISPATCH: dict[str, Callable[..., Awaitable]] = {
     **_STRUCTURE_SEARCH_DISPATCH,
-    **_MLIP_DISPATCH,
+    **(_MLIP_DISPATCH if MLIP_PLAYGROUND_RELEASED else {}),
     **_DFT_DISPATCH,
 }
 # structure_search/DFT Workbench have no confirmation-required tools --
-# only MLIP Playground contributes to these two sets so far.
+# only MLIP Playground contributes to these two sets so far, so both are
+# empty while it's unreleased.
 CONFIRMATION_REQUIRED_TOOLS: set[str] = {
-    *_MLIP_CONFIRMATION_REQUIRED,
+    *(_MLIP_CONFIRMATION_REQUIRED if MLIP_PLAYGROUND_RELEASED else set()),
     *_DFT_CONFIRMATION_REQUIRED,
 }
 CONFIRMATION_LABELS: dict[str, Callable[[dict], str]] = {
-    **_MLIP_CONFIRMATION_LABELS,
+    **(_MLIP_CONFIRMATION_LABELS if MLIP_PLAYGROUND_RELEASED else {}),
     **_DFT_CONFIRMATION_LABELS,
 }
 # Only DFT Workbench's tools are client-executed so far -- MLIP Playground

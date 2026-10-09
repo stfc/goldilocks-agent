@@ -44,7 +44,13 @@ services:
       # OPENAI_API_KEY:
       # GEMINI_API_KEY:
       # MP_API_KEY:
-      GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
+      # MLIP Playground is "Coming soon" this release (2026-10-09,
+      # MLIP_PLAYGROUND_RELEASED in src/goldilocks_agent/tools/__init__.py)
+      # -- off on this shared VM at the deployment layer too, so flipping
+      # that flag alone can't start real MACE compute here. To bring it
+      # back on this deployment, uncomment this line plus both
+      # mlip_cli_venv lines below.
+      # GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
       GOLDILOCKS_AGENT_MMACE_ENABLED: "1"
     ports:
@@ -59,7 +65,7 @@ services:
       - "8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
-      - mlip_cli_venv:/app/mlip-cli/.venv
+      # - mlip_cli_venv:/app/mlip-cli/.venv   # MLIP Playground, see above
       - goldilocks_core_venv:/opt/goldilocks-core/.venv
     depends_on:
       - ollama
@@ -109,6 +115,6 @@ services:
 
 volumes:
   goldilocks_home:
-  mlip_cli_venv:
+  # mlip_cli_venv:   # MLIP Playground, see the agent service's environment
   goldilocks_core_venv:
   ollama_data:

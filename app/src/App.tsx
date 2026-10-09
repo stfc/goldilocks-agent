@@ -309,6 +309,17 @@ const EXPERIENCE_OPTIONS = [
   },
 ];
 
+// `comingSoon: true` parks a Tool: hidden from the side-panel picker,
+// listed only in the full-page overview's "Coming soon" section, never
+// activatable (getToolById resolves it to null, so a chat saved with it
+// open just falls back to the picker). Its panel code, i18n strings and
+// per-chat modeState stay in place -- re-enabling is deleting that one
+// line (MLIP Playground also needs
+// `MLIP_PLAYGROUND_RELEASED` flipped in tools/__init__.py, which keeps its
+// LLM tools and /api/mlip/* off while parked, plus its MLIP lines
+// uncommented in deploy/stfc-cloud/docker-compose.yml for the web
+// deployment). 2026-10-09: MLIP Playground and Beyond DFT parked for this
+// release.
 const TOOLS = [
   {
     id: "structure-search",
@@ -329,6 +340,7 @@ const TOOLS = [
     launcherDesc: "Explore materials research with machine learning interatomic potentials",
     placeholder: "Upload structures or results to explore machine learning interatomic potential behaviour and compare predictions.",
     defaultPanel: "analysis",
+    comingSoon: true,
   },
   {
     id: "dft-workbench",
@@ -349,6 +361,7 @@ const TOOLS = [
     launcherDesc: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     placeholder: "Ask about cutting-edge methods, when to use them, and how to set them up.",
     defaultPanel: "setup",
+    comingSoon: true,
   },
   {
     id: "post-analysis",
@@ -371,6 +384,9 @@ const TOOLS = [
     defaultPanel: "setup",
   },
 ];
+
+const AVAILABLE_TOOLS = TOOLS.filter((tool) => !tool.comingSoon);
+const COMING_SOON_TOOLS = TOOLS.filter((tool) => tool.comingSoon);
 
 const TOOL_ICON_SOURCES = {
   "dft-workbench": "/mode-icons/dft.svg",
@@ -548,6 +564,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     tool_post_analysis_launcher: "Parse and interpret DFT/MLIP outputs, plots, and convergence data",
     tool_aiida_launcher: "Monitor AiiDA processes, diagnose failures, and browse provenance",
+    tools_coming_soon: "Coming soon",
     settings_model_heading: "Model",
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
@@ -617,6 +634,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM et au-delà",
     tool_post_analysis_launcher: "Analyser et interpréter les sorties DFT/MLIP, les graphiques et les données de convergence",
     tool_aiida_launcher: "Surveiller les processus AiiDA, diagnostiquer les échecs et parcourir la provenance",
+    tools_coming_soon: "Bientôt disponible",
     settings_model_heading: "Modèle",
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
@@ -686,6 +704,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM und darüber hinaus",
     tool_post_analysis_launcher: "DFT/MLIP-Ausgaben, Diagramme und Konvergenzdaten analysieren und interpretieren",
     tool_aiida_launcher: "AiiDA-Prozesse überwachen, Fehler diagnostizieren und Herkunft durchsuchen",
+    tools_coming_soon: "Demnächst verfügbar",
     settings_model_heading: "Modell",
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
@@ -755,6 +774,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW、BSE、QMC、TDDFT、Wannier、DMFT、QM/MM 及更多",
     tool_post_analysis_launcher: "解析并解读 DFT/MLIP 输出、图表和收敛数据",
     tool_aiida_launcher: "监控 AiiDA 流程，诊断失败，浏览溯源信息",
+    tools_coming_soon: "即将推出",
     settings_model_heading: "模型",
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
@@ -824,6 +844,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM e oltre",
     tool_post_analysis_launcher: "Analizza e interpreta output DFT/MLIP, grafici e dati di convergenza",
     tool_aiida_launcher: "Monitora i processi AiiDA, diagnostica gli errori ed esplora la provenienza",
+    tools_coming_soon: "Prossimamente",
     settings_model_heading: "Modello",
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
@@ -968,6 +989,17 @@ function getMessageDisplayParts(message) {
   return { text: message.display || text, images: message.images ?? images };
 }
 
+// What send() embeds per attached file. Structures get a far larger budget:
+// a cut CIF/POSCAR isn't a smaller structure but a broken one (a ~45-site
+// CIF already passes 3000 chars), so typical database entries go in whole.
+// Anything still over budget is cut with an explicit marker line after its
+// fence, so neither the model nor extractStructureFromMessageContent below
+// mistakes a partial file for the whole one (2026-10-09: the cut used to be
+// silent, at 3000 chars for everything).
+const ATTACHMENT_CHAR_BUDGET = 3000;
+const STRUCTURE_ATTACHMENT_CHAR_BUDGET = 20000;
+const TRUNCATED_ATTACHMENT_MARKER = "[Truncated attachment:";
+
 // Recovers a structure attachment from a past user message so it still
 // shows up in the Structure Viewer after a reload (checkpointer only stores
 // `content`, never the local `sessionFiles` state). `content` may be a
@@ -977,6 +1009,8 @@ function extractStructureFromMessageContent(content) {
   const text = typeof content === "string" ? content : Array.isArray(content) ? content.find((part) => part.type === "text")?.text ?? "" : "";
   const match = text.match(/\[Attached file: ([^\]]+)\]\n```([^\n]*)\n([\s\S]+?)```/);
   if (!match) return null;
+  // A truncated attachment is not a usable structure (see the budgets above).
+  if (text.slice(match.index + match[0].length).startsWith(`\n${TRUNCATED_ATTACHMENT_MARKER}`)) return null;
   const [, name, fenceLang, fileContent] = match;
   const rawExt = getRawFileExtension(name);
   const inferredExt = inferStructureExtension(name, fileContent);
@@ -1687,8 +1721,47 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   return "Starting goldilocks-core's Workbench backend -- first-time setup downloads models and pseudopotentials and can take a few minutes (up to ~15 minutes if MLIP's mMACE model is enabled); it's fast on every start after that.";
 }
 
+// Only activatable Tools resolve -- a `comingSoon` id (e.g. from a chat
+// saved before it was parked) comes back null, same as no Tool at all.
 function getToolById(id) {
-  return TOOLS.find((tool) => tool.id === id) ?? null;
+  return AVAILABLE_TOOLS.find((tool) => tool.id === id) ?? null;
+}
+
+// The error bubble for a failed chat turn. Once any SSE data had arrived
+// (readChatStream marks the error), the model *was* reached and the
+// connection broke mid-reply -- "could not reach the model" would be wrong.
+function chatErrorMessage(err) {
+  return err?.streamInterrupted
+    ? "Error: the connection to the model was interrupted."
+    : "Error: could not reach the model.";
+}
+
+// Settles with `promise`, or rejects with the abort reason as soon as
+// `signal` aborts -- for awaits that can't take a signal themselves
+// (goldilocks-workbench's `coreWorkspace.dispatch`). The abandoned work
+// keeps running in the background; only the await is cut short.
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+// Resolves once `workspace` has no operation in flight. Its actions
+// silently return while one is (the panel's own auto-compute, or a request
+// a Stop click abandoned), which would hand the model a stale snapshot.
+function waitForWorkspaceIdle(workspace, signal) {
+  if (workspace.getSnapshot().operation === null) return Promise.resolve();
+  return untilAborted(new Promise<void>((resolve) => {
+    const unsubscribe = workspace.subscribe(() => {
+      if (workspace.getSnapshot().operation !== null) return;
+      unsubscribe();
+      resolve();
+    });
+  }), signal);
 }
 
 export default function App() {
@@ -1839,6 +1912,11 @@ export default function App() {
   // the same stale `session === null`) would each create their own new
   // session and silently drop one of the two updates. See ensureSession().
   const pendingSessionRef = useRef(null);
+  // Set only by the user's own "Formula" toggle click, consumed when the
+  // formula box mounts. Not `autoFocus`: a chat-driven find_in_databases
+  // result also switches the panel to formula mode, and autoFocus then
+  // pulled focus (and keystrokes) out of the composer mid-typing (2026-10-09).
+  const formulaFocusRequestedRef = useRef(false);
 
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
@@ -2437,6 +2515,11 @@ export default function App() {
         if (filtered.length === prev.length) setViewerIdx(chatStructures.length);
         return [...filtered, fileEntry];
       });
+      // Attached to the next message too, same as an uploaded file
+      // (readFile): only `attachedFiles` ever reach the model -- the Files
+      // list alone doesn't -- so an imported structure used to sit in Files
+      // while the model replied it couldn't see any structure (2026-10-09).
+      setAttachedFiles(prev => [...prev.filter(f => f.name !== data.filename), fileEntry]);
       updateStructureSearchState(prev => ({
         ...prev,
         // "Formula" and "Structure" describe the same search target -- keep
@@ -2479,7 +2562,8 @@ export default function App() {
       rightPanelView: current.tool === tool.id ? (current.rightPanelView ?? tool.defaultPanel) : tool.defaultPanel,
     }));
     setView("chats");
-    setInput("");
+    // The composer draft is deliberately left alone: picking a Tool used to
+    // clear it, silently discarding whatever the user had typed (2026-10-09).
     setPlusOpen(false);
     setShowElementPicker(false);
     setShowStructureViewer(false);
@@ -2670,6 +2754,8 @@ export default function App() {
     const name = `geo-opt-${baseName}.cif`;
     const file = { name, content, source: "mlip", rawExt: ".cif", ext: ".cif", isStructure: true };
     setSessionFiles((prev) => [...prev, file]);
+    // Same reason as handleImportStructure: Files alone never reaches the model.
+    setAttachedFiles((prev) => [...prev.filter((f) => f.name !== name), file]);
   }
 
   // Shared by the search panel's button and the element-picker's "search"
@@ -2950,46 +3036,59 @@ export default function App() {
   // the raw payload -- same real-content/friendly-display split `images`
   // already uses below, applied to a text-only case.
   async function send(text?: string, displayOverride?: string) {
+    // `text` set = a programmatic send (a panel's ✦ "interpret this"
+    // button): a self-contained prompt that leaves the composer alone -- the
+    // user's unsent draft and staged attachments are neither sent with it
+    // nor cleared by it (2026-10-09: ✦ used to wipe the draft).
+    const fromComposer = text === undefined;
+    const files = fromComposer ? attachedFiles : EMPTY_ARRAY;
+    const images = fromComposer ? attachedImages : EMPTY_ARRAY;
     const rawText = (text ?? input).trim();
-    if ((!rawText && attachedFiles.length === 0 && attachedImages.length === 0) || loading || hasPendingConfirmation) return;
+    if ((!rawText && files.length === 0 && images.length === 0) || loading || hasPendingConfirmation) return;
 
     // Images render as thumbnails in the bubble (via `images` below), not as
     // a text label -- only structure-file attachments need a text stand-in.
     let display = displayOverride ?? rawText;
-    if (attachedFiles.length > 0) {
-      const fileNames = attachedFiles.map(f => `📎 ${f.name}`).join(" · ");
+    if (files.length > 0) {
+      const fileNames = files.map(f => `📎 ${f.name}`).join(" · ");
       display = display ? `${display} · ${fileNames}` : fileNames;
     }
 
     let textContent = rawText;
-    if (activeTool && attachedFiles.length > 0) textContent = `[Mode: ${activeTool.label}]\n\n${textContent}`;
-    for (const af of attachedFiles) {
+    if (activeTool && files.length > 0) textContent = `[Mode: ${activeTool.label}]\n\n${textContent}`;
+    for (const af of files) {
       const fenceLanguage = getStructureFenceLanguage(af.ext || af.rawExt);
       // "Attached file", not "attached structure file" -- this fence now also
       // carries generic text attachments (e.g. a DFT output log) that aren't
       // structures at all; extractStructureFromMessageContent still decides
       // "is it a structure" from the content itself, not this label.
-      textContent = `${textContent}${textContent ? "\n\n" : ""}[Attached file: ${af.name}]\n\`\`\`${fenceLanguage}\n${af.content.slice(0, 3000)}\n\`\`\``;
+      const budget = af.isStructure || WEAS_SUPPORTED_EXTS.has(af.ext)
+        ? STRUCTURE_ATTACHMENT_CHAR_BUDGET
+        : ATTACHMENT_CHAR_BUDGET;
+      textContent = `${textContent}${textContent ? "\n\n" : ""}[Attached file: ${af.name}]\n\`\`\`${fenceLanguage}\n${af.content.slice(0, budget)}\n\`\`\``;
+      if (af.content.length > budget) {
+        textContent += `\n${TRUNCATED_ATTACHMENT_MARKER} only the first ${budget} of ${af.content.length} characters of ${af.name} are included above.]`;
+      }
     }
 
     // Qwen3.8 is vision-capable and litellm/ollama_chat accept OpenAI-style
     // image_url content parts (verified 2026-09-15 with a real call) -- only
     // switch `content` to the multipart array shape when there's actually an
     // image, so the common text-only case keeps sending a plain string.
-    const content = attachedImages.length > 0
+    const content = images.length > 0
       ? [
           { type: "text", text: textContent || "Describe what you see in the attached image(s)." },
-          ...attachedImages.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
+          ...images.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
         ]
       : textContent;
 
     const targetSession = ensureSession();
     setView("chats");
 
-    const nextMessages = [...targetSession.messages, { role: "user", content, display, images: attachedImages }];
+    const nextMessages = [...targetSession.messages, { role: "user", content, display, images }];
     const nextTitle = targetSession.messages.length
       ? targetSession.title
-      : (rawText || activeTool?.label || attachedFiles[0]?.name || attachedImages[0]?.name || "New chat").slice(0, 48);
+      : (rawText || activeTool?.label || files[0]?.name || images[0]?.name || "New chat").slice(0, 48);
 
     replaceSession(targetSession.id, (current) => ({
       ...current,
@@ -2999,9 +3098,11 @@ export default function App() {
       rightPanelView: current.rightPanelView ?? getToolById(current.tool)?.defaultPanel ?? null,
     }));
 
-    setInput("");
-    setAttachedFiles([]);
-    setAttachedImages([]);
+    if (fromComposer) {
+      setInput("");
+      setAttachedFiles([]);
+      setAttachedImages([]);
+    }
     setShowElementPicker(false);
     setLoading(true);
 
@@ -3038,14 +3139,18 @@ export default function App() {
       });
 
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, targetSession.id);
+      await readChatStream(response, targetSession.id, controller.signal);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
-        const errMsg = "Error: could not reach the model.";
+        // Appended to the live messages, not rebuilt from `nextMessages`:
+        // a stream cut mid-reply (VPN drop, server restart) used to wipe the
+        // partial reply already on screen along with any mid-stream cards,
+        // under an error claiming the model was never reached (2026-10-09).
+        const errMsg = chatErrorMessage(err);
         replaceSession(targetSession.id, (current) => ({
           ...current,
-          messages: [...nextMessages, { role: "assistant", content: errMsg, display: errMsg }],
+          messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
         }));
       }
     } finally {
@@ -3063,11 +3168,12 @@ export default function App() {
   // same endpoint and keeps `coreServerStatus` in sync so the panel (once
   // switched to, via `TOOL_CALL_TO_UI_TOOL`) shows the same "starting
   // up..." state instead of two independent readiness tracks. Returns
-  // `null` on success, an error string otherwise.
-  async function ensureCoreServerReady(timeoutMs = 30000) {
+  // `null` on success, an error string otherwise. `signal` is the chat
+  // turn's own (see readChatStream): a Stop click aborts the next poll.
+  async function ensureCoreServerReady(timeoutMs = 30000, signal = undefined) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const resp = await fetch("/api/core-server/ensure", { method: "POST" });
+      const resp = await fetch("/api/core-server/ensure", { method: "POST", signal });
       const data = await resp.json();
       setCoreServerStatus(data);
       if (data.status === "ready") return null;
@@ -3101,13 +3207,14 @@ export default function App() {
   // otherwise be indistinguishable from "nothing to report." Returns
   // `{result}` or `{error}` -- the exact shape `graph.py`'s second
   // `interrupt()` expects back as its resume value.
-  async function dispatchDftTool(tool, args) {
-    const readyError = await ensureCoreServerReady();
+  async function dispatchDftTool(tool, args, signal) {
+    const readyError = await ensureCoreServerReady(undefined, signal);
     if (readyError) return { error: readyError };
-    await ensureWorkspaceStarted(coreWorkspace);
+    await waitForWorkspaceIdle(coreWorkspace, signal);
+    await untilAborted(ensureWorkspaceStarted(coreWorkspace), signal);
 
     if (tool === "dft_open_structure") {
-      await coreWorkspace.dispatch({
+      await untilAborted(coreWorkspace.dispatch({
         type: "source.open",
         input: {
           structure_content: args.structure_content,
@@ -3115,7 +3222,7 @@ export default function App() {
           structure_format: args.structure_format
             ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
         },
-      });
+      }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       return { result: snapshot.inspection ?? {} };
@@ -3125,7 +3232,7 @@ export default function App() {
       if (coreWorkspace.getSnapshot().structureInput === null) {
         return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
       }
-      await coreWorkspace.dispatch({ type: "review.compute" });
+      await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       return { result: snapshot.reviewed ?? {} };
@@ -3139,7 +3246,7 @@ export default function App() {
       if (before.reviewed === null) {
         return { error: "No review has been run yet -- call dft_review first." };
       }
-      if (before.outOfDate) await coreWorkspace.dispatch({ type: "review.compute" });
+      if (before.outOfDate) await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
       // Deliberately `review.refreshArchive`, not `review.download`: the
       // latter ends in a real `saveArchiveToBrowser` -- an `<a>` click --
       // which browsers silently drop unless it happens inside a *direct*
@@ -3152,7 +3259,7 @@ export default function App() {
       // touching the DOM -- the user's own click on BundleCard's real
       // "Download (.zip)" button then reuses that cached archive and
       // *is* a direct gesture, so the browser actually saves it.
-      await coreWorkspace.dispatch({ type: "review.refreshArchive" });
+      await untilAborted(coreWorkspace.dispatch({ type: "review.refreshArchive" }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       if (snapshot.lastDownload === null) {
@@ -3185,24 +3292,30 @@ export default function App() {
   // transcript message of its own -- the `tool_result` SSE handler's own
   // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
   // narrated reply are what's user-visible for these tools.
-  async function runClientToolCall(sessionId, payload) {
+  async function runClientToolCall(sessionId, payload, signal) {
     let outcome;
     try {
-      outcome = await dispatchDftTool(payload.tool, payload.args ?? {});
+      outcome = await dispatchDftTool(payload.tool, payload.args ?? {}, signal);
     } catch (err) {
       outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
     }
+    // Stopped mid-chain: don't resume. Resuming would start the very model
+    // turn the user just stopped; the still-paused tool call is closed by
+    // graph.py's _repair_orphaned_tool_calls on their next message instead.
+    if (signal?.aborted) return;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: sessionId, resume: outcome }),
+        signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId);
+      await readChatStream(response, sessionId, signal);
     } catch (err) {
+      if (err.name === "AbortError") return;
       console.error("LLM error:", err);
-      const errMsg = "Error: could not reach the model.";
+      const errMsg = chatErrorMessage(err);
       replaceSession(sessionId, (current) => ({
         ...current,
         messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
@@ -3215,27 +3328,49 @@ export default function App() {
   // `tool_status`/`tool_result`/`confirmation_needed`/`client_tool_call`
   // events), so both read it the same way.
   //
-  // The streaming assistant bubble is tracked by object reference
-  // (`assistantMessageRef`), not by rebuilding the array from a snapshot
-  // taken once at the start of the call (#6, 2026-09-28): a `tool_result`/
+  // The streaming assistant bubble is found by its `streamId` in the live
+  // `current.messages` on each delta, not rebuilt from a snapshot taken
+  // once at the start of the call (#6, 2026-09-28): a `tool_result`/
   // `client_tool_call` handler earlier in this same stream may already have
   // appended something (a `dft-bundle-ready` card, a confirmation card) via
   // `current.messages` -- reconstructing from a frozen snapshot on every
-  // text delta silently dropped those. Finding-and-replacing by reference
-  // against the live `current.messages` on each delta means the bubble
-  // updates in place wherever it actually is, and never clobbers anything
-  // appended around it.
-  async function readChatStream(response, targetSessionId) {
+  // text delta silently dropped those. Finding-and-replacing by id means
+  // the bubble updates in place wherever it actually is, and never
+  // clobbers anything appended around it.
+  //
+  // `signal` is the whole turn's AbortSignal (send()/respondToConfirmation()
+  // own its controller, which the Stop button aborts). It is threaded into
+  // every client_tool_call hop -- core readiness polling, the resume POST,
+  // and that POST's own nested stream -- since the stream that delivered
+  // the client_tool_call has already ended by then; aborting only that one
+  // used to leave Stop doing nothing for the rest of the chain (2026-10-09).
+  //
+  // The updater must stay pure (2026-10-09): the first version of this
+  // tracked the bubble by object reference, reassigned *inside* the
+  // updater -- React's StrictMode calls every updater twice in dev and
+  // discards one result (as can any interrupted concurrent render), which
+  // left that reference pointing at an object no committed state contained,
+  // so every delta appended a new bubble instead of updating the existing one.
+  async function readChatStream(response, targetSessionId, signal) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    const streamId = createId();
     let assistantContent = "";
-    let assistantMessageRef = null;
     let buffer = "";
     let currentEventType = null;
+    let receivedAny = false;
 
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        if (receivedAny) err.streamInterrupted = true; // see chatErrorMessage
+        throw err;
+      }
+      const { done, value } = chunk;
       if (done) break;
+      receivedAny = true;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop();
@@ -3258,7 +3393,7 @@ export default function App() {
             // running, not only once the result lands -- same session-id
             // capture reasoning as the tool_result branch below.
             const uiTool = TOOL_CALL_TO_UI_TOOL[payload.tool];
-            const tool = uiTool && TOOLS.find((t) => t.id === uiTool);
+            const tool = uiTool && getToolById(uiTool);
             if (tool) {
               replaceSession(targetSessionId, (current) => ({
                 ...current,
@@ -3357,7 +3492,7 @@ export default function App() {
           // resume automatically.
           try {
             const payload = JSON.parse(data);
-            await runClientToolCall(targetSessionId, payload);
+            await runClientToolCall(targetSessionId, payload, signal);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -3365,16 +3500,18 @@ export default function App() {
         currentEventType = null;
         if (!assistantContent) setToolStatus(null);
         try { assistantContent += JSON.parse(data); } catch { assistantContent += data; }
+        const text = assistantContent;
         replaceSession(targetSessionId, (current) => {
-          if (assistantMessageRef && current.messages.includes(assistantMessageRef)) {
-            const updated = { ...assistantMessageRef, content: assistantContent, display: assistantContent };
-            const messages = current.messages.map((m) => (m === assistantMessageRef ? updated : m));
-            assistantMessageRef = updated;
-            return { ...current, messages };
+          const index = current.messages.findIndex((m) => m.streamId === streamId);
+          if (index === -1) {
+            return {
+              ...current,
+              messages: [...current.messages, { role: "assistant", streamId, content: text, display: text }],
+            };
           }
-          const created = { role: "assistant", content: assistantContent, display: assistantContent };
-          assistantMessageRef = created;
-          return { ...current, messages: [...current.messages, created] };
+          const messages = [...current.messages];
+          messages[index] = { ...messages[index], content: text, display: text };
+          return { ...current, messages };
         });
       }
     }
@@ -3390,22 +3527,28 @@ export default function App() {
       ),
     }));
     setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: sessionId, resume: { approved } }),
+        signal: controller.signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId);
+      await readChatStream(response, sessionId, controller.signal);
     } catch (err) {
-      console.error("LLM error:", err);
-      const errMsg = "Error: could not reach the model.";
-      replaceSession(sessionId, (current) => ({
-        ...current,
-        messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
-      }));
+      if (err.name !== "AbortError") {
+        console.error("LLM error:", err);
+        const errMsg = chatErrorMessage(err);
+        replaceSession(sessionId, (current) => ({
+          ...current,
+          messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
+        }));
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
       setToolStatus(null);
     }
@@ -3522,7 +3665,7 @@ export default function App() {
   function renderToolPicker() {
     return (
       <div className="workspace-content">
-        {TOOLS.map((tool) => (
+        {AVAILABLE_TOOLS.map((tool) => (
           <div key={tool.id} className="menu-item" onClick={() => activateTool(tool)}>
             <div className="menu-item-icon" style={{ color: tool.color }}>
               <ToolGlyph tool={tool} size={18} />
@@ -3575,7 +3718,10 @@ export default function App() {
                 >Structure</button>
                 <button
                   className={`db-query-toggle-btn${dbQueryMode === "formula" ? " active" : ""}`}
-                  onClick={() => updateStructureSearchState({ queryMode: "formula" })}
+                  onClick={() => {
+                    formulaFocusRequestedRef.current = true;
+                    updateStructureSearchState({ queryMode: "formula" });
+                  }}
                 >Formula</button>
               </div>
               {dbQueryMode === "structure" ? (
@@ -3604,7 +3750,12 @@ export default function App() {
                         onChange={e => updateStructureSearchState({ formula: e.target.value })}
                         placeholder="e.g. Fe2O3"
                         spellCheck={false}
-                        autoFocus
+                        ref={(el) => {
+                          if (el && formulaFocusRequestedRef.current) {
+                            formulaFocusRequestedRef.current = false;
+                            el.focus();
+                          }
+                        }}
                       />
                     </div>
                     {dbFormulaInput && (
@@ -4524,7 +4675,7 @@ export default function App() {
   function renderToolsOverview() {
     return (
       <div className="tools-overview-grid">
-        {TOOLS.map((tool) => (
+        {AVAILABLE_TOOLS.map((tool) => (
           <button
             key={tool.id}
             type="button"
@@ -4544,6 +4695,27 @@ export default function App() {
             </span>
           </button>
         ))}
+        {COMING_SOON_TOOLS.length > 0 && (
+          <>
+            <div className="tools-overview-section-label">{t("tools_coming_soon")}</div>
+            {COMING_SOON_TOOLS.map((tool) => (
+              <div
+                key={tool.id}
+                className="tools-overview-card coming-soon"
+                style={{ "--tool-color": tool.color } as CSSPropertiesWithVars}
+                aria-disabled
+              >
+                <div className="tools-overview-card-icon">
+                  <ToolGlyph tool={tool} size={26} />
+                </div>
+                <div className="tools-overview-card-copy">
+                  <strong>{tool.label}</strong>
+                  <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     );
   }
@@ -5418,6 +5590,27 @@ export default function App() {
 
         .tools-overview-card:hover .tools-overview-expand-btn {
           color: var(--tool-color, var(--accent));
+        }
+
+        .tools-overview-section-label {
+          grid-column: 1 / -1;
+          margin-top: 16px;
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--subtle);
+          font-weight: 700;
+        }
+
+        .tools-overview-card.coming-soon {
+          cursor: default;
+          opacity: 0.55;
+        }
+
+        .tools-overview-card.coming-soon:hover {
+          background: var(--bg-elev);
+          border-color: var(--border);
+          transform: none;
         }
 
         /* Full-page detail body for the five Tools that reuse their inline
@@ -8283,7 +8476,9 @@ export default function App() {
           position: absolute;
           inset: 0;
           border-radius: 28px;
-          background: var(--panel);
+          /* Opaque: it covers the settings list underneath, which would
+             otherwise read through var(--panel)'s 92% alpha. */
+          background: var(--bg-elev);
           padding: 24px;
           z-index: 4;
           box-shadow: var(--shadow);
@@ -8294,12 +8489,12 @@ export default function App() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 4px;
           position: sticky;
           top: -24px;
-          padding-top: 24px;
-          margin-top: -24px;
-          background: var(--panel);
+          margin: -24px -24px 4px;
+          padding: 24px 24px 0;
+          border-radius: 28px 28px 0 0;
+          background: var(--bg-elev);
           z-index: 3;
         }
 
@@ -8313,12 +8508,17 @@ export default function App() {
           align-items: center;
           justify-content: space-between;
           gap: 16px;
-          margin-bottom: 18px;
+          /* Pinned so the close button stays reachable in a long Settings
+             modal (the scrim has no click-to-close), and opaque + full-bleed
+             like .settings-overlay-head so scrolled content can't read
+             through or beside it -- the old pinned head used var(--panel)'s
+             92% alpha and overlapped the text underneath. */
           position: sticky;
           top: -24px;
-          padding-top: 24px;
-          margin-top: -24px;
-          background: var(--panel);
+          margin: -24px -24px 0;
+          padding: 24px 24px 18px;
+          border-radius: 28px 28px 0 0;
+          background: var(--bg-elev);
           z-index: 3;
         }
 
@@ -9517,6 +9717,10 @@ export default function App() {
                               event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`;
                             }}
                             onKeyDown={(event) => {
+                              // Enter also commits an IME composition (Chinese/
+                              // Japanese input) -- that one must not send a
+                              // half-typed draft (2026-10-09).
+                              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                               if (event.key === "Enter" && !event.shiftKey) {
                                 event.preventDefault();
                                 send();
