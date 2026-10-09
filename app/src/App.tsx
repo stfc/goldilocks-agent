@@ -1714,6 +1714,43 @@ function getToolById(id) {
   return AVAILABLE_TOOLS.find((tool) => tool.id === id) ?? null;
 }
 
+// The error bubble for a failed chat turn. Once any SSE data had arrived
+// (readChatStream marks the error), the model *was* reached and the
+// connection broke mid-reply -- "could not reach the model" would be wrong.
+function chatErrorMessage(err) {
+  return err?.streamInterrupted
+    ? "Error: the connection to the model was interrupted."
+    : "Error: could not reach the model.";
+}
+
+// Settles with `promise`, or rejects with the abort reason as soon as
+// `signal` aborts -- for awaits that can't take a signal themselves
+// (goldilocks-workbench's `coreWorkspace.dispatch`). The abandoned work
+// keeps running in the background; only the await is cut short.
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+// Resolves once `workspace` has no operation in flight. Its actions
+// silently return while one is (the panel's own auto-compute, or a request
+// a Stop click abandoned), which would hand the model a stale snapshot.
+function waitForWorkspaceIdle(workspace, signal) {
+  if (workspace.getSnapshot().operation === null) return Promise.resolve();
+  return untilAborted(new Promise<void>((resolve) => {
+    const unsubscribe = workspace.subscribe(() => {
+      if (workspace.getSnapshot().operation !== null) return;
+      unsubscribe();
+      resolve();
+    });
+  }), signal);
+}
+
 export default function App() {
   const [themeChoice, setThemeChoice] = useState(() => {
     const stored = readStorage(STORAGE_KEYS.theme, "light");
@@ -3061,14 +3098,18 @@ export default function App() {
       });
 
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, targetSession.id);
+      await readChatStream(response, targetSession.id, controller.signal);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
-        const errMsg = "Error: could not reach the model.";
+        // Appended to the live messages, not rebuilt from `nextMessages`:
+        // a stream cut mid-reply (VPN drop, server restart) used to wipe the
+        // partial reply already on screen along with any mid-stream cards,
+        // under an error claiming the model was never reached (2026-10-09).
+        const errMsg = chatErrorMessage(err);
         replaceSession(targetSession.id, (current) => ({
           ...current,
-          messages: [...nextMessages, { role: "assistant", content: errMsg, display: errMsg }],
+          messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
         }));
       }
     } finally {
@@ -3086,11 +3127,12 @@ export default function App() {
   // same endpoint and keeps `coreServerStatus` in sync so the panel (once
   // switched to, via `TOOL_CALL_TO_UI_TOOL`) shows the same "starting
   // up..." state instead of two independent readiness tracks. Returns
-  // `null` on success, an error string otherwise.
-  async function ensureCoreServerReady(timeoutMs = 30000) {
+  // `null` on success, an error string otherwise. `signal` is the chat
+  // turn's own (see readChatStream): a Stop click aborts the next poll.
+  async function ensureCoreServerReady(timeoutMs = 30000, signal = undefined) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const resp = await fetch("/api/core-server/ensure", { method: "POST" });
+      const resp = await fetch("/api/core-server/ensure", { method: "POST", signal });
       const data = await resp.json();
       setCoreServerStatus(data);
       if (data.status === "ready") return null;
@@ -3124,13 +3166,14 @@ export default function App() {
   // otherwise be indistinguishable from "nothing to report." Returns
   // `{result}` or `{error}` -- the exact shape `graph.py`'s second
   // `interrupt()` expects back as its resume value.
-  async function dispatchDftTool(tool, args) {
-    const readyError = await ensureCoreServerReady();
+  async function dispatchDftTool(tool, args, signal) {
+    const readyError = await ensureCoreServerReady(undefined, signal);
     if (readyError) return { error: readyError };
-    await ensureWorkspaceStarted(coreWorkspace);
+    await waitForWorkspaceIdle(coreWorkspace, signal);
+    await untilAborted(ensureWorkspaceStarted(coreWorkspace), signal);
 
     if (tool === "dft_open_structure") {
-      await coreWorkspace.dispatch({
+      await untilAborted(coreWorkspace.dispatch({
         type: "source.open",
         input: {
           structure_content: args.structure_content,
@@ -3138,7 +3181,7 @@ export default function App() {
           structure_format: args.structure_format
             ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
         },
-      });
+      }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       return { result: snapshot.inspection ?? {} };
@@ -3148,7 +3191,7 @@ export default function App() {
       if (coreWorkspace.getSnapshot().structureInput === null) {
         return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
       }
-      await coreWorkspace.dispatch({ type: "review.compute" });
+      await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       return { result: snapshot.reviewed ?? {} };
@@ -3162,7 +3205,7 @@ export default function App() {
       if (before.reviewed === null) {
         return { error: "No review has been run yet -- call dft_review first." };
       }
-      if (before.outOfDate) await coreWorkspace.dispatch({ type: "review.compute" });
+      if (before.outOfDate) await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
       // Deliberately `review.refreshArchive`, not `review.download`: the
       // latter ends in a real `saveArchiveToBrowser` -- an `<a>` click --
       // which browsers silently drop unless it happens inside a *direct*
@@ -3175,7 +3218,7 @@ export default function App() {
       // touching the DOM -- the user's own click on BundleCard's real
       // "Download (.zip)" button then reuses that cached archive and
       // *is* a direct gesture, so the browser actually saves it.
-      await coreWorkspace.dispatch({ type: "review.refreshArchive" });
+      await untilAborted(coreWorkspace.dispatch({ type: "review.refreshArchive" }), signal);
       const snapshot = coreWorkspace.getSnapshot();
       if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
       if (snapshot.lastDownload === null) {
@@ -3208,24 +3251,30 @@ export default function App() {
   // transcript message of its own -- the `tool_result` SSE handler's own
   // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
   // narrated reply are what's user-visible for these tools.
-  async function runClientToolCall(sessionId, payload) {
+  async function runClientToolCall(sessionId, payload, signal) {
     let outcome;
     try {
-      outcome = await dispatchDftTool(payload.tool, payload.args ?? {});
+      outcome = await dispatchDftTool(payload.tool, payload.args ?? {}, signal);
     } catch (err) {
       outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
     }
+    // Stopped mid-chain: don't resume. Resuming would start the very model
+    // turn the user just stopped; the still-paused tool call is closed by
+    // graph.py's _repair_orphaned_tool_calls on their next message instead.
+    if (signal?.aborted) return;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: sessionId, resume: outcome }),
+        signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId);
+      await readChatStream(response, sessionId, signal);
     } catch (err) {
+      if (err.name === "AbortError") return;
       console.error("LLM error:", err);
-      const errMsg = "Error: could not reach the model.";
+      const errMsg = chatErrorMessage(err);
       replaceSession(sessionId, (current) => ({
         ...current,
         messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
@@ -3238,27 +3287,49 @@ export default function App() {
   // `tool_status`/`tool_result`/`confirmation_needed`/`client_tool_call`
   // events), so both read it the same way.
   //
-  // The streaming assistant bubble is tracked by object reference
-  // (`assistantMessageRef`), not by rebuilding the array from a snapshot
-  // taken once at the start of the call (#6, 2026-09-28): a `tool_result`/
+  // The streaming assistant bubble is found by its `streamId` in the live
+  // `current.messages` on each delta, not rebuilt from a snapshot taken
+  // once at the start of the call (#6, 2026-09-28): a `tool_result`/
   // `client_tool_call` handler earlier in this same stream may already have
   // appended something (a `dft-bundle-ready` card, a confirmation card) via
   // `current.messages` -- reconstructing from a frozen snapshot on every
-  // text delta silently dropped those. Finding-and-replacing by reference
-  // against the live `current.messages` on each delta means the bubble
-  // updates in place wherever it actually is, and never clobbers anything
-  // appended around it.
-  async function readChatStream(response, targetSessionId) {
+  // text delta silently dropped those. Finding-and-replacing by id means
+  // the bubble updates in place wherever it actually is, and never
+  // clobbers anything appended around it.
+  //
+  // `signal` is the whole turn's AbortSignal (send()/respondToConfirmation()
+  // own its controller, which the Stop button aborts). It is threaded into
+  // every client_tool_call hop -- core readiness polling, the resume POST,
+  // and that POST's own nested stream -- since the stream that delivered
+  // the client_tool_call has already ended by then; aborting only that one
+  // used to leave Stop doing nothing for the rest of the chain (2026-10-09).
+  //
+  // The updater must stay pure (2026-10-09): the first version of this
+  // tracked the bubble by object reference, reassigned *inside* the
+  // updater -- React's StrictMode calls every updater twice in dev and
+  // discards one result (as can any interrupted concurrent render), which
+  // left that reference pointing at an object no committed state contained,
+  // so every delta appended a new bubble instead of updating the existing one.
+  async function readChatStream(response, targetSessionId, signal) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    const streamId = createId();
     let assistantContent = "";
-    let assistantMessageRef = null;
     let buffer = "";
     let currentEventType = null;
+    let receivedAny = false;
 
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        if (receivedAny) err.streamInterrupted = true; // see chatErrorMessage
+        throw err;
+      }
+      const { done, value } = chunk;
       if (done) break;
+      receivedAny = true;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop();
@@ -3380,7 +3451,7 @@ export default function App() {
           // resume automatically.
           try {
             const payload = JSON.parse(data);
-            await runClientToolCall(targetSessionId, payload);
+            await runClientToolCall(targetSessionId, payload, signal);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -3388,16 +3459,18 @@ export default function App() {
         currentEventType = null;
         if (!assistantContent) setToolStatus(null);
         try { assistantContent += JSON.parse(data); } catch { assistantContent += data; }
+        const text = assistantContent;
         replaceSession(targetSessionId, (current) => {
-          if (assistantMessageRef && current.messages.includes(assistantMessageRef)) {
-            const updated = { ...assistantMessageRef, content: assistantContent, display: assistantContent };
-            const messages = current.messages.map((m) => (m === assistantMessageRef ? updated : m));
-            assistantMessageRef = updated;
-            return { ...current, messages };
+          const index = current.messages.findIndex((m) => m.streamId === streamId);
+          if (index === -1) {
+            return {
+              ...current,
+              messages: [...current.messages, { role: "assistant", streamId, content: text, display: text }],
+            };
           }
-          const created = { role: "assistant", content: assistantContent, display: assistantContent };
-          assistantMessageRef = created;
-          return { ...current, messages: [...current.messages, created] };
+          const messages = [...current.messages];
+          messages[index] = { ...messages[index], content: text, display: text };
+          return { ...current, messages };
         });
       }
     }
@@ -3413,22 +3486,28 @@ export default function App() {
       ),
     }));
     setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: sessionId, resume: { approved } }),
+        signal: controller.signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId);
+      await readChatStream(response, sessionId, controller.signal);
     } catch (err) {
-      console.error("LLM error:", err);
-      const errMsg = "Error: could not reach the model.";
-      replaceSession(sessionId, (current) => ({
-        ...current,
-        messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
-      }));
+      if (err.name !== "AbortError") {
+        console.error("LLM error:", err);
+        const errMsg = chatErrorMessage(err);
+        replaceSession(sessionId, (current) => ({
+          ...current,
+          messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
+        }));
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
       setToolStatus(null);
     }
