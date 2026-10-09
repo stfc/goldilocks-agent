@@ -28,7 +28,7 @@ submission).
 src/goldilocks_agent/   Python package (LangGraph orchestration, local HTTP/SSE server, Tools)
 app/                    React/Vite frontend (chat + Tools panel; DFT Workbench's inline panel
                         and full-page detail both embed goldilocks-core/web's published UI --
-                        see issue #1) -- not "web": see design doc §13
+                        see design doc §13) -- not "web"
 mlip-cli/               Own project (own pyproject.toml), just a `janus-core[mace]` dependency pin --
                         keeps torch/mace out of goldilocks-agent's own env; MLIP Playground shells
                         out to `janus` (janus-core's own CLI) inside it, see tools/mlip_playground/
@@ -287,8 +287,8 @@ state while that happens, or a clear error if neither
 `GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The published-package
 pipeline is currently a local tarball
 (`app/vendor/goldilocks-workbench-0.0.5.tgz`, rebuilt from `core/web` via
-`npm run build:lib && npm pack`) rather than a real registry -- see issue #1
-for the GitHub Packages follow-up.
+`npm run build:lib && npm pack`) rather than a real registry; publishing it from
+goldilocks-core's CI is still to be done there.
 
 ## Usage
 
