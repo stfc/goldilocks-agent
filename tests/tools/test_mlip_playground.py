@@ -22,6 +22,12 @@ import os
 
 import pytest
 
+from goldilocks_agent.tools import (
+    CONFIRMATION_REQUIRED_TOOLS,
+    MLIP_PLAYGROUND_RELEASED,
+    TOOL_DISPATCH,
+    TOOL_SCHEMAS,
+)
 from goldilocks_agent.tools.mlip_playground import (
     EosResult,
     GeomOptResult,
@@ -33,6 +39,9 @@ from goldilocks_agent.tools.mlip_playground import (
     run_neb,
     run_phonons,
     run_singlepoint,
+)
+from goldilocks_agent.tools.mlip_playground.tool import (
+    TOOL_DISPATCH as MLIP_TOOL_DISPATCH,
 )
 
 requires_mlip_enabled = pytest.mark.skipif(
@@ -140,6 +149,18 @@ loop_
   Al  Al6       1.0  0.75  0.0  0.5  1.0000
   Al  Al7       1.0  0.75  0.5  0.0  1.0000
 """
+
+
+def test_llm_is_offered_mlip_tools_only_once_released() -> None:
+    """While MLIP Playground is "Coming soon" its panel can't open, so none
+    of its tools may reach the LLM's tool list, dispatch table, or
+    confirmation gate -- and all of them must come back once released."""
+    mlip_names = set(MLIP_TOOL_DISPATCH)
+    offered = {schema["function"]["name"] for schema in TOOL_SCHEMAS}
+    expected = mlip_names if MLIP_PLAYGROUND_RELEASED else set()
+    assert offered & mlip_names == expected
+    assert set(TOOL_DISPATCH) & mlip_names == expected
+    assert CONFIRMATION_REQUIRED_TOOLS & mlip_names == expected
 
 
 def test_singlepoint_result_trims_forces_for_llm_but_keeps_them_for_panel() -> None:

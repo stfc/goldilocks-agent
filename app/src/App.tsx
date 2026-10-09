@@ -309,6 +309,17 @@ const EXPERIENCE_OPTIONS = [
   },
 ];
 
+// `comingSoon: true` parks a Tool: hidden from the side-panel picker,
+// listed only in the full-page overview's "Coming soon" section, never
+// activatable (getToolById resolves it to null, so a chat saved with it
+// open just falls back to the picker). Its panel code, i18n strings and
+// per-chat modeState stay in place -- re-enabling is deleting that one
+// line (MLIP Playground also needs
+// `MLIP_PLAYGROUND_RELEASED` flipped in tools/__init__.py, which keeps its
+// LLM tools and /api/mlip/* off while parked, plus its MLIP lines
+// uncommented in deploy/stfc-cloud/docker-compose.yml for the web
+// deployment). 2026-10-09: MLIP Playground and Beyond DFT parked for this
+// release.
 const TOOLS = [
   {
     id: "structure-search",
@@ -329,6 +340,7 @@ const TOOLS = [
     launcherDesc: "Explore materials research with machine learning interatomic potentials",
     placeholder: "Upload structures or results to explore machine learning interatomic potential behaviour and compare predictions.",
     defaultPanel: "analysis",
+    comingSoon: true,
   },
   {
     id: "dft-workbench",
@@ -349,6 +361,7 @@ const TOOLS = [
     launcherDesc: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     placeholder: "Ask about cutting-edge methods, when to use them, and how to set them up.",
     defaultPanel: "setup",
+    comingSoon: true,
   },
   {
     id: "post-analysis",
@@ -371,6 +384,9 @@ const TOOLS = [
     defaultPanel: "setup",
   },
 ];
+
+const AVAILABLE_TOOLS = TOOLS.filter((tool) => !tool.comingSoon);
+const COMING_SOON_TOOLS = TOOLS.filter((tool) => tool.comingSoon);
 
 const TOOL_ICON_SOURCES = {
   "dft-workbench": "/mode-icons/dft.svg",
@@ -548,6 +564,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     tool_post_analysis_launcher: "Parse and interpret DFT/MLIP outputs, plots, and convergence data",
     tool_aiida_launcher: "Monitor AiiDA processes, diagnose failures, and browse provenance",
+    tools_coming_soon: "Coming soon",
     settings_model_heading: "Model",
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
@@ -617,6 +634,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM et au-delà",
     tool_post_analysis_launcher: "Analyser et interpréter les sorties DFT/MLIP, les graphiques et les données de convergence",
     tool_aiida_launcher: "Surveiller les processus AiiDA, diagnostiquer les échecs et parcourir la provenance",
+    tools_coming_soon: "Bientôt disponible",
     settings_model_heading: "Modèle",
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
@@ -686,6 +704,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM und darüber hinaus",
     tool_post_analysis_launcher: "DFT/MLIP-Ausgaben, Diagramme und Konvergenzdaten analysieren und interpretieren",
     tool_aiida_launcher: "AiiDA-Prozesse überwachen, Fehler diagnostizieren und Herkunft durchsuchen",
+    tools_coming_soon: "Demnächst verfügbar",
     settings_model_heading: "Modell",
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
@@ -755,6 +774,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW、BSE、QMC、TDDFT、Wannier、DMFT、QM/MM 及更多",
     tool_post_analysis_launcher: "解析并解读 DFT/MLIP 输出、图表和收敛数据",
     tool_aiida_launcher: "监控 AiiDA 流程，诊断失败，浏览溯源信息",
+    tools_coming_soon: "即将推出",
     settings_model_heading: "模型",
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
@@ -824,6 +844,7 @@ const TRANSLATIONS = {
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM e oltre",
     tool_post_analysis_launcher: "Analizza e interpreta output DFT/MLIP, grafici e dati di convergenza",
     tool_aiida_launcher: "Monitora i processi AiiDA, diagnostica gli errori ed esplora la provenienza",
+    tools_coming_soon: "Prossimamente",
     settings_model_heading: "Modello",
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
@@ -1687,8 +1708,10 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   return "Starting goldilocks-core's Workbench backend -- first-time setup downloads models and pseudopotentials and can take a few minutes (up to ~15 minutes if MLIP's mMACE model is enabled); it's fast on every start after that.";
 }
 
+// Only activatable Tools resolve -- a `comingSoon` id (e.g. from a chat
+// saved before it was parked) comes back null, same as no Tool at all.
 function getToolById(id) {
-  return TOOLS.find((tool) => tool.id === id) ?? null;
+  return AVAILABLE_TOOLS.find((tool) => tool.id === id) ?? null;
 }
 
 export default function App() {
@@ -3258,7 +3281,7 @@ export default function App() {
             // running, not only once the result lands -- same session-id
             // capture reasoning as the tool_result branch below.
             const uiTool = TOOL_CALL_TO_UI_TOOL[payload.tool];
-            const tool = uiTool && TOOLS.find((t) => t.id === uiTool);
+            const tool = uiTool && getToolById(uiTool);
             if (tool) {
               replaceSession(targetSessionId, (current) => ({
                 ...current,
@@ -3522,7 +3545,7 @@ export default function App() {
   function renderToolPicker() {
     return (
       <div className="workspace-content">
-        {TOOLS.map((tool) => (
+        {AVAILABLE_TOOLS.map((tool) => (
           <div key={tool.id} className="menu-item" onClick={() => activateTool(tool)}>
             <div className="menu-item-icon" style={{ color: tool.color }}>
               <ToolGlyph tool={tool} size={18} />
@@ -4524,7 +4547,7 @@ export default function App() {
   function renderToolsOverview() {
     return (
       <div className="tools-overview-grid">
-        {TOOLS.map((tool) => (
+        {AVAILABLE_TOOLS.map((tool) => (
           <button
             key={tool.id}
             type="button"
@@ -4544,6 +4567,27 @@ export default function App() {
             </span>
           </button>
         ))}
+        {COMING_SOON_TOOLS.length > 0 && (
+          <>
+            <div className="tools-overview-section-label">{t("tools_coming_soon")}</div>
+            {COMING_SOON_TOOLS.map((tool) => (
+              <div
+                key={tool.id}
+                className="tools-overview-card coming-soon"
+                style={{ "--tool-color": tool.color } as CSSPropertiesWithVars}
+                aria-disabled
+              >
+                <div className="tools-overview-card-icon">
+                  <ToolGlyph tool={tool} size={26} />
+                </div>
+                <div className="tools-overview-card-copy">
+                  <strong>{tool.label}</strong>
+                  <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     );
   }
@@ -5418,6 +5462,27 @@ export default function App() {
 
         .tools-overview-card:hover .tools-overview-expand-btn {
           color: var(--tool-color, var(--accent));
+        }
+
+        .tools-overview-section-label {
+          grid-column: 1 / -1;
+          margin-top: 16px;
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--subtle);
+          font-weight: 700;
+        }
+
+        .tools-overview-card.coming-soon {
+          cursor: default;
+          opacity: 0.55;
+        }
+
+        .tools-overview-card.coming-soon:hover {
+          background: var(--bg-elev);
+          border-color: var(--border);
+          transform: none;
         }
 
         /* Full-page detail body for the five Tools that reuse their inline

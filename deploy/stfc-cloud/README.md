@@ -72,8 +72,27 @@ domain-wide nginx config lived in the portal repo's own deploy folder.
      -d '{"thread_id":"smoke-test","message":{"role":"user","content":"Hello"}}'
    ```
 4. Confirm the shared-deployment gating actually took effect: no sidebar
-   projects/history panel in the UI, and `GET /agent/api/projects` returns
-   `404` (confirms `GOLDILOCKS_AGENT_SHARED_DEPLOYMENT=1` is really set).
+   projects/history panel in the UI, and the backend's own refusal on the
+   VM itself -- match the `detail` text, not just a 404 status: the backend
+   serves no `/agent/`-prefixed routes, so a bare `/agent/api/...` request
+   lands on the static frontend's own 404/405 whatever the gating.
+   ```bash
+   curl -s http://127.0.0.1:8080/api/projects
+   # {"detail":"Not available in the shared deployment (no account system)."}
+   ```
+   MLIP Playground and Beyond DFT are *Coming soon* this release: they
+   appear only in the full-page All Tools view, unopenable, and the MLIP
+   routes refuse even a well-formed request (a malformed one gets FastAPI's
+   own 422 first):
+   ```bash
+   curl -s -X POST http://127.0.0.1:8080/api/mlip/singlepoint \
+     -H 'content-type: application/json' \
+     -d '{"structure_content":"x","structure_name":"x.cif"}'
+   # {"detail":"MLIP Playground is not available in this release."}
+   ```
+   MLIP Playground is also off at this deployment's own layer
+   (`docker-compose.yml`'s commented-out
+   `GOLDILOCKS_AGENT_MLIP_ENABLED`/`mlip_cli_venv`).
 
 ## Redeploying
 

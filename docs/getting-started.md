@@ -57,16 +57,11 @@ open <http://localhost:8080>.
 What's on by default:
 - Chat with the local model, and **Find in Databases** (Materials
   Project/Materials Cloud/NOMAD/JARVIS search).
-- **MLIP Playground** (local MACE calculations via `janus-core`) is enabled,
-  but the *first* real calculation you run still triggers its own one-time,
-  multi-GB download inside the container (installing `janus-core[mace]`) --
-  this is independent of the Ollama model download above and only happens
-  when you actually use it.
 - **DFT Workbench** is enabled too -- the image bakes in goldilocks-core's
   own source (a pinned release), so the first time you open the Tool,
   goldilocks-agent auto-starts it for you inside the container; that first
   open triggers its own one-time download of goldilocks-core's own
-  dependencies, independent of Ollama/MLIP Playground's above.
+  dependencies, independent of the Ollama download above.
 - **Magnetism ML tier (mMACE)** is enabled too -- `is_magnetic`
   classification and magnetic-ordering ranking in DFT Workbench run on a
   real ML model, not the heuristic/LLM fallback. Piggybacks on DFT
@@ -126,7 +121,7 @@ above, not containerized on either path).
    ```
 5. Open <http://localhost:5173>.
 
-That's enough for chat and **Find in Databases**. **MLIP Playground**, **DFT
-Workbench**, and cloud model providers are all opt-in extras -- see the
+That's enough for chat and **Find in Databases**. **DFT Workbench** and
+cloud model providers are opt-in extras -- see the
 README's [Configuration](../README.md#configuration) section for the
 specific environment variables each one needs.

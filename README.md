@@ -6,16 +6,17 @@ decides DFT parameters; this package decides *when to ask the user*, *how to
 explain a recommendation*, and *how to run it* (bundle download or AiiDA
 submission).
 
-> **Status**: real, working chat + tool-calling for two of the six planned
-> Tools -- **Find in Databases** (Materials Project/Materials Cloud/NOMAD/
-> JARVIS search) and **MLIP Playground** (local MACE calculations via
-> `janus-core`). **DFT Workbench** is real too, but not via chat
-> tool-calling -- it embeds `goldilocks-core`'s own published Workbench UI
-> directly (same content inline, as tabs, and full-page, as a grid), talking
-> to a `goldilocks-core` HTTP backend goldilocks-agent auto-starts for you
-> (see Configuration below). **Beyond DFT**/**Post Analysis** are partial
-> (panel-only, no real backing yet beyond Post Analysis's phonon
-> visualizer). **AiiDA** is not built. See
+> **Status**: real, working chat + tool-calling for **Find in Databases**
+> (Materials Project/Materials Cloud/NOMAD/JARVIS search). **DFT Workbench**
+> is real too, but not via chat tool-calling -- it embeds
+> `goldilocks-core`'s own published Workbench UI directly (same content
+> inline, as tabs, and full-page, as a grid), talking to a
+> `goldilocks-core` HTTP backend goldilocks-agent auto-starts for you (see
+> Configuration below). **MLIP Playground** (local MACE calculations via
+> `janus-core`, built) and **Beyond DFT** (panel-only) are parked under
+> *Coming soon* this release -- shown only in the full-page All Tools
+> view, not openable (see Usage below). **Post Analysis** is partial
+> (only its phonon visualizer is real). **AiiDA** is not built. See
 > [`docs/goldilocks-agent-design.md`](docs/goldilocks-agent-design.md) for
 > the full product design and
 > [`docs/goldilocks-agent-implementation-plan.md`](docs/goldilocks-agent-implementation-plan.md)
@@ -113,7 +114,7 @@ publish from the same source, just to different `ghcr.io` namespaces. Once
 you've picked an engine, open <http://localhost:8080>.
 
 What's on by default in this image, no extra config needed: chat, **Find in
-Databases**, **MLIP Playground** (real local MACE calculations), **DFT
+Databases**, **DFT
 Workbench** (goldilocks-core's own real Workbench UI, embedded), its
 **magnetism ML tier (mMACE)**, and real AFM magnetic-ordering enumeration
 (`enum.x`/`makeStr.py`, built from source the same way
@@ -172,8 +173,9 @@ Ollama model -- for chat to actually respond; everything below this point
 is opt-in for extra Tools, not required to start using the app at all.
 
 **Optional: MLIP Playground** (local MACE calculations via `janus-core`) --
-off by default (the first real calculation triggers a multi-GB `uv sync`
-inside `./mlip-cli/`, so this needs to be opt-in):
+*Coming soon* this release, so this has no effect until it's re-enabled
+(see Usage below). Off by default (the first real calculation triggers a
+multi-GB `uv sync` inside `./mlip-cli/`, so this needs to be opt-in):
 
 ```bash
 export GOLDILOCKS_AGENT_MLIP_ENABLED=1
@@ -292,31 +294,36 @@ for the GitHub Packages follow-up.
 
 Start a chat and either talk to the model directly, or open one of the
 Tool panels on the right (the small icon strip) for a structured
-interface into the same underlying capability -- for Find in Databases and
-MLIP Playground, both paths call the same backend functions, and the panel
-updates live when the model calls a tool on its own. DFT Workbench is the
-exception: it has no chat tool-calling of its own (see below) -- Goldilocks
-in chat only ever gives DFT guidance, the real setup/results live entirely
-in its embedded panel.
+interface into the same underlying capability -- for Find in Databases,
+both paths call the same backend functions, and the panel updates live
+when the model calls a tool on its own. DFT Workbench is the exception: it
+has no chat tool-calling of its own (see below) -- Goldilocks in chat only
+ever gives DFT guidance, the real setup/results live entirely in its
+embedded panel.
 
 - **Find in Databases**: search by chemical formula, or type/attach a
   structure and ask about it directly (`find_in_databases`/`get_structure`
   tools, no confirmation needed -- it's a read-only lookup).
-- **MLIP Playground**: single-point/geometry-optimization/equation-of-
-  state/NEB/phonon calculations via MACE. Every calculation -- from the
-  chat or from the panel's own buttons -- asks for explicit confirmation
-  first, since it's real local compute (`GOLDILOCKS_AGENT_MLIP_ENABLED`
-  must be set). Phonon results link to a "Phonon visualizer" -- also
-  reachable from Post Analysis for a `band.yaml` from anywhere else.
 - **DFT Workbench**: the embedded goldilocks-core Workbench itself handles
   structure input, analysis, advisors, and bundle download/generation --
   talk to it directly, not through chat (`GOLDILOCKS_AGENT_CORE_AUTOSTART`
   or `GOLDILOCKS_CORE_PATH` must be set; goldilocks-agent auto-starts
   core's backend for you either way, see Configuration above). Chat can
   still explain DFT concepts/workflows in general, it just can't drive this
-  Tool's panel the way it drives Find in Databases/MLIP Playground. Its
+  Tool's panel the way it drives Find in Databases. Its
   magnetism fields can additionally run on a real ML tier (mMACE) instead
   of heuristic/LLM -- separate opt-in setup, see Configuration above.
+- **Coming soon** (shown only in the full-page All Tools view, not
+  openable this release): **MLIP Playground** (MACE single-point/geomopt/
+  EOS/NEB/phonons, confirmation-gated -- code and tests intact) and
+  **Beyond DFT**. To re-enable either, drop
+  `comingSoon: true` from its `TOOLS` entry in `app/src/App.tsx`; MLIP
+  Playground also needs `MLIP_PLAYGROUND_RELEASED = True` in
+  `src/goldilocks_agent/tools/__init__.py`, which is what keeps its
+  `run_mlip_*` LLM tools and `/api/mlip/*` routes off meanwhile -- and,
+  on the STFC Cloud web deployment, `GOLDILOCKS_AGENT_MLIP_ENABLED` plus
+  the `mlip_cli_venv` volume uncommented in
+  `deploy/stfc-cloud/docker-compose.yml`.
 - Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
   use a Tool panel's own "Upload structure" button, to add it to the
   current chat.

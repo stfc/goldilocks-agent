@@ -43,7 +43,11 @@ from goldilocks_agent.config import (
     write_experience_level,
 )
 from goldilocks_agent.graph import build_graph, open_checkpointer
-from goldilocks_agent.tools import mlip_playground, structure_search
+from goldilocks_agent.tools import (
+    MLIP_PLAYGROUND_RELEASED,
+    mlip_playground,
+    structure_search,
+)
 from goldilocks_agent.tools.structure_search import jarvis_cache
 
 logger = logging.getLogger(__name__)
@@ -491,6 +495,19 @@ async def fetch_structure(
         ) from exc
 
 
+def _reject_unreleased_mlip() -> None:
+    """MLIP Playground is "Coming soon" this release (`tools/__init__.py`'s
+    `MLIP_PLAYGROUND_RELEASED`) -- the UI can't reach these routes, and a
+    stray direct call mustn't start real MACE compute on any deployment
+    whose `GOLDILOCKS_AGENT_MLIP_ENABLED` is still on either (the local
+    docker-compose.yml's is)."""
+    if not MLIP_PLAYGROUND_RELEASED:
+        raise HTTPException(
+            status_code=404,
+            detail="MLIP Playground is not available in this release.",
+        )
+
+
 def _mlip_response(result) -> dict:
     return {"raw": result.model_dump(), "summary": result.summary()}
 
@@ -511,6 +528,7 @@ async def _run_mlip(coro) -> dict:
 
 @app.post("/api/mlip/singlepoint")
 async def mlip_singlepoint(request: MlipSinglePointRequest) -> dict:
+    _reject_unreleased_mlip()
     return await _run_mlip(
         mlip_playground.run_singlepoint(
             request.structure_content, request.structure_name, request.arch
@@ -520,6 +538,7 @@ async def mlip_singlepoint(request: MlipSinglePointRequest) -> dict:
 
 @app.post("/api/mlip/geomopt")
 async def mlip_geomopt(request: MlipGeomOptRequest) -> dict:
+    _reject_unreleased_mlip()
     return await _run_mlip(
         mlip_playground.run_geometry_optimization(
             request.structure_content,
@@ -534,6 +553,7 @@ async def mlip_geomopt(request: MlipGeomOptRequest) -> dict:
 
 @app.post("/api/mlip/eos")
 async def mlip_eos(request: MlipEosRequest) -> dict:
+    _reject_unreleased_mlip()
     return await _run_mlip(
         mlip_playground.run_equation_of_state(
             request.structure_content,
@@ -548,6 +568,7 @@ async def mlip_eos(request: MlipEosRequest) -> dict:
 
 @app.post("/api/mlip/neb")
 async def mlip_neb(request: MlipNebRequest) -> dict:
+    _reject_unreleased_mlip()
     return await _run_mlip(
         mlip_playground.run_neb(
             request.init_structure_content,
@@ -563,6 +584,7 @@ async def mlip_neb(request: MlipNebRequest) -> dict:
 
 @app.post("/api/mlip/phonons")
 async def mlip_phonons(request: MlipPhononsRequest) -> dict:
+    _reject_unreleased_mlip()
     return await _run_mlip(
         mlip_playground.run_phonons(
             request.structure_content,

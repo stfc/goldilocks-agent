@@ -30,6 +30,7 @@ from goldilocks_agent.graph import (
     experience_level_system_message,
     resolve_model,
 )
+from goldilocks_agent.tools import MLIP_PLAYGROUND_RELEASED
 
 _OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
@@ -59,6 +60,14 @@ requires_anthropic_key = pytest.mark.skipif(
 requires_mlip_enabled = pytest.mark.skipif(
     not os.environ.get("GOLDILOCKS_AGENT_MLIP_ENABLED"),
     reason="GOLDILOCKS_AGENT_MLIP_ENABLED not set -- MLIP Playground opt-in",
+)
+
+# The LLM is only offered `run_mlip_*` once MLIP Playground is released
+# (tools/__init__.py) -- and it's the only Tool with confirmation-gated
+# tools, so the confirmation-interrupt tests below wait on it too.
+requires_mlip_released = pytest.mark.skipif(
+    not MLIP_PLAYGROUND_RELEASED,
+    reason="MLIP Playground is Coming soon -- MLIP_PLAYGROUND_RELEASED is False",
 )
 
 _TEST_NACL_CIF = """\
@@ -268,6 +277,7 @@ def test_llm_node_calls_find_in_databases_tool() -> None:
 
 @pytest.mark.integration
 @requires_anthropic_key
+@requires_mlip_released
 def test_mlip_tool_call_pauses_for_confirmation_and_can_be_declined() -> None:
     """First real exercise of `call_tool`'s interrupt gate (graph.py,
     2026-09-15) -- a real model call asked to run a confirmation-required
@@ -403,36 +413,42 @@ def test_repair_orphaned_tool_calls_only_backfills_the_id_that_never_landed() ->
 
 @pytest.mark.integration
 @requires_anthropic_key
-def test_new_message_while_confirmation_pending_self_heals_instead_of_crashing() -> (
+def test_new_message_while_tool_interrupt_pending_self_heals_instead_of_crashing() -> (
     None
 ):
-    """End-to-end reproduction of the 2026-09-16 incident: the user ignores a
-    pending confirmation card and sends a brand-new message instead. Before
-    `_repair_orphaned_tool_calls`, this made every subsequent turn on the
-    thread fail identically with litellm.BadRequestError forever (the
+    """End-to-end reproduction of the 2026-09-16 incident: a tool call is left
+    paused at an interrupt and the user sends a brand-new message instead.
+    Before `_repair_orphaned_tool_calls`, this made every subsequent turn on
+    the thread fail identically with litellm.BadRequestError forever (the
     orphaned tool_calls message is permanent once checkpointed) -- this
     proves the graph now stays usable instead.
+
+    The incident itself was an unanswered MLIP confirmation card; this runs
+    through DFT Workbench's client-executed interrupt instead, which leaves
+    the same orphaned shape (e.g. the tab reloads before the browser
+    resumes) and stays live while MLIP Playground is unreleased.
     """
     graph = build_graph(InMemorySaver())
     config = {
         "configurable": {
-            "thread_id": "mlip-typed-ahead",
+            "thread_id": "dft-typed-ahead",
             "model_id": "anthropic-claude",
         }
     }
     message = {
         "role": "user",
         "content": (
-            f"Here is a CIF for NaCl:\n\n{_TEST_NACL_CIF}\n\n"
-            "Use the run_mlip_singlepoint tool (structure_name 'NaCl.cif') "
-            "to run a MACE single-point calculation on it."
+            "A structure is already open in DFT Workbench. Call the "
+            "dft_review tool right now (it takes no arguments) to preview "
+            "the DFT parameter recommendation."
         ),
     }
     asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
     paused = asyncio.run(graph.aget_state(config))
-    assert paused.next, "expected the graph to pause for confirmation"
+    assert paused.next, "expected the graph to pause for client execution"
+    assert paused.tasks[0].interrupts[0].value["client_execute"] is True
 
-    # The user never answers the card -- asks something unrelated instead.
+    # The browser never resumes it -- the user asks something unrelated instead.
     follow_up = {
         "role": "user",
         "content": "Never mind, what's the melting point of NaCl?",
@@ -454,6 +470,7 @@ def test_new_message_while_confirmation_pending_self_heals_instead_of_crashing()
 @pytest.mark.integration
 @requires_anthropic_key
 @requires_mlip_enabled
+@requires_mlip_released
 def test_mlip_tool_call_runs_for_real_once_approved() -> None:
     graph = build_graph(InMemorySaver())
     config = {
@@ -482,6 +499,7 @@ def test_mlip_tool_call_runs_for_real_once_approved() -> None:
 @pytest.mark.integration
 @requires_anthropic_key
 @requires_mlip_enabled
+@requires_mlip_released
 def test_mlip_neb_tool_call_runs_for_real_and_llm_reports_the_real_barrier() -> None:
     """NEB's first real end-to-end run (previously only checked against
     source, see acceptance-testing task) -- a real Claude call drives
