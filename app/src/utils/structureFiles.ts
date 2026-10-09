@@ -147,14 +147,16 @@ function looksLikeXyz(content: string = ""): boolean {
   return firstAtom.length >= 4 && firstAtom.slice(1, 4).every((value) => Number.isFinite(Number(value)));
 }
 
+// Cube lines 3-6 are "natoms ox oy oz" and "nvoxels ax ay az" -- the first
+// four fields must be *numbers*, not merely present: counting fields alone
+// classified almost any text log (e.g. a pw.out) as a cube structure.
 function looksLikeCube(content: string = ""): boolean {
   const lines = content.trim().split(/\r?\n/);
   if (lines.length < 6) return false;
-  const header = lines[2]?.trim().split(/\s+/).map(Number) ?? [];
-  const axisA = lines[3]?.trim().split(/\s+/).map(Number) ?? [];
-  const axisB = lines[4]?.trim().split(/\s+/).map(Number) ?? [];
-  const axisC = lines[5]?.trim().split(/\s+/).map(Number) ?? [];
-  return header.length >= 4 && axisA.length >= 4 && axisB.length >= 4 && axisC.length >= 4;
+  return lines.slice(2, 6).every((line) => {
+    const fields = line.trim().split(/\s+/).slice(0, 4).map(Number);
+    return fields.length === 4 && fields.every(Number.isFinite);
+  });
 }
 
 export function inferStructureExtension(fileName: string = "", content: string = ""): string {

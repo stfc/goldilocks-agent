@@ -989,6 +989,17 @@ function getMessageDisplayParts(message) {
   return { text: message.display || text, images: message.images ?? images };
 }
 
+// What send() embeds per attached file. Structures get a far larger budget:
+// a cut CIF/POSCAR isn't a smaller structure but a broken one (a ~45-site
+// CIF already passes 3000 chars), so typical database entries go in whole.
+// Anything still over budget is cut with an explicit marker line after its
+// fence, so neither the model nor extractStructureFromMessageContent below
+// mistakes a partial file for the whole one (2026-10-09: the cut used to be
+// silent, at 3000 chars for everything).
+const ATTACHMENT_CHAR_BUDGET = 3000;
+const STRUCTURE_ATTACHMENT_CHAR_BUDGET = 20000;
+const TRUNCATED_ATTACHMENT_MARKER = "[Truncated attachment:";
+
 // Recovers a structure attachment from a past user message so it still
 // shows up in the Structure Viewer after a reload (checkpointer only stores
 // `content`, never the local `sessionFiles` state). `content` may be a
@@ -998,6 +1009,8 @@ function extractStructureFromMessageContent(content) {
   const text = typeof content === "string" ? content : Array.isArray(content) ? content.find((part) => part.type === "text")?.text ?? "" : "";
   const match = text.match(/\[Attached file: ([^\]]+)\]\n```([^\n]*)\n([\s\S]+?)```/);
   if (!match) return null;
+  // A truncated attachment is not a usable structure (see the budgets above).
+  if (text.slice(match.index + match[0].length).startsWith(`\n${TRUNCATED_ATTACHMENT_MARKER}`)) return null;
   const [, name, fenceLang, fileContent] = match;
   const rawExt = getRawFileExtension(name);
   const inferredExt = inferStructureExtension(name, fileContent);
@@ -1899,6 +1912,11 @@ export default function App() {
   // the same stale `session === null`) would each create their own new
   // session and silently drop one of the two updates. See ensureSession().
   const pendingSessionRef = useRef(null);
+  // Set only by the user's own "Formula" toggle click, consumed when the
+  // formula box mounts. Not `autoFocus`: a chat-driven find_in_databases
+  // result also switches the panel to formula mode, and autoFocus then
+  // pulled focus (and keystrokes) out of the composer mid-typing (2026-10-09).
+  const formulaFocusRequestedRef = useRef(false);
 
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
@@ -2497,6 +2515,11 @@ export default function App() {
         if (filtered.length === prev.length) setViewerIdx(chatStructures.length);
         return [...filtered, fileEntry];
       });
+      // Attached to the next message too, same as an uploaded file
+      // (readFile): only `attachedFiles` ever reach the model -- the Files
+      // list alone doesn't -- so an imported structure used to sit in Files
+      // while the model replied it couldn't see any structure (2026-10-09).
+      setAttachedFiles(prev => [...prev.filter(f => f.name !== data.filename), fileEntry]);
       updateStructureSearchState(prev => ({
         ...prev,
         // "Formula" and "Structure" describe the same search target -- keep
@@ -2539,7 +2562,8 @@ export default function App() {
       rightPanelView: current.tool === tool.id ? (current.rightPanelView ?? tool.defaultPanel) : tool.defaultPanel,
     }));
     setView("chats");
-    setInput("");
+    // The composer draft is deliberately left alone: picking a Tool used to
+    // clear it, silently discarding whatever the user had typed (2026-10-09).
     setPlusOpen(false);
     setShowElementPicker(false);
     setShowStructureViewer(false);
@@ -2730,6 +2754,8 @@ export default function App() {
     const name = `geo-opt-${baseName}.cif`;
     const file = { name, content, source: "mlip", rawExt: ".cif", ext: ".cif", isStructure: true };
     setSessionFiles((prev) => [...prev, file]);
+    // Same reason as handleImportStructure: Files alone never reaches the model.
+    setAttachedFiles((prev) => [...prev.filter((f) => f.name !== name), file]);
   }
 
   // Shared by the search panel's button and the element-picker's "search"
@@ -3010,46 +3036,59 @@ export default function App() {
   // the raw payload -- same real-content/friendly-display split `images`
   // already uses below, applied to a text-only case.
   async function send(text?: string, displayOverride?: string) {
+    // `text` set = a programmatic send (a panel's ✦ "interpret this"
+    // button): a self-contained prompt that leaves the composer alone -- the
+    // user's unsent draft and staged attachments are neither sent with it
+    // nor cleared by it (2026-10-09: ✦ used to wipe the draft).
+    const fromComposer = text === undefined;
+    const files = fromComposer ? attachedFiles : EMPTY_ARRAY;
+    const images = fromComposer ? attachedImages : EMPTY_ARRAY;
     const rawText = (text ?? input).trim();
-    if ((!rawText && attachedFiles.length === 0 && attachedImages.length === 0) || loading || hasPendingConfirmation) return;
+    if ((!rawText && files.length === 0 && images.length === 0) || loading || hasPendingConfirmation) return;
 
     // Images render as thumbnails in the bubble (via `images` below), not as
     // a text label -- only structure-file attachments need a text stand-in.
     let display = displayOverride ?? rawText;
-    if (attachedFiles.length > 0) {
-      const fileNames = attachedFiles.map(f => `📎 ${f.name}`).join(" · ");
+    if (files.length > 0) {
+      const fileNames = files.map(f => `📎 ${f.name}`).join(" · ");
       display = display ? `${display} · ${fileNames}` : fileNames;
     }
 
     let textContent = rawText;
-    if (activeTool && attachedFiles.length > 0) textContent = `[Mode: ${activeTool.label}]\n\n${textContent}`;
-    for (const af of attachedFiles) {
+    if (activeTool && files.length > 0) textContent = `[Mode: ${activeTool.label}]\n\n${textContent}`;
+    for (const af of files) {
       const fenceLanguage = getStructureFenceLanguage(af.ext || af.rawExt);
       // "Attached file", not "attached structure file" -- this fence now also
       // carries generic text attachments (e.g. a DFT output log) that aren't
       // structures at all; extractStructureFromMessageContent still decides
       // "is it a structure" from the content itself, not this label.
-      textContent = `${textContent}${textContent ? "\n\n" : ""}[Attached file: ${af.name}]\n\`\`\`${fenceLanguage}\n${af.content.slice(0, 3000)}\n\`\`\``;
+      const budget = af.isStructure || WEAS_SUPPORTED_EXTS.has(af.ext)
+        ? STRUCTURE_ATTACHMENT_CHAR_BUDGET
+        : ATTACHMENT_CHAR_BUDGET;
+      textContent = `${textContent}${textContent ? "\n\n" : ""}[Attached file: ${af.name}]\n\`\`\`${fenceLanguage}\n${af.content.slice(0, budget)}\n\`\`\``;
+      if (af.content.length > budget) {
+        textContent += `\n${TRUNCATED_ATTACHMENT_MARKER} only the first ${budget} of ${af.content.length} characters of ${af.name} are included above.]`;
+      }
     }
 
     // Qwen3.8 is vision-capable and litellm/ollama_chat accept OpenAI-style
     // image_url content parts (verified 2026-09-15 with a real call) -- only
     // switch `content` to the multipart array shape when there's actually an
     // image, so the common text-only case keeps sending a plain string.
-    const content = attachedImages.length > 0
+    const content = images.length > 0
       ? [
           { type: "text", text: textContent || "Describe what you see in the attached image(s)." },
-          ...attachedImages.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
+          ...images.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
         ]
       : textContent;
 
     const targetSession = ensureSession();
     setView("chats");
 
-    const nextMessages = [...targetSession.messages, { role: "user", content, display, images: attachedImages }];
+    const nextMessages = [...targetSession.messages, { role: "user", content, display, images }];
     const nextTitle = targetSession.messages.length
       ? targetSession.title
-      : (rawText || activeTool?.label || attachedFiles[0]?.name || attachedImages[0]?.name || "New chat").slice(0, 48);
+      : (rawText || activeTool?.label || files[0]?.name || images[0]?.name || "New chat").slice(0, 48);
 
     replaceSession(targetSession.id, (current) => ({
       ...current,
@@ -3059,9 +3098,11 @@ export default function App() {
       rightPanelView: current.rightPanelView ?? getToolById(current.tool)?.defaultPanel ?? null,
     }));
 
-    setInput("");
-    setAttachedFiles([]);
-    setAttachedImages([]);
+    if (fromComposer) {
+      setInput("");
+      setAttachedFiles([]);
+      setAttachedImages([]);
+    }
     setShowElementPicker(false);
     setLoading(true);
 
@@ -3677,7 +3718,10 @@ export default function App() {
                 >Structure</button>
                 <button
                   className={`db-query-toggle-btn${dbQueryMode === "formula" ? " active" : ""}`}
-                  onClick={() => updateStructureSearchState({ queryMode: "formula" })}
+                  onClick={() => {
+                    formulaFocusRequestedRef.current = true;
+                    updateStructureSearchState({ queryMode: "formula" });
+                  }}
                 >Formula</button>
               </div>
               {dbQueryMode === "structure" ? (
@@ -3706,7 +3750,12 @@ export default function App() {
                         onChange={e => updateStructureSearchState({ formula: e.target.value })}
                         placeholder="e.g. Fe2O3"
                         spellCheck={false}
-                        autoFocus
+                        ref={(el) => {
+                          if (el && formulaFocusRequestedRef.current) {
+                            formulaFocusRequestedRef.current = false;
+                            el.focus();
+                          }
+                        }}
                       />
                     </div>
                     {dbFormulaInput && (
@@ -9661,6 +9710,10 @@ export default function App() {
                               event.target.style.height = `${Math.min(event.target.scrollHeight, 140)}px`;
                             }}
                             onKeyDown={(event) => {
+                              // Enter also commits an IME composition (Chinese/
+                              // Japanese input) -- that one must not send a
+                              // half-typed draft (2026-10-09).
+                              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                               if (event.key === "Enter" && !event.shiftKey) {
                                 event.preventDefault();
                                 send();
