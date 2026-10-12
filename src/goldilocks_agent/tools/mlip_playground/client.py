@@ -58,6 +58,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import re
 import tempfile
 from pathlib import Path
 
@@ -126,6 +127,25 @@ async def _run_janus(*args: str) -> None:
     await _run_in_mlip_cli("janus", *args)
 
 
+def _write_structure(directory: Path, name: str, content: str) -> Path:
+    """Writes `content` into `directory` (created if missing) and returns the
+    file's path. The file is named after `name`, which comes from the request
+    or the LLM: characters outside `[A-Za-z0-9._-]` (path separators
+    included) become `_` and leading dots are dropped, so the file is always
+    a direct child of `directory`. The name is kept rather than replaced
+    because ASE, inside `janus`, picks the reader from it: by extension, or
+    by the whole name for extension-less VASP files such as `POSCAR`.
+
+    Callers give inputs their own subdirectory, so an input can't collide
+    with `janus`'s `result-*` outputs or with another input of the same
+    name (NEB's two endpoints)."""
+    file_name = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "structure"
+    directory.mkdir(exist_ok=True)
+    path = directory / file_name
+    path.write_text(content)
+    return path
+
+
 def _read_atoms(path: Path) -> Atoms | None:
     """Last frame of a janus-written extxyz, via ASE (see module docstring
     for why not a hand-rolled parser). `None` if janus didn't write it --
@@ -190,8 +210,9 @@ async def run_singlepoint(
     structure_content: str, structure_name: str, arch: str = "mace_mp"
 ) -> SinglePointResult:
     with tempfile.TemporaryDirectory() as tmp:
-        struct_path = Path(tmp) / structure_name
-        struct_path.write_text(structure_content)
+        struct_path = _write_structure(
+            Path(tmp) / "input", structure_name, structure_content
+        )
         prefix = Path(tmp) / "result"
         await _run_janus(
             "singlepoint",
@@ -218,8 +239,9 @@ async def run_geometry_optimization(
     relax_mode: str = "ionic",
 ) -> GeomOptResult:
     with tempfile.TemporaryDirectory() as tmp:
-        struct_path = Path(tmp) / structure_name
-        struct_path.write_text(structure_content)
+        struct_path = _write_structure(
+            Path(tmp) / "input", structure_name, structure_content
+        )
         prefix = Path(tmp) / "result"
         args = [
             "geomopt",
@@ -274,8 +296,9 @@ async def run_equation_of_state(
     n_volumes: int = 7,
 ) -> EosResult:
     with tempfile.TemporaryDirectory() as tmp:
-        struct_path = Path(tmp) / structure_name
-        struct_path.write_text(structure_content)
+        struct_path = _write_structure(
+            Path(tmp) / "input", structure_name, structure_content
+        )
         prefix = Path(tmp) / "result"
         await _run_janus(
             "eos",
@@ -323,10 +346,12 @@ async def run_neb(
     fmax: float = 0.1,
 ) -> NebResult:
     with tempfile.TemporaryDirectory() as tmp:
-        init_path = Path(tmp) / init_structure_name
-        init_path.write_text(init_structure_content)
-        final_path = Path(tmp) / final_structure_name
-        final_path.write_text(final_structure_content)
+        init_path = _write_structure(
+            Path(tmp) / "init", init_structure_name, init_structure_content
+        )
+        final_path = _write_structure(
+            Path(tmp) / "final", final_structure_name, final_structure_content
+        )
         prefix = Path(tmp) / "result"
         await _run_janus(
             "neb",
@@ -369,8 +394,9 @@ async def run_phonons(
     displacement: float = 0.01,
 ) -> PhononsResult:
     with tempfile.TemporaryDirectory() as tmp:
-        struct_path = Path(tmp) / structure_name
-        struct_path.write_text(structure_content)
+        struct_path = _write_structure(
+            Path(tmp) / "input", structure_name, structure_content
+        )
         prefix = Path(tmp) / "result"
         await _run_janus(
             "phonons",

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 import pytest
 
@@ -34,6 +35,7 @@ from goldilocks_agent.tools.mlip_playground import (
     NebResult,
     PhononsResult,
     SinglePointResult,
+    client,
     run_equation_of_state,
     run_geometry_optimization,
     run_neb,
@@ -238,6 +240,89 @@ def test_result_summaries_degrade_gracefully_with_no_data() -> None:
     assert "no bulk modulus" in EosResult().summary()
     assert "no barrier" in NebResult().summary()
     assert "no thermal properties" in PhononsResult().summary()
+
+
+def _record_janus_inputs(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Replaces every `./mlip-cli` subprocess with a no-op. Each `janus` call
+    appends its run directory (the `--file-prefix` parent) and, per
+    structure flag, the input path and the content it holds at call time."""
+    calls = []
+
+    async def fake_run_in_mlip_cli(executable: str, *args: str) -> None:
+        if executable != "janus":
+            return
+        argv = list(args)
+        inputs = {}
+        for flag in ("--struct", "--init-struct", "--final-struct"):
+            if flag in argv:
+                path = Path(argv[argv.index(flag) + 1])
+                inputs[flag] = (path, path.read_text())
+        run_dir = Path(argv[argv.index("--file-prefix") + 1]).parent
+        calls.append({"run_dir": run_dir, "inputs": inputs})
+
+    monkeypatch.setattr(client, "_run_in_mlip_cli", fake_run_in_mlip_cli)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("name", "file_name"),
+    [
+        ("NaCl.cif", "NaCl.cif"),
+        ("POSCAR", "POSCAR"),
+        ("Si (1).vasp", "Si__1_.vasp"),
+        ("../../outside.cif", "_.._outside.cif"),
+        ("/etc/outside.cif", "_etc_outside.cif"),
+        ("..\\outside.cif", "_outside.cif"),
+        ("..", "structure"),
+        ("", "structure"),
+    ],
+)
+def test_structure_name_only_names_a_file_inside_the_run_directory(
+    monkeypatch: pytest.MonkeyPatch, name: str, file_name: str
+) -> None:
+    calls = _record_janus_inputs(monkeypatch)
+
+    asyncio.run(run_singlepoint(_NACL_CIF, name))
+
+    run_dir, inputs = calls[0]["run_dir"], calls[0]["inputs"]
+    assert inputs["--struct"] == (run_dir / "input" / file_name, _NACL_CIF)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [run_singlepoint, run_geometry_optimization, run_equation_of_state, run_phonons],
+)
+def test_every_calculation_writes_its_structure_inside_the_run_directory(
+    monkeypatch: pytest.MonkeyPatch, run
+) -> None:
+    calls = _record_janus_inputs(monkeypatch)
+
+    asyncio.run(run(_NACL_CIF, "../outside.cif"))
+
+    run_dir, inputs = calls[0]["run_dir"], calls[0]["inputs"]
+    assert inputs["--struct"] == (run_dir / "input" / "_outside.cif", _NACL_CIF)
+
+
+def test_neb_endpoints_with_the_same_name_stay_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two uploads called POSCAR used to share one path, so the final
+    structure overwrote the initial one and NEB ran final -> final."""
+    calls = _record_janus_inputs(monkeypatch)
+
+    asyncio.run(
+        run_neb(_AL_VACANCY_INIT_CIF, "POSCAR", _AL_VACANCY_FINAL_CIF, "POSCAR")
+    )
+
+    run_dir, inputs = calls[0]["run_dir"], calls[0]["inputs"]
+    assert inputs["--init-struct"] == (
+        run_dir / "init" / "POSCAR",
+        _AL_VACANCY_INIT_CIF,
+    )
+    assert inputs["--final-struct"] == (
+        run_dir / "final" / "POSCAR",
+        _AL_VACANCY_FINAL_CIF,
+    )
 
 
 @pytest.mark.integration
