@@ -6,12 +6,11 @@ services:
     # as a fallback/dev override: `docker compose up --build` (or `poe`/
     # local dev work) still builds from source and tags the result the same
     # way, and if the registry is ever unreachable, `up` falls back to it.
-    # This one file is shared verbatim between junwen94/goldilocks-agent and
-    # stfc/goldilocks-agent (same commit, pushed to both) -- owner/tag are
-    # env-overridable rather than hardcoded so neither repo's default has to
-    # lose to the other's. Override via a sibling `.env` file or inline:
-    # `GOLDILOCKS_AGENT_IMAGE_OWNER=stfc GOLDILOCKS_AGENT_IMAGE_TAG=sha-xxxxxxx docker compose up -d`.
-    image: ghcr.io/${GOLDILOCKS_AGENT_IMAGE_OWNER:-junwen94}/goldilocks-agent:${GOLDILOCKS_AGENT_IMAGE_TAG:-latest}
+    # Defaults to the canonical stfc/goldilocks-agent image (public, pulls
+    # anonymously). A fork's CI publishes under its own owner, so owner/tag
+    # stay env-overridable -- via a sibling `.env` file or inline:
+    # `GOLDILOCKS_AGENT_IMAGE_OWNER=<fork-owner> GOLDILOCKS_AGENT_IMAGE_TAG=sha-xxxxxxx docker compose up -d`.
+    image: ghcr.io/${GOLDILOCKS_AGENT_IMAGE_OWNER:-stfc}/goldilocks-agent:${GOLDILOCKS_AGENT_IMAGE_TAG:-latest}
     pull_policy: always
     build: .
     # `host.docker.internal`: reaches Ollama running *natively* on your own

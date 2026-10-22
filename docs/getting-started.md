@@ -40,7 +40,7 @@ git clone <this-repo> && cd goldilocks-agent
 docker compose up
 ```
 
-`docker compose up` pulls the `agent` image from `ghcr.io/junwen94/goldilocks-agent`
+`docker compose up` pulls the `agent` image from `ghcr.io/stfc/goldilocks-agent`
 (built and published automatically on every push to `main` -- see
 `.github/workflows/docker-publish.yml`) instead of building it locally, so
 this is fast even on a machine with no Python/Node toolchain at all.

@@ -2,7 +2,7 @@ site_name: goldilocks-agent
 site_description: >-
   LLM orchestration, feedback-driven scientific workflow, and AiiDA execution
   layer for goldilocks-core.
-repo_url: https://github.com/junwen94/goldilocks-agent
+repo_url: https://github.com/stfc/goldilocks-agent
 repo_name: goldilocks-agent
 
 # `docs/` also holds the internal, dated design log (Chinese-language,

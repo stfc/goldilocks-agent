@@ -15,7 +15,7 @@ conditional edge) is unchanged.
 Because LangGraph replays a node's whole function body from the top on
 each resume, `call_tool` handles exactly *one* tool call per execution,
 never the whole batch on `state["messages"][-1].tool_calls` in a Python
-loop (2026-09-28, #7): a loop with two-or-more interrupt-gated calls in
+loop (2026-09-28, fixed in c7bfc57): a loop with two-or-more interrupt-gated calls in
 one execution replays every already-answered call's code -- including its
 real dispatch (`await fn(**call["args"])`), not just its `writer()` status
 -- every time a *later* call's interrupt resolves. For a real side effect
@@ -304,7 +304,7 @@ def _find_next_tool_call(state: MessagesState) -> dict | None:
     matching ToolMessage in state yet, or None if every call on it is
     already answered. Scans backward for the nearest AIMessage rather than
     assuming `state["messages"][-1]` is it -- once `call_tool` starts
-    appending ToolMessages one at a time (#7), the tool-calling AIMessage
+    appending ToolMessages one at a time (c7bfc57), the tool-calling AIMessage
     is no longer the last element."""
     messages = state["messages"]
     for i in range(len(messages) - 1, -1, -1):
@@ -325,7 +325,7 @@ def _find_next_tool_call(state: MessagesState) -> dict | None:
 async def call_tool(state: MessagesState) -> dict:
     """Dispatch exactly one tool call -- the first unanswered one on the
     most recent AIMessage (`_find_next_tool_call`) -- never the whole
-    batch in one execution (see the module docstring's #7 note on why:
+    batch in one execution (see the module docstring's c7bfc57 note on why:
     LangGraph replays everything before an `interrupt()` on resume, so a
     Python loop handling several interrupt-gated calls in one execution
     re-runs earlier calls' real dispatch too, not just their status,
@@ -436,7 +436,7 @@ def route_after_llm(state: MessagesState) -> str:
 
 def route_after_tool(state: MessagesState) -> str:
     """Loop back to `tool` while the most recent AIMessage still has an
-    unanswered tool call (#7 -- one call per `call_tool` execution, never
+    unanswered tool call (c7bfc57 -- one call per `call_tool` execution, never
     the whole batch); once every call has a ToolMessage, hand control back
     to `llm` to see the full result set."""
     if _find_next_tool_call(state) is not None:
