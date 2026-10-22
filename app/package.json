@@ -14,6 +14,7 @@
   "dependencies": {
     "dat.gui": "^0.7.9",
     "goldilocks-workbench": "file:vendor/goldilocks-workbench-0.0.5.tgz",
+    "html-to-image": "^1.11.13",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
