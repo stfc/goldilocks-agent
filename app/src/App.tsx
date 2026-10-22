@@ -9940,7 +9940,7 @@ export default function App() {
                 <h3>{t("contribute_heading")}</h3>
                 <p>{t("contribute_desc")}</p>
                 <div className="contact-list">
-                  <a className="contact-link contact-primary-link" href="https://github.com/junwen94/goldilocks-agent/issues" target="_blank" rel="noreferrer">
+                  <a className="contact-link contact-primary-link" href="https://github.com/stfc/goldilocks-agent/issues" target="_blank" rel="noreferrer">
                     {t("github_issues")}
                   </a>
                   <a
