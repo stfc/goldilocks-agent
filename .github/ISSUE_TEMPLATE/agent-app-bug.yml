@@ -1,0 +1,57 @@
+name: Agent app bug
+description: Report a problem with the Goldilocks agent app
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem with the Goldilocks agent app.
+        The **Report a bug** button in the app header fills in this form for you.
+
+        If you captured a screenshot, it was copied to your clipboard: paste it into the
+        **Screenshots** field below (or drag in the downloaded file if copying wasn't possible).
+        Screenshots are not uploaded automatically.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open DFT Workbench from the Tools panel
+        2. Load a structure from the chat
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images into this field to attach them.
+    validations:
+      required: false
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Page details
+      description: |
+        Filled in by the **Report a bug** button. If reporting manually, include the page URL,
+        your browser, which Tool was open and which model was selected.
+      render: json
+    validations:
+      required: false

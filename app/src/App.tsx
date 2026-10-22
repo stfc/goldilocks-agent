@@ -12,6 +12,7 @@ import {
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
+import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
   WEAS_SUPPORTED_EXTS,
@@ -517,6 +518,28 @@ const TRANSLATIONS = {
     contribute_heading: "I want to contribute!",
     contribute_desc: "Found a bug, have an idea, or want to collaborate? Raise a GitHub issue or reach out to the team directly — we'd love to hear from you.",
     github_issues: "GitHub Issues — report bugs or request features",
+    // Bug report dialog ({filename} is substituted by BugReportDialog)
+    report_bug: "Report a bug",
+    report_bug_intro: "All fields are optional. Review and complete your report on GitHub before submitting with your GitHub account. An optional screenshot is copied to your clipboard (or downloaded) for you to attach. Nothing is submitted automatically.",
+    report_bug_title: "Short title",
+    report_bug_description: "What happened?",
+    report_bug_expected: "What did you expect?",
+    report_bug_steps: "Steps to reproduce",
+    report_bug_details: "Included page details",
+    report_bug_capture: "Capture this page",
+    report_bug_capturing: "Capturing the current page…",
+    report_bug_mark_hint: "Drag on the screenshot to mark the problem. Check the preview before attaching it: automatic captures can miss 3D structure viewers.",
+    report_bug_capture_failed: "Could not capture this page. You can attach your own screenshot directly on GitHub, or report without one.",
+    report_bug_attach_note: "The screenshot is not uploaded automatically. Opening the GitHub issue copies it to your clipboard: paste it into the Screenshots field (⌘V / Ctrl+V) before submitting.",
+    report_bug_download: "Download screenshot",
+    report_bug_clear_marks: "Clear marks",
+    report_bug_remove_screenshot: "Remove screenshot",
+    report_bug_downloaded: "Screenshot downloaded. Drag {filename} into the Screenshots field of the GitHub issue to attach it.",
+    report_bug_too_long: "This report is too long to open as a GitHub issue. Please shorten the description, expected result or steps. Your text is still here.",
+    report_bug_opened: "GitHub issue opened. Review your report, then submit it on GitHub.",
+    report_bug_opened_copied: "GitHub issue opened and the screenshot copied to your clipboard. Paste it into the Screenshots field (⌘V / Ctrl+V) before submitting.",
+    report_bug_opened_downloaded: "GitHub issue opened. The screenshot couldn't be copied to your clipboard, so it was downloaded instead: drag {filename} from your downloads into the Screenshots field before submitting.",
+    report_bug_open_issue: "Open GitHub issue",
     acknowledgements: "Acknowledgements",
     ack_desc: "Goldilocks is a collaborative effort. We thank everyone who has contributed their time, expertise, and ideas.",
     ack_note: "Alphabetical order · no ranking implied",
@@ -591,6 +614,27 @@ const TRANSLATIONS = {
     contribute_heading: "Je veux contribuer !",
     contribute_desc: "Un bug, une idée ou envie de collaborer ? Ouvrez un ticket GitHub ou contactez l'équipe directement.",
     github_issues: "GitHub Issues — signaler des bugs ou proposer des fonctionnalités",
+    report_bug: "Signaler un bug",
+    report_bug_intro: "Tous les champs sont facultatifs. Relisez et complétez votre rapport sur GitHub avant de l'envoyer avec votre compte GitHub. Une capture d'écran facultative est copiée dans votre presse-papiers (ou téléchargée) pour que vous la joigniez. Rien n'est envoyé automatiquement.",
+    report_bug_title: "Titre court",
+    report_bug_description: "Que s'est-il passé ?",
+    report_bug_expected: "À quoi vous attendiez-vous ?",
+    report_bug_steps: "Étapes pour reproduire",
+    report_bug_details: "Détails de la page inclus",
+    report_bug_capture: "Capturer cette page",
+    report_bug_capturing: "Capture de la page en cours…",
+    report_bug_mark_hint: "Faites glisser sur la capture pour signaler le problème. Vérifiez l'aperçu avant de la joindre : les captures automatiques peuvent omettre les visualiseurs 3D de structures.",
+    report_bug_capture_failed: "Impossible de capturer cette page. Vous pouvez joindre votre propre capture directement sur GitHub, ou signaler sans capture.",
+    report_bug_attach_note: "La capture n'est pas envoyée automatiquement. L'ouverture du ticket GitHub la copie dans votre presse-papiers : collez-la dans le champ Screenshots (⌘V / Ctrl+V) avant d'envoyer.",
+    report_bug_download: "Télécharger la capture",
+    report_bug_clear_marks: "Effacer les marques",
+    report_bug_remove_screenshot: "Supprimer la capture",
+    report_bug_downloaded: "Capture téléchargée. Faites glisser {filename} dans le champ Screenshots du ticket GitHub pour la joindre.",
+    report_bug_too_long: "Ce rapport est trop long pour ouvrir un ticket GitHub. Raccourcissez la description, le résultat attendu ou les étapes. Votre texte est conservé.",
+    report_bug_opened: "Ticket GitHub ouvert. Relisez votre rapport, puis envoyez-le sur GitHub.",
+    report_bug_opened_copied: "Ticket GitHub ouvert et capture copiée dans votre presse-papiers. Collez-la dans le champ Screenshots (⌘V / Ctrl+V) avant d'envoyer.",
+    report_bug_opened_downloaded: "Ticket GitHub ouvert. La capture n'a pas pu être copiée dans le presse-papiers, elle a donc été téléchargée : faites glisser {filename} depuis vos téléchargements dans le champ Screenshots avant d'envoyer.",
+    report_bug_open_issue: "Ouvrir le ticket GitHub",
     acknowledgements: "Remerciements",
     ack_desc: "Goldilocks est un effort collaboratif. Nous remercions tous ceux qui ont contribué leur temps, expertise et idées.",
     ack_note: "Ordre alphabétique · aucun classement implicite",
@@ -661,6 +705,27 @@ const TRANSLATIONS = {
     contribute_heading: "Ich möchte beitragen!",
     contribute_desc: "Einen Bug gefunden oder eine Idee? Erstellen Sie ein GitHub-Issue oder wenden Sie sich direkt an das Team.",
     github_issues: "GitHub Issues — Bugs melden oder Funktionen vorschlagen",
+    report_bug: "Fehler melden",
+    report_bug_intro: "Alle Felder sind optional. Prüfen und vervollständigen Sie Ihren Bericht auf GitHub, bevor Sie ihn mit Ihrem GitHub-Konto absenden. Ein optionaler Screenshot wird in Ihre Zwischenablage kopiert (oder heruntergeladen), damit Sie ihn anhängen können. Es wird nichts automatisch gesendet.",
+    report_bug_title: "Kurzer Titel",
+    report_bug_description: "Was ist passiert?",
+    report_bug_expected: "Was haben Sie erwartet?",
+    report_bug_steps: "Schritte zum Reproduzieren",
+    report_bug_details: "Enthaltene Seitendetails",
+    report_bug_capture: "Diese Seite aufnehmen",
+    report_bug_capturing: "Seite wird aufgenommen…",
+    report_bug_mark_hint: "Ziehen Sie auf dem Screenshot, um das Problem zu markieren. Prüfen Sie die Vorschau vor dem Anhängen: Automatische Aufnahmen können 3D-Strukturansichten auslassen.",
+    report_bug_capture_failed: "Diese Seite konnte nicht aufgenommen werden. Sie können einen eigenen Screenshot direkt auf GitHub anhängen oder ohne Screenshot melden.",
+    report_bug_attach_note: "Der Screenshot wird nicht automatisch hochgeladen. Beim Öffnen des GitHub-Issues wird er in Ihre Zwischenablage kopiert: Fügen Sie ihn vor dem Absenden in das Feld Screenshots ein (⌘V / Strg+V).",
+    report_bug_download: "Screenshot herunterladen",
+    report_bug_clear_marks: "Markierungen löschen",
+    report_bug_remove_screenshot: "Screenshot entfernen",
+    report_bug_downloaded: "Screenshot heruntergeladen. Ziehen Sie {filename} in das Feld Screenshots des GitHub-Issues, um ihn anzuhängen.",
+    report_bug_too_long: "Dieser Bericht ist zu lang, um ihn als GitHub-Issue zu öffnen. Bitte kürzen Sie Beschreibung, erwartetes Ergebnis oder Schritte. Ihr Text bleibt erhalten.",
+    report_bug_opened: "GitHub-Issue geöffnet. Prüfen Sie Ihren Bericht und senden Sie ihn auf GitHub ab.",
+    report_bug_opened_copied: "GitHub-Issue geöffnet und Screenshot in die Zwischenablage kopiert. Fügen Sie ihn vor dem Absenden in das Feld Screenshots ein (⌘V / Strg+V).",
+    report_bug_opened_downloaded: "GitHub-Issue geöffnet. Der Screenshot konnte nicht in die Zwischenablage kopiert werden und wurde stattdessen heruntergeladen: Ziehen Sie {filename} aus Ihren Downloads vor dem Absenden in das Feld Screenshots.",
+    report_bug_open_issue: "GitHub-Issue öffnen",
     acknowledgements: "Danksagungen",
     ack_desc: "Goldilocks ist ein gemeinschaftliches Projekt. Wir danken allen, die Zeit, Fachwissen und Ideen eingebracht haben.",
     ack_note: "Alphabetische Reihenfolge · keine Rangfolge impliziert",
@@ -731,6 +796,27 @@ const TRANSLATIONS = {
     contribute_heading: "我想贡献！",
     contribute_desc: "发现了 bug，有新想法，或者想合作？在 GitHub 提 issue 或直接联系团队——我们很乐意听取意见。",
     github_issues: "GitHub Issues — 报告 bug 或请求功能",
+    report_bug: "报告 bug",
+    report_bug_intro: "所有字段均为选填。请先在 GitHub 上检查并补充报告，再用你的 GitHub 账号提交。可选的截图会复制到剪贴板（或下载到本地），由你手动附加。不会自动提交任何内容。",
+    report_bug_title: "简短标题",
+    report_bug_description: "发生了什么？",
+    report_bug_expected: "你期望的结果是什么？",
+    report_bug_steps: "复现步骤",
+    report_bug_details: "附带的页面信息",
+    report_bug_capture: "截取当前页面",
+    report_bug_capturing: "正在截取当前页面…",
+    report_bug_mark_hint: "在截图上拖动以标出问题区域。附加前请检查预览：自动截图可能缺少 3D 结构查看器的内容。",
+    report_bug_capture_failed: "无法截取此页面。你可以直接在 GitHub 上附加自己的截图，或不附截图直接报告。",
+    report_bug_attach_note: "截图不会自动上传。打开 GitHub issue 时会把它复制到剪贴板，提交前在 Screenshots 栏里粘贴（⌘V / Ctrl+V）即可。",
+    report_bug_download: "下载截图",
+    report_bug_clear_marks: "清除标记",
+    report_bug_remove_screenshot: "移除截图",
+    report_bug_downloaded: "截图已下载。把 {filename} 拖进 GitHub issue 的 Screenshots 栏即可附加。",
+    report_bug_too_long: "报告太长，无法作为 GitHub issue 打开。请缩短描述、期望结果或复现步骤。你填写的内容仍然保留。",
+    report_bug_opened: "已打开 GitHub issue。请检查报告内容，然后在 GitHub 上提交。",
+    report_bug_opened_copied: "已打开 GitHub issue，截图已复制到剪贴板。提交前在 Screenshots 栏里粘贴（⌘V / Ctrl+V）即可。",
+    report_bug_opened_downloaded: "已打开 GitHub issue。截图无法复制到剪贴板，已改为下载：提交前请把下载的 {filename} 拖进 Screenshots 栏。",
+    report_bug_open_issue: "打开 GitHub issue",
     acknowledgements: "致谢",
     ack_desc: "Goldilocks 是一项协作成果。我们感谢所有贡献了时间、专业知识和想法的人。",
     ack_note: "字母顺序 · 无排名含义",
@@ -801,6 +887,27 @@ const TRANSLATIONS = {
     contribute_heading: "Voglio contribuire!",
     contribute_desc: "Trovato un bug, hai un'idea o vuoi collaborare? Apri una issue su GitHub o contatta direttamente il team.",
     github_issues: "GitHub Issues — segnala bug o richiedi funzionalità",
+    report_bug: "Segnala un bug",
+    report_bug_intro: "Tutti i campi sono facoltativi. Rivedi e completa la segnalazione su GitHub prima di inviarla con il tuo account GitHub. Lo screenshot facoltativo viene copiato negli appunti (o scaricato) per essere allegato da te. Nulla viene inviato automaticamente.",
+    report_bug_title: "Titolo breve",
+    report_bug_description: "Cosa è successo?",
+    report_bug_expected: "Cosa ti aspettavi?",
+    report_bug_steps: "Passi per riprodurre",
+    report_bug_details: "Dettagli della pagina inclusi",
+    report_bug_capture: "Cattura questa pagina",
+    report_bug_capturing: "Cattura della pagina in corso…",
+    report_bug_mark_hint: "Trascina sullo screenshot per evidenziare il problema. Controlla l'anteprima prima di allegarlo: le catture automatiche possono omettere i visualizzatori 3D delle strutture.",
+    report_bug_capture_failed: "Impossibile catturare questa pagina. Puoi allegare un tuo screenshot direttamente su GitHub, o segnalare senza.",
+    report_bug_attach_note: "Lo screenshot non viene caricato automaticamente. Aprendo la issue GitHub viene copiato negli appunti: incollalo nel campo Screenshots (⌘V / Ctrl+V) prima di inviare.",
+    report_bug_download: "Scarica screenshot",
+    report_bug_clear_marks: "Cancella evidenziazioni",
+    report_bug_remove_screenshot: "Rimuovi screenshot",
+    report_bug_downloaded: "Screenshot scaricato. Trascina {filename} nel campo Screenshots della issue GitHub per allegarlo.",
+    report_bug_too_long: "Questa segnalazione è troppo lunga per aprire una issue GitHub. Accorcia la descrizione, il risultato atteso o i passi. Il tuo testo è ancora qui.",
+    report_bug_opened: "Issue GitHub aperta. Rivedi la segnalazione, poi inviala su GitHub.",
+    report_bug_opened_copied: "Issue GitHub aperta e screenshot copiato negli appunti. Incollalo nel campo Screenshots (⌘V / Ctrl+V) prima di inviare.",
+    report_bug_opened_downloaded: "Issue GitHub aperta. Non è stato possibile copiare lo screenshot negli appunti, quindi è stato scaricato: trascina {filename} dai download nel campo Screenshots prima di inviare.",
+    report_bug_open_issue: "Apri issue GitHub",
     acknowledgements: "Ringraziamenti",
     ack_desc: "Goldilocks è un progetto collaborativo. Ringraziamo tutti coloro che hanno contribuito con tempo, competenze e idee.",
     ack_note: "Ordine alfabetico · nessuna classifica implicita",
@@ -1119,6 +1226,24 @@ function WarningIcon() {
       <path d="M12 3.5L22 20.5H2L12 3.5Z" />
       <line x1="12" y1="9.5" x2="12" y2="14" />
       <circle cx="12" cy="17.2" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function BugIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m8 2 1.88 1.88" />
+      <path d="M14.12 3.88 16 2" />
+      <path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1" />
+      <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6" />
+      <path d="M12 20v-9" />
+      <path d="M6.53 9C4.6 8.8 3 7.1 3 5" />
+      <path d="M6 13H2" />
+      <path d="M3 21c0-2.1 1.7-3.9 3.8-4" />
+      <path d="M20.97 5c0 2.1-1.6 3.8-3.5 4" />
+      <path d="M22 13h-4" />
+      <path d="M17.2 17c2.1.1 3.8 1.9 3.8 4" />
     </svg>
   );
 }
@@ -1828,6 +1953,8 @@ export default function App() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Non-null while the Report a bug dialog is open (see openBugReport).
+  const [bugReportContext, setBugReportContext] = useState<BugReportContext | null>(null);
   // Persisted server-side to ~/.config/goldilocks/config.toml on blur
   // (agent design doc §11.2) via POST /api/credentials -- this state is
   // just what's currently typed into the field, not the source of truth.
@@ -2601,6 +2728,32 @@ export default function App() {
 
   function closeFullPage() {
     setFullPageView("none");
+  }
+
+  // Snapshot of what's on screen, shown to the reporter and pasted into a
+  // public issue. Deliberately no chat content, structures, credentials or
+  // thread ids: a thread id is enough to read a shared-deployment
+  // conversation back via GET /api/chat/{thread_id}.
+  function openBugReport() {
+    const page =
+      fullPageView === "overview" ? "All Tools"
+        : fullPageView === "detail" && activeTool ? activeTool.label
+          : "Chat";
+    setBugReportContext({
+      page,
+      url: window.location.href,
+      view: fullPageView === "none" ? "chat" : `tools-${fullPageView}`,
+      active_tool: activeTool?.label ?? null,
+      tools_panel_open: toolsOpen,
+      model: selectedModel?.label ?? null,
+      deployment: SHARED_DEPLOYMENT ? "shared" : "local",
+      build_mode: import.meta.env.MODE,
+      theme: resolvedTheme,
+      language,
+      reported_at: new Date().toISOString(),
+      browser: navigator.userAgent,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    });
   }
 
   function setRightPanelView(viewName) {
@@ -4849,8 +5002,8 @@ export default function App() {
 
         .top-header {
           position: relative;
-          /* .top-header-center's own children (the pill, the theme button)
-             are both position: absolute now, so it has no normal-flow
+          /* .top-header-center's own children (the report-a-bug and theme
+             buttons) are both position: absolute now, so it has no normal-flow
              content left to size the row by -- pin a height explicitly
              instead of leaving it to collapse to whatever .top-header-left/
              -right's content happens to be. */
@@ -4905,9 +5058,11 @@ export default function App() {
           position: relative;
         }
 
+        /* Pinned to opposite edges of the chat column's header: report-a-bug
+           just right of the sidebar divider, theme at the far right. */
+        .top-header-report-btn,
         .top-header-theme-btn {
           position: absolute;
-          right: 14px;
           top: 50%;
           transform: translateY(-50%);
           border: none;
@@ -4922,8 +5077,26 @@ export default function App() {
           transition: background 0.14s ease;
         }
 
+        .top-header-report-btn {
+          left: 14px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .top-header-theme-btn {
+          right: 14px;
+        }
+
+        .top-header-report-btn:hover,
         .top-header-theme-btn:hover {
           background: rgba(255, 255, 255, 0.22);
+        }
+
+        @media (max-width: 720px) {
+          .top-header-report-label {
+            display: none;
+          }
         }
 
         .top-header .brand-name,
@@ -8932,6 +9105,16 @@ export default function App() {
 
         <div className="top-header-center">
           <button
+            type="button"
+            className="top-header-report-btn"
+            onClick={openBugReport}
+            title={t("report_bug")}
+            aria-haspopup="dialog"
+          >
+            <BugIcon />
+            <span className="top-header-report-label">{t("report_bug")}</span>
+          </button>
+          <button
             className="top-header-theme-btn"
             onClick={() => updateTheme(resolvedTheme === "light" ? "dark" : "light")}
           >
@@ -9940,7 +10123,7 @@ export default function App() {
                 <h3>{t("contribute_heading")}</h3>
                 <p>{t("contribute_desc")}</p>
                 <div className="contact-list">
-                  <a className="contact-link contact-primary-link" href="https://github.com/junwen94/goldilocks-agent/issues" target="_blank" rel="noreferrer">
+                  <a className="contact-link contact-primary-link" href="https://github.com/stfc/goldilocks-agent/issues" target="_blank" rel="noreferrer">
                     {t("github_issues")}
                   </a>
                   <a
@@ -10012,6 +10195,10 @@ export default function App() {
             )}
           </div>
         </div>
+      )}
+
+      {bugReportContext && (
+        <BugReportDialog context={bugReportContext} onClose={() => setBugReportContext(null)} t={t} />
       )}
 
       {showOnboarding && (
