@@ -59,15 +59,17 @@ export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 ```
 
 The checkout has to speak the same `vocabulary_version` as the embedded
-Workbench UI (currently `"1"`: core v0.1.1, or any v2 commit before
-`bde3628`) -- otherwise DFT Workbench shows a frontend/backend version
-mismatch banner instead of loading.
+Workbench UI (the one in `src/goldilocks_agent/core_pin.json`; a checkout
+reports its own in `src/goldilocks_core/capabilities.py`) -- otherwise
+DFT Workbench shows a frontend/backend version mismatch banner instead
+of loading.
 
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
 persistent service -- the first time you actually open DFT Workbench
 (inline or full-page), goldilocks-agent lazily runs it for you (either
-`uvx --from goldilocks-core[http]==0.1.1 goldilocks serve http`,
-pinned to the core release the embedded Workbench UI speaks, or your
+`uvx --from goldilocks-core[http]==<version> goldilocks serve http`,
+with `<version>` the core release pinned in
+`src/goldilocks_agent/core_pin.json`, or your
 checkout's own `uv run --directory <path> poe serve` if
 `GOLDILOCKS_CORE_PATH` is set), health-checking first so it reuses an
 instance you already started yourself in another terminal instead of

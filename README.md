@@ -202,15 +202,17 @@ export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 ```
 
 The checkout has to speak the same `vocabulary_version` as the embedded
-Workbench UI (currently `"1"`: core v0.1.1, or any v2 commit before
-`bde3628`) -- otherwise DFT Workbench shows a frontend/backend version
-mismatch banner instead of loading.
+Workbench UI (the one in `src/goldilocks_agent/core_pin.json`; a checkout
+reports its own in `src/goldilocks_core/capabilities.py`) -- otherwise
+DFT Workbench shows a frontend/backend version mismatch banner instead
+of loading.
 
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
 persistent service -- the first time you actually open DFT Workbench
 (inline or full-page), goldilocks-agent lazily runs it for you (either
-`uvx --from goldilocks-core[http]==0.1.1 goldilocks serve http`,
-pinned to the core release the embedded Workbench UI speaks, or your
+`uvx --from goldilocks-core[http]==<version> goldilocks serve http`,
+with `<version>` the core release pinned in
+`src/goldilocks_agent/core_pin.json`, or your
 checkout's own `uv run --directory <path> poe serve` if
 `GOLDILOCKS_CORE_PATH` is set), health-checking first so it reuses an
 instance you already started yourself in another terminal instead of
@@ -290,11 +292,12 @@ The first time either is opened, goldilocks-agent auto-starts
 goldilocks-core's own HTTP backend on `http://127.0.0.1:8000` for it to
 talk to (see Configuration above) -- you'll briefly see a "starting up..."
 state while that happens, or a clear error if neither
-`GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The published-package
-pipeline is currently a local tarball
-(`app/vendor/goldilocks-workbench-0.0.5.tgz`, rebuilt from `core/web` via
-`npm run build:lib && npm pack`) rather than a real registry -- see issue #1
-for the GitHub Packages follow-up.
+`GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The package is
+currently a vendored tarball in `app/vendor/` (rebuilt from core's `web/`
+via `npm run build:lib && npm pack`) rather than a registry package.
+`src/goldilocks_agent/core_pin.json` records it, its sha256, and the core
+release the backend runs; `tests/test_core_pin.py` fails until all of
+them agree, so a rebuilt tarball means updating the pin too.
 
 ## Usage
 

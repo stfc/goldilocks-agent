@@ -92,6 +92,11 @@ dev = [
 [tool.uv]
 package = true
 
+# core_pin.json is read at runtime (core_server.CORE_PIN), so it must ship
+# in the wheel too, not just the editable checkout.
+[tool.setuptools.package-data]
+goldilocks_agent = ["core_pin.json"]
+
 [tool.pytest.ini_options]
 addopts = ["--strict-markers", "-ra"]
 pythonpath = ["src"]
@@ -120,3 +125,8 @@ select = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# goldilocks-core runs as a separate process reached over HTTP/CLI
+# (core_server.py), never imported -- the boundary core#75 was rejected to keep.
+"goldilocks_core".msg = "goldilocks-core is reached over HTTP/CLI only, never imported (see core_server.py)"
