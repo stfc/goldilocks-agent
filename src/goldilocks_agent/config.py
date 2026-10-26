@@ -123,8 +123,9 @@ def read_core_path() -> str | None:
 
 # Whether `core_server.py` is allowed to auto-start goldilocks-core at all
 # when `read_core_path()` is unset -- spawns the real published PyPI
-# package (`uvx --from goldilocks-core[http] goldilocks serve http`, no
-# checkout needed) rather than doing nothing. Off by default, same
+# package (`uvx --from goldilocks-core[http]==<release> goldilocks serve
+# http`, pinned by `core_server.CORE_PYPI_REQUIREMENT`, no checkout needed)
+# rather than doing nothing. Off by default, same
 # opt-in-gate reasoning as `read_mlip_enabled()`: a shared/hosted deployment
 # must not have its agent server silently reach out to PyPI and spawn a
 # whole separate ML-heavy Python process just because network access

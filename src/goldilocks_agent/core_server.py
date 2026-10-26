@@ -13,7 +13,9 @@ Two ways to source goldilocks-core, checked in this order:
    up local, uncommitted changes.
 2. Otherwise, if ``read_core_autostart_enabled()`` -- everyone else: runs
    the real published PyPI package directly, no checkout needed at all
-   (``uvx --from goldilocks-core[http] goldilocks serve http``, 2026-09-24).
+   (``uvx --from goldilocks-core[http]==<release> goldilocks serve http``,
+   2026-09-24; pinned to one release since 2026-10-26, see
+   `CORE_PYPI_REQUIREMENT`).
 
 Either way this is a real, separate OS process, deliberately never an
 in-process import: goldilocks-agent treats goldilocks-core as an external
@@ -79,6 +81,15 @@ _MMACE_FORK_SPEC = (
     "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git"
     "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
 )
+
+# PyPI mode's exact core release -- the same one the Dockerfile clones, and
+# whose vocabulary the vendored `goldilocks-workbench` tarball speaks. Never
+# unpinned: the tarball's `HttpCoreClient` refuses any core whose
+# `/capabilities` reports a different `vocabulary_version` (core moved it
+# from "1" to "2" in junwen94/goldilocks-core bde3628), so a bare
+# `goldilocks-core[http]` would break DFT Workbench for every fresh install
+# the moment a newer core release reaches PyPI.
+CORE_PYPI_REQUIREMENT = "goldilocks-core[http]==0.1.1"
 
 # Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000). Not
 # user-configurable: this is goldilocks-core's own hardcoded default
@@ -189,7 +200,7 @@ def _spawn_command(core_path: str | None) -> list[str]:
     a fast no-op) -- no hand-rolled "already done" flag needed, same as
     `mlip_cli`'s own `uv run --project` never checking that either.
 
-    PyPI mode (`core_path` is ``None``): `uvx --from goldilocks-core[http]
+    PyPI mode (`core_path` is ``None``): `uvx --from <CORE_PYPI_REQUIREMENT>
     goldilocks serve http --host 127.0.0.1 --port 8000` -- verified live
     2026-09-24 against the real published package, no checkout anywhere on
     disk. mMACE can never run this way -- there is no persistent, addressable
@@ -249,7 +260,7 @@ def _spawn_command(core_path: str | None) -> list[str]:
     return [
         "uvx",
         "--from",
-        "goldilocks-core[http]",
+        CORE_PYPI_REQUIREMENT,
         "goldilocks",
         "serve",
         "http",
@@ -374,7 +385,7 @@ async def _bring_up(core_path: str | None) -> None:
                     "works on its own"
                     if core_path
                     else "check that "
-                    "`uvx --from goldilocks-core[http] goldilocks serve http` "
+                    f"`uvx --from {CORE_PYPI_REQUIREMENT} goldilocks serve http` "
                     "works on its own"
                 )
                 detail = (
