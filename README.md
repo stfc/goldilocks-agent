@@ -208,8 +208,9 @@ goldilocks-agent reports an error naming both vocabulary versions instead
 of loading DFT Workbench.
 
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
-persistent service -- the first time you actually open DFT Workbench
-(inline or full-page), goldilocks-agent lazily runs it for you (either
+persistent service -- the first time something needs it (opening DFT
+Workbench inline or full-page, a chat DFT tool, or reloading a page with a
+saved DFT Workbench state), goldilocks-agent lazily runs it for you (either
 `uvx --from goldilocks-core[http]==<version> goldilocks serve http`,
 with `<version>` the core release pinned in
 `src/goldilocks_agent/core_pin.json`, or your

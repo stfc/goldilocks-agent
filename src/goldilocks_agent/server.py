@@ -598,11 +598,12 @@ async def mlip_phonons(request: MlipPhononsRequest) -> dict:
 
 @app.post("/api/core-server/ensure")
 async def core_server_ensure() -> dict:
-    """The frontend calls this the moment DFT Workbench opens (inline or
-    full-page) -- lazily ensures goldilocks-core's own HTTP backend
-    (`goldilocks serve http`, embedding-target for the `goldilocks-workbench`
-    npm package) is running, local/desktop deployment only (see
-    `core_server`'s module docstring). Non-blocking: returns immediately
+    """The frontend calls this when DFT Workbench opens (inline or
+    full-page), before a chat DFT tool runs, and on page load when it has a
+    saved DFT Workbench state to restore -- lazily ensures goldilocks-core's
+    own HTTP backend (`goldilocks serve http`, embedding-target for the
+    `goldilocks-workbench` npm package) is running, local/desktop deployment
+    only (see `core_server`'s module docstring). Non-blocking: returns immediately
     with the current status; the frontend polls this same route until it
     reports ``ready``/``error``/``not_configured`` rather than waiting on
     one long request."""

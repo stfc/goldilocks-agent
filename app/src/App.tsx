@@ -1571,6 +1571,49 @@ function StructureUploadControl({
   );
 }
 
+// Rebuilds a persisted DFT Workbench draft as a `draft.patch` for the
+// capabilities core reports now (#18): code, task and HPC profile only if
+// core still offers them, and the overrides only if they were saved under the
+// same vocabulary -- override keys and values change between vocabularies,
+// and an override core rejects sticks to the draft. Fields are omitted rather
+// than set to `undefined`: `draft.patch` applies any key that is present.
+// States saved before `vocabulary` was recorded all came from vocabulary "1"
+// builds.
+function restorableDraftPatch(saved, capabilities) {
+  const draft = saved.draft;
+  if (!draft) return null;
+  const offered = (items, id) => items.some((item) => item.id === id);
+  return {
+    type: "draft.patch" as const,
+    ...(offered(capabilities.codes, draft.code) ? { code: draft.code } : {}),
+    ...(offered(capabilities.tasks, draft.task) ? { task: draft.task } : {}),
+    ...(draft.hpc === null || offered(capabilities.hpc_profiles, draft.hpc)
+      ? { hpc: draft.hpc }
+      : {}),
+    ...((saved.vocabulary ?? "1") === capabilities.vocabulary_version
+      ? { overrides: draft.overrides }
+      : {}),
+  };
+}
+
+// Chat card for a bundle a `dft_download_bundle` call generated. `onDownload`
+// returns why nothing could be saved right now (shown under the button), or
+// null once the save is handed to the browser.
+function DftBundleCard({ filename, onDownload }: { filename: string; onDownload: () => string | null }) {
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="confirmation-card">
+      <div className="confirmation-card-label">{filename} is ready</div>
+      <div className="confirmation-card-actions">
+        <button className="primary-btn compact" onClick={() => setNote(onDownload())}>
+          Download
+        </button>
+      </div>
+      {note && <div className="confirmation-card-note" role="status">{note}</div>}
+    </div>
+  );
+}
+
 // The real embedded goldilocks-core Workbench tree -- shared verbatim by
 // both DFT Workbench's full-page detail view (unmodified) and its inline
 // side panel (wrapped in CoreWorkbenchTabs below). Always the same
@@ -1824,6 +1867,11 @@ function CoreWorkbenchTabs({
     </div>
   );
 }
+
+// How long the reload restore waits for goldilocks-core to come up: longer
+// than core_server.py's own startup cap (15 minutes with mMACE's first-time
+// setup), which reports an error itself when that runs out.
+const CORE_SERVER_RESTORE_WAIT_MS = 20 * 60 * 1000;
 
 // A plain status message for whenever the embedded Workbench isn't safe to
 // mount yet (see the `/api/core-server/ensure` polling effect in App()) --
@@ -2286,20 +2334,25 @@ export default function App() {
 
   // Persists `coreWorkspace`'s structure + calc settings on every real change
   // (#5 -- previously a reload silently dropped all of it, since `coreWorkspace`
-  // itself is recreated empty by the `useMemo` above). Deliberately excludes
-  // `lastDownload`: it's a real `Blob`, not JSON-serializable, and the restore
-  // effect below regenerates it fresh via `review.refreshArchive` instead of
-  // trying to freeze the exact old bytes.
+  // itself is recreated empty by the `useMemo` above), with the vocabulary
+  // they're written in (see `restorableDraftPatch`). Only ever writes a loaded
+  // structure: the workspace starts empty on every page load, and clearing the
+  // key on "empty" used to erase the saved state before the restore below
+  // could use it (#18). Deliberately excludes `lastDownload`: it's a real
+  // `Blob`, not JSON-serializable, and the restore effect below regenerates it
+  // fresh via `review.refreshArchive` instead of trying to freeze the exact
+  // old bytes.
   useEffect(() => {
     return coreWorkspace.subscribe(() => {
       const snapshot = coreWorkspace.getSnapshot();
-      if (!snapshot.structureInput) {
-        writeStorage(STORAGE_KEYS.dftWorkspaceState, "");
-        return;
-      }
+      if (!snapshot.structureInput || !snapshot.capabilities) return;
       writeStorage(
         STORAGE_KEYS.dftWorkspaceState,
-        JSON.stringify({ structureInput: snapshot.structureInput, draft: snapshot.draft }),
+        JSON.stringify({
+          vocabulary: snapshot.capabilities.vocabulary_version,
+          structureInput: snapshot.structureInput,
+          draft: snapshot.draft,
+        }),
       );
     });
   }, [coreWorkspace]);
@@ -2311,9 +2364,17 @@ export default function App() {
   // interface, only real actions -- so this deliberately trades the #7
   // no-silent-duplicate-real-execution principle for a seamless reload here
   // (explicit call, 2026-09-28, after weighing that tradeoff against the
-  // cheaper alternatives). Best-effort: swallows failures so a structure that
-  // goldilocks-core can no longer reproduce (e.g. after a version change)
-  // just falls back to an empty panel instead of surfacing a startup error.
+  // cheaper alternatives). Best-effort: a structure goldilocks-core can no
+  // longer reproduce just falls back to an empty panel instead of surfacing a
+  // startup error.
+  //
+  // Starts goldilocks-core first (#18): after a reload nothing else asks for
+  // it -- only an open DFT Workbench panel or a chat DFT tool does -- so the
+  // replay used to hit a backend that wasn't running yet and silently do
+  // nothing. Waits as long as a first-ever start can take (core_server.py
+  // caps the startup itself) and stops on anything but "ready". The saved
+  // state is only forgotten when core rejects the structure for good, never
+  // on a 5xx or network error, so the next reload can try again.
   useEffect(() => {
     const raw = readStorage(STORAGE_KEYS.dftWorkspaceState, "");
     if (!raw) return;
@@ -2326,17 +2387,35 @@ export default function App() {
     if (!saved?.structureInput) return;
     (async () => {
       try {
+        if (await ensureCoreServerReady(CORE_SERVER_RESTORE_WAIT_MS)) return;
         await ensureWorkspaceStarted(coreWorkspace);
+        const before = coreWorkspace.getSnapshot();
+        // Only into an untouched workspace: while this waited for core, a
+        // chat DFT tool or the panel may have opened a structure, and
+        // replaying the saved one would replace it.
+        if (
+          before.capabilities === null ||
+          before.structureInput !== null ||
+          before.attemptedStructureInput !== null ||
+          before.operation !== null
+        ) return;
         await coreWorkspace.dispatch({ type: "source.open", input: saved.structureInput });
-        if (saved.draft) {
-          await coreWorkspace.dispatch({
-            type: "draft.patch",
-            code: saved.draft.code,
-            task: saved.draft.task,
-            hpc: saved.draft.hpc,
-            overrides: saved.draft.overrides,
-          });
+        const opened = coreWorkspace.getSnapshot();
+        if (opened.structureInput !== saved.structureInput) {
+          if (opened.attemptedStructureInput === saved.structureInput && opened.failure) {
+            if (opened.failure.retryable) {
+              // An empty panel rather than a Retry banner: Retry reopens the
+              // structure with default settings, which the save listener
+              // then writes over the saved ones.
+              await coreWorkspace.dispatch({ type: "failure.dismiss" });
+            } else {
+              writeStorage(STORAGE_KEYS.dftWorkspaceState, "");
+            }
+          }
+          return;
         }
+        const patch = restorableDraftPatch(saved, before.capabilities);
+        if (patch) await coreWorkspace.dispatch(patch);
         await coreWorkspace.dispatch({ type: "review.compute" });
         await coreWorkspace.dispatch({ type: "review.refreshArchive" });
       } catch {
@@ -2379,9 +2458,10 @@ export default function App() {
 
   // Lazily ensures goldilocks-core's HTTP backend is up the first time DFT
   // Workbench is actually opened (inline or full-page -- both set
-  // session.tool to "dft-workbench", so activeTool.id covers either) --
-  // not on app load, matching core_server.py's own "only spawn once
-  // actually needed" reasoning. POST /api/core-server/ensure is cheap and
+  // session.tool to "dft-workbench", so activeTool.id covers either). The
+  // other callers are chat DFT tools and the reload restore above, which
+  // only runs when a DFT Workbench state was saved -- so core is still only
+  // started once something actually needs it. POST /api/core-server/ensure is cheap and
   // non-blocking server-side (it kicks off the spawn/health-check as a
   // background task and returns immediately), so polling it every second
   // while "starting" just reflects that same background progress back to
@@ -3436,9 +3516,24 @@ export default function App() {
   // `saveArchiveToBrowser` call. Reuses the already-cached `lastDownload`
   // (set by dispatchDftTool's `review.refreshArchive`) instead of
   // regenerating it -- same `downloadReviewed()` path the Bundle card's own
-  // button already goes through.
-  function downloadDftBundle() {
+  // button already goes through. Returns why nothing can be saved instead,
+  // for the card to show (#18): `review.download` itself silently does
+  // nothing with no structure open (e.g. a card rehydrated after a reload,
+  // before the restore has finished), with settings changed since, or while
+  // the bundle is still being generated.
+  function downloadDftBundle(): string | null {
+    const snapshot = coreWorkspace.getSnapshot();
+    if (snapshot.structureInput === null) {
+      return "Nothing to download yet: DFT Workbench has no structure open. If the page was just reloaded, wait for DFT Workbench to finish restoring, or ask for the bundle again.";
+    }
+    if (snapshot.outOfDate) {
+      return "The settings changed since this bundle was generated. Ask for it again, or use the Bundle card in DFT Workbench.";
+    }
+    if (snapshot.lastDownload === null && (snapshot.reviewed === null || snapshot.operation !== null)) {
+      return "DFT Workbench is still preparing this bundle -- try again in a moment.";
+    }
     void coreWorkspace.dispatch({ type: "review.download" });
+    return null;
   }
 
   // Automatic counterpart to `respondToConfirmation` -- no user click
@@ -6061,6 +6156,13 @@ export default function App() {
           color: var(--text);
           font-size: 14px;
           line-height: 1.8;
+        }
+
+        .confirmation-card-note {
+          margin-top: 6px;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--muted);
         }
 
         .user-bubble {
@@ -9392,24 +9494,12 @@ export default function App() {
                       }
                       if (message.role === "dft-bundle-ready") {
                         return (
-                          <div key={`dft-bundle-${index}`} className="message-row">
+                          <div key={`${session?.id}-dft-bundle-${index}`} className="message-row">
                             <div className="avatar assistant">
                               <LogoImage alt="Goldilocks logo" />
                             </div>
                             <div className="message-content">
-                              <div className="confirmation-card">
-                                <div className="confirmation-card-label">
-                                  {message.filename} is ready
-                                </div>
-                                <div className="confirmation-card-actions">
-                                  <button
-                                    className="primary-btn compact"
-                                    onClick={downloadDftBundle}
-                                  >
-                                    Download
-                                  </button>
-                                </div>
-                              </div>
+                              <DftBundleCard filename={message.filename} onDownload={downloadDftBundle} />
                             </div>
                           </div>
                         );

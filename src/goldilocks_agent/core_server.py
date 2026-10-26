@@ -28,8 +28,9 @@ PyPI doesn't reopen that question, it only changes *how* the external
 subprocess gets sourced (a checkout path vs. an installable package).
 
 Lazy, singleton, process-lifetime: `ensure_running()` only ever spawns a
-subprocess the first time the frontend actually opens DFT Workbench (inline
-or full-page) in this goldilocks-agent server process's lifetime -- never
+subprocess the first time the frontend asks for it in this goldilocks-agent
+server process's lifetime -- opening DFT Workbench (inline or full-page), a
+chat DFT tool, or a page load restoring a saved DFT Workbench state -- never
 eagerly at import/startup. Once spawned it outlives any one browser
 tab/view; only this process exiting tears it down (`shutdown()`, registered
 with `atexit` -- uvicorn's normal SIGINT/SIGTERM handling exits the
