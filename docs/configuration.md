@@ -61,8 +61,8 @@ export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 The checkout has to speak the same `vocabulary_version` as the embedded
 Workbench UI (the one in `src/goldilocks_agent/core_pin.json`; a checkout
 reports its own in `src/goldilocks_core/capabilities.py`) -- otherwise
-DFT Workbench shows a frontend/backend version mismatch banner instead
-of loading.
+goldilocks-agent reports an error naming both vocabulary versions instead
+of loading DFT Workbench.
 
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
 persistent service -- the first time you actually open DFT Workbench
@@ -75,7 +75,9 @@ checkout's own `uv run --directory <path> poe serve` if
 instance you already started yourself in another terminal instead of
 double-spawning, and keeps it running for the rest of the session,
 shutting it down when goldilocks-agent's own process exits. Nothing to
-start by hand either way.
+start by hand either way. Its output, including the traceback behind any
+HTTP 500, goes to goldilocks-agent's own log prefixed `[goldilocks-core]`
+(`docker compose logs agent` in Docker).
 
 **Optional: magnetism ML tier (mMACE)** -- upgrades two of DFT Workbench's
 magnetism fields (`is_magnetic` classification, magnetic-ordering ranking)
@@ -94,16 +96,25 @@ cd /path/to/your/goldilocks-core
 uv pip install ase==3.28.0 e3nn==0.4.4 sphericart==1.0.9 sphericart-torch==1.0.9
 uv pip install "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
 
-# 2. One-time checkpoint download
+# 2. One-time checkpoint download -- verify it: a truncated or error-page
+#    download still loads without error, then predicts garbage
 mkdir -p ~/.local/share/goldilocks/mmace
 curl -L -o ~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model \
   https://data-collections.psdi.ac.uk/api/records/1g8rw-q8128/files/mace_matpes_pbe_baseline_run-3.model/content
+md5sum ~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model  # `md5` on macOS
+# expect 2486abb4f6380a599759833125565019 (84,430,851 bytes)
 
 # 3. Back in goldilocks-agent, same shell, before starting the backend
 export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 export GOLDILOCKS_MACE_BACKBONE=~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model
 uv run poe serve
 ```
+
+With `GOLDILOCKS_AGENT_MMACE_ENABLED=1` (both Docker compose files set it),
+goldilocks-agent does steps 1-3 itself the first time DFT Workbench opens,
+and only accepts a checkpoint whose size and md5 match the published ones
+-- anything else is downloaded again, and a download that still doesn't
+match stops the backend from starting with that reason.
 
 Open DFT Workbench and load a magnetic structure (e.g. goldilocks-core's
 own `src/goldilocks_core/examples/structures/Fe_bcc.cif`) -- the Analysis

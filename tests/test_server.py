@@ -327,4 +327,8 @@ def test_core_proxy_returns_a_clean_503_while_core_is_still_starting(
     with _make_client(tmp_path, monkeypatch) as client:
         response = client.get("/capabilities")
         assert response.status_code == 503
-        assert "still be starting" in response.json()["detail"]
+        # Core's own envelope, the only error shape the Workbench's
+        # HttpCoreClient reads its message from.
+        error = response.json()["error"]
+        assert error["kind"] == "core_unavailable"
+        assert "still be starting" in error["message"]

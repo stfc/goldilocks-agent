@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 import openai
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
 from langgraph.types import Command
@@ -652,16 +652,25 @@ async def _proxy_to_core(request: Request) -> Response:
                     if k.lower() not in _CORE_PROXY_HOP_BY_HOP_HEADERS
                 },
             )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
+    except httpx.HTTPError:
+        # In core's own error envelope, so the embedded Workbench's banner
+        # shows this message rather than a generic "rejected the request
+        # (503)" -- its HttpCoreClient only reads `{"error": {...}}` bodies.
+        return JSONResponse(
             status_code=503,
-            detail=(
-                "goldilocks-core isn't answering yet -- it may still be "
-                "starting (mMACE's first-time setup can take several "
-                "minutes). Wait for the Tool's own status message and "
-                "retry."
-            ),
-        ) from exc
+            content={
+                "error": {
+                    "kind": "core_unavailable",
+                    "message": (
+                        "goldilocks-core isn't answering yet -- it may still be "
+                        "starting (mMACE's first-time setup can take several "
+                        "minutes). Wait for the Tool's own status message and "
+                        "retry."
+                    ),
+                    "details": {},
+                }
+            },
+        )
     return Response(
         content=core_response.content,
         status_code=core_response.status_code,

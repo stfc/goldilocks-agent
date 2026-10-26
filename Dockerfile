@@ -36,7 +36,7 @@ WORKDIR /app
 # after this build finishes:
 # - `git`: mMACE's fork is a `uv pip install`ed git dependency
 #   (GOLDILOCKS_AGENT_MMACE_ENABLED).
-# - `curl`: mMACE's checkpoint download.
+# - `curl`: core's own `poe serve` probes port 8000 with it before starting.
 # - `build-essential` (g++/gcc/make): goldilocks-ml's own `dscribe` dependency
 #   has no prebuilt wheel for every platform (confirmed missing on
 #   linux/arm64, 2026-09-25: `uv sync --extra http` alone -- nothing to do
