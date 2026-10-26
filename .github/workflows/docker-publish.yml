@@ -41,6 +41,9 @@ jobs:
         run: npm ci
       - working-directory: app
         run: npm run lint
+      # `vite build` only transpiles; this is the frontend's only type gate.
+      - working-directory: app
+        run: npm run typecheck
       - working-directory: app
         run: npm run build
 

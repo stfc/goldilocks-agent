@@ -10,7 +10,7 @@ authoritative on what exists vs. what's designed but unbuilt).
 ```bash
 uv sync --group dev
 uv run poe check        # ruff check + format gate + pytest
-uv run poe web-check    # frontend: lint + build
+uv run poe web-check    # frontend: lint + typecheck + build
 uv run pre-commit run --all-files
 ```
 
