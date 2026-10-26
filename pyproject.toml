@@ -71,8 +71,8 @@ sequence = [
 ]
 
 [tool.poe.tasks.web-check]
-help = "Lint, type-check and build the agent frontend"
-shell = "cd app && npm run lint && npm run typecheck && npm run build"
+help = "Lint, type-check, test and build the agent frontend"
+shell = "cd app && npm run lint && npm run typecheck && npm run test && npm run build"
 
 [tool.poe.tasks.docs]
 help = "Serve the docs site locally with live reload"
