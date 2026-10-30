@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import tarfile
 import tomllib
 from pathlib import Path
@@ -42,7 +43,9 @@ def test_pin_names_an_stfc_release() -> None:
 def test_pypi_mode_installs_the_pinned_release() -> None:
     requirement = f"goldilocks-core[http]=={PIN['version']}"
     assert requirement == core_server.CORE_PYPI_REQUIREMENT
-    assert core_server._spawn_command(None)[2] == requirement
+    # Both the assets install and the serve run the pinned release.
+    script = core_server._spawn_command(None)[-1]
+    assert script.count(f"--from {shlex.quote(requirement)} ") == 2
 
 
 def test_dockerfile_fetches_the_pinned_commit_only() -> None:
