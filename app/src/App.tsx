@@ -12,6 +12,7 @@ import {
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
+import { dispatchDftTool, downloadDftBundle, restoreDftWorkspace } from "./dftWorkbench";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
@@ -1571,31 +1572,6 @@ function StructureUploadControl({
   );
 }
 
-// Rebuilds a persisted DFT Workbench draft as a `draft.patch` for the
-// capabilities core reports now (#18): code, task and HPC profile only if
-// core still offers them, and the overrides only if they were saved under the
-// same vocabulary -- override keys and values change between vocabularies,
-// and an override core rejects sticks to the draft. Fields are omitted rather
-// than set to `undefined`: `draft.patch` applies any key that is present.
-// States saved before `vocabulary` was recorded all came from vocabulary "1"
-// builds.
-function restorableDraftPatch(saved, capabilities) {
-  const draft = saved.draft;
-  if (!draft) return null;
-  const offered = (items, id) => items.some((item) => item.id === id);
-  return {
-    type: "draft.patch" as const,
-    ...(offered(capabilities.codes, draft.code) ? { code: draft.code } : {}),
-    ...(offered(capabilities.tasks, draft.task) ? { task: draft.task } : {}),
-    ...(draft.hpc === null || offered(capabilities.hpc_profiles, draft.hpc)
-      ? { hpc: draft.hpc }
-      : {}),
-    ...((saved.vocabulary ?? "1") === capabilities.vocabulary_version
-      ? { overrides: draft.overrides }
-      : {}),
-  };
-}
-
 // Chat card for a bundle a `dft_download_bundle` call generated. `onDownload`
 // returns why nothing could be saved right now (shown under the button), or
 // null once the save is handed to the browser.
@@ -1908,34 +1884,6 @@ function chatErrorMessage(err) {
   return err?.streamInterrupted
     ? "Error: the connection to the model was interrupted."
     : "Error: could not reach the model.";
-}
-
-// Settles with `promise`, or rejects with the abort reason as soon as
-// `signal` aborts -- for awaits that can't take a signal themselves
-// (goldilocks-workbench's `coreWorkspace.dispatch`). The abandoned work
-// keeps running in the background; only the await is cut short.
-function untilAborted(promise, signal) {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-  });
-}
-
-// Resolves once `workspace` has no operation in flight. Its actions
-// silently return while one is (the panel's own auto-compute, or a request
-// a Stop click abandoned), which would hand the model a stale snapshot.
-function waitForWorkspaceIdle(workspace, signal) {
-  if (workspace.getSnapshot().operation === null) return Promise.resolve();
-  return untilAborted(new Promise<void>((resolve) => {
-    const unsubscribe = workspace.subscribe(() => {
-      if (workspace.getSnapshot().operation !== null) return;
-      unsubscribe();
-      resolve();
-    });
-  }), signal);
 }
 
 export default function App() {
@@ -2366,15 +2314,9 @@ export default function App() {
   // (explicit call, 2026-09-28, after weighing that tradeoff against the
   // cheaper alternatives). Best-effort: a structure goldilocks-core can no
   // longer reproduce just falls back to an empty panel instead of surfacing a
-  // startup error.
-  //
-  // Starts goldilocks-core first (#18): after a reload nothing else asks for
-  // it -- only an open DFT Workbench panel or a chat DFT tool does -- so the
-  // replay used to hit a backend that wasn't running yet and silently do
-  // nothing. Waits as long as a first-ever start can take (core_server.py
-  // caps the startup itself) and stops on anything but "ready". The saved
-  // state is only forgotten when core rejects the structure for good, never
-  // on a 5xx or network error, so the next reload can try again.
+  // startup error. See `restoreDftWorkspace` for the sequence (#18); it waits
+  // as long as a first-ever core start can take (core_server.py caps the
+  // startup itself, and reports a failure before it retries).
   useEffect(() => {
     const raw = readStorage(STORAGE_KEYS.dftWorkspaceState, "");
     if (!raw) return;
@@ -2387,37 +2329,12 @@ export default function App() {
     if (!saved?.structureInput) return;
     (async () => {
       try {
-        if (await ensureCoreServerReady(CORE_SERVER_RESTORE_WAIT_MS)) return;
-        await ensureWorkspaceStarted(coreWorkspace);
-        const before = coreWorkspace.getSnapshot();
-        // Only into an untouched workspace: while this waited for core, a
-        // chat DFT tool or the panel may have opened a structure, and
-        // replaying the saved one would replace it.
-        if (
-          before.capabilities === null ||
-          before.structureInput !== null ||
-          before.attemptedStructureInput !== null ||
-          before.operation !== null
-        ) return;
-        await coreWorkspace.dispatch({ type: "source.open", input: saved.structureInput });
-        const opened = coreWorkspace.getSnapshot();
-        if (opened.structureInput !== saved.structureInput) {
-          if (opened.attemptedStructureInput === saved.structureInput && opened.failure) {
-            if (opened.failure.retryable) {
-              // An empty panel rather than a Retry banner: Retry reopens the
-              // structure with default settings, which the save listener
-              // then writes over the saved ones.
-              await coreWorkspace.dispatch({ type: "failure.dismiss" });
-            } else {
-              writeStorage(STORAGE_KEYS.dftWorkspaceState, "");
-            }
-          }
-          return;
-        }
-        const patch = restorableDraftPatch(saved, before.capabilities);
-        if (patch) await coreWorkspace.dispatch(patch);
-        await coreWorkspace.dispatch({ type: "review.compute" });
-        await coreWorkspace.dispatch({ type: "review.refreshArchive" });
+        await restoreDftWorkspace(
+          coreWorkspace,
+          saved,
+          () => ensureCoreServerReady(CORE_SERVER_RESTORE_WAIT_MS),
+          () => writeStorage(STORAGE_KEYS.dftWorkspaceState, ""),
+        );
       } catch {
         // Best-effort restore -- leave the panel at whatever state the
         // failed replay stopped on, same as any other real backend error.
@@ -3419,123 +3336,6 @@ export default function App() {
     }
   }
 
-  // `source.open` (and everything downstream) silently no-ops if
-  // `workspace.start` hasn't completed yet (`capabilities === null`) --
-  // normally dispatched by goldilocks-workbench's own `WorkspaceProvider`
-  // mount effect, which a chat-only flow may never have triggered.
-  async function ensureWorkspaceStarted(workspace) {
-    if (workspace.getSnapshot().capabilities !== null) return;
-    await workspace.dispatch({ type: "workspace.start" });
-  }
-
-  function coreFailureMessage(failure) {
-    return `${failure.kind}: ${failure.message}`;
-  }
-
-  // Executes a client-executed DFT Workbench tool call (graph.py's
-  // CLIENT_EXECUTED_TOOLS) by dispatching into the exact same `coreWorkspace`
-  // the embedded panel's own buttons use -- one shared state object, not a
-  // second implementation calling goldilocks-core's HTTP API from Python.
-  // Pre-checks preconditions itself: `workspace.ts`'s actions silently
-  // no-op on an unmet precondition rather than throwing, which would
-  // otherwise be indistinguishable from "nothing to report." Returns
-  // `{result}` or `{error}` -- the exact shape `graph.py`'s second
-  // `interrupt()` expects back as its resume value.
-  async function dispatchDftTool(tool, args, signal) {
-    const readyError = await ensureCoreServerReady(undefined, signal);
-    if (readyError) return { error: readyError };
-    await waitForWorkspaceIdle(coreWorkspace, signal);
-    await untilAborted(ensureWorkspaceStarted(coreWorkspace), signal);
-
-    if (tool === "dft_open_structure") {
-      await untilAborted(coreWorkspace.dispatch({
-        type: "source.open",
-        input: {
-          structure_content: args.structure_content,
-          structure_name: args.structure_name,
-          structure_format: args.structure_format
-            ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
-        },
-      }), signal);
-      const snapshot = coreWorkspace.getSnapshot();
-      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-      return { result: snapshot.inspection ?? {} };
-    }
-
-    if (tool === "dft_review") {
-      if (coreWorkspace.getSnapshot().structureInput === null) {
-        return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
-      }
-      await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
-      const snapshot = coreWorkspace.getSnapshot();
-      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-      return { result: snapshot.reviewed ?? {} };
-    }
-
-    if (tool === "dft_download_bundle") {
-      const before = coreWorkspace.getSnapshot();
-      if (before.structureInput === null) {
-        return { error: "No structure has been opened in DFT Workbench yet -- call dft_open_structure first." };
-      }
-      if (before.reviewed === null) {
-        return { error: "No review has been run yet -- call dft_review first." };
-      }
-      if (before.outOfDate) await untilAborted(coreWorkspace.dispatch({ type: "review.compute" }), signal);
-      // Deliberately `review.refreshArchive`, not `review.download`: the
-      // latter ends in a real `saveArchiveToBrowser` -- an `<a>` click --
-      // which browsers silently drop unless it happens inside a *direct*
-      // user gesture's call stack. By the time this runs (an SSE event
-      // from the server, several `await`s past whatever click sent the
-      // chat message or approved the confirmation card), that gesture has
-      // long expired -- confirmed live: no file ever reached ~/Downloads.
-      // `refreshArchive` does the exact same server-side generation and
-      // fills `lastDownload` (so BundleCard shows "ready") without ever
-      // touching the DOM -- the user's own click on BundleCard's real
-      // "Download (.zip)" button then reuses that cached archive and
-      // *is* a direct gesture, so the browser actually saves it.
-      await untilAborted(coreWorkspace.dispatch({ type: "review.refreshArchive" }), signal);
-      const snapshot = coreWorkspace.getSnapshot();
-      if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-      if (snapshot.lastDownload === null) {
-        return { error: "Failed to generate the DFT input bundle." };
-      }
-      return {
-        result: {
-          filename: snapshot.lastDownload.filename,
-          note: "Ready -- a Download button for it appears in the chat right here, and the Bundle card on the right has the same file too (browsers won't let a chat action save it automatically, a real click is needed either way).",
-        },
-      };
-    }
-
-    return { error: `Unknown DFT Workbench tool: ${tool}` };
-  }
-
-  // The dft-bundle-ready card's own button (see the `messages.map` render
-  // below) -- a *direct* click here, unlike the automatic dispatch inside
-  // dispatchDftTool above, so the browser actually allows the resulting
-  // `saveArchiveToBrowser` call. Reuses the already-cached `lastDownload`
-  // (set by dispatchDftTool's `review.refreshArchive`) instead of
-  // regenerating it -- same `downloadReviewed()` path the Bundle card's own
-  // button already goes through. Returns why nothing can be saved instead,
-  // for the card to show (#18): `review.download` itself silently does
-  // nothing with no structure open (e.g. a card rehydrated after a reload,
-  // before the restore has finished), with settings changed since, or while
-  // the bundle is still being generated.
-  function downloadDftBundle(): string | null {
-    const snapshot = coreWorkspace.getSnapshot();
-    if (snapshot.structureInput === null) {
-      return "Nothing to download yet: DFT Workbench has no structure open. If the page was just reloaded, wait for DFT Workbench to finish restoring, or ask for the bundle again.";
-    }
-    if (snapshot.outOfDate) {
-      return "The settings changed since this bundle was generated. Ask for it again, or use the Bundle card in DFT Workbench.";
-    }
-    if (snapshot.lastDownload === null && (snapshot.reviewed === null || snapshot.operation !== null)) {
-      return "DFT Workbench is still preparing this bundle -- try again in a moment.";
-    }
-    void coreWorkspace.dispatch({ type: "review.download" });
-    return null;
-  }
-
   // Automatic counterpart to `respondToConfirmation` -- no user click
   // involved, the resume value is the tool's real result. Adds no
   // transcript message of its own -- the `tool_result` SSE handler's own
@@ -3544,7 +3344,13 @@ export default function App() {
   async function runClientToolCall(sessionId, payload, signal) {
     let outcome;
     try {
-      outcome = await dispatchDftTool(payload.tool, payload.args ?? {}, signal);
+      outcome = await dispatchDftTool(
+        coreWorkspace,
+        (readySignal) => ensureCoreServerReady(undefined, readySignal),
+        payload.tool,
+        payload.args ?? {},
+        signal,
+      );
     } catch (err) {
       outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
     }
@@ -9499,7 +9305,7 @@ export default function App() {
                               <LogoImage alt="Goldilocks logo" />
                             </div>
                             <div className="message-content">
-                              <DftBundleCard filename={message.filename} onDownload={downloadDftBundle} />
+                              <DftBundleCard filename={message.filename} onDownload={() => downloadDftBundle(coreWorkspace)} />
                             </div>
                           </div>
                         );

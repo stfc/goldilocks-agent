@@ -1,0 +1,472 @@
+{
+  "records": {
+    "composition": {
+      "status": "resolved",
+      "value": {
+        "elements": [
+          "Si"
+        ],
+        "transition_metals": [],
+        "lanthanides": [],
+        "actinides": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "geometry": {
+      "status": "resolved",
+      "value": {
+        "dimensionality": "3d",
+        "low_dimensional": false
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "symmetry": {
+      "status": "resolved",
+      "value": {
+        "space_group_symbol": "Fd-3m",
+        "space_group_number": 227,
+        "crystal_system": "cubic"
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "is_metal": {
+      "status": "resolved",
+      "value": "non_metal",
+      "source": "ml",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "is_magnetic": {
+      "status": "resolved",
+      "value": "non_magnetic",
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "needs_soc": {
+      "status": "resolved",
+      "value": false,
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "needs_correlation": {
+      "status": "resolved",
+      "value": false,
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "functional": {
+      "status": "resolved",
+      "value": "PBEsol",
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "pseudo_table": {
+      "status": "resolved",
+      "value": {
+        "id": "pseudodojo-pbesol-efficiency-sr",
+        "provider": "pseudodojo",
+        "upstream_table": "nc-sr-04_pbesol_standard",
+        "version": "0.4",
+        "functional": "PBEsol",
+        "relativistic": "scalar",
+        "accuracy": "efficiency",
+        "licence": "CC-BY-4.0",
+        "citation": "van Setten et al., Comput. Phys. Commun. 226, 39 (2018)",
+        "elements": [
+          "Ag",
+          "Al",
+          "Ar",
+          "As",
+          "Au",
+          "B",
+          "Ba",
+          "Be",
+          "Bi",
+          "Br",
+          "C",
+          "Ca",
+          "Cd",
+          "Cl",
+          "Co",
+          "Cr",
+          "Cs",
+          "Cu",
+          "F",
+          "Fe",
+          "Ga",
+          "Ge",
+          "H",
+          "He",
+          "Hf",
+          "Hg",
+          "I",
+          "In",
+          "Ir",
+          "K",
+          "Kr",
+          "La",
+          "Li",
+          "Lu",
+          "Mg",
+          "Mn",
+          "Mo",
+          "N",
+          "Na",
+          "Nb",
+          "Ne",
+          "Ni",
+          "O",
+          "Os",
+          "P",
+          "Pb",
+          "Pd",
+          "Po",
+          "Pt",
+          "Rb",
+          "Re",
+          "Rh",
+          "Rn",
+          "Ru",
+          "S",
+          "Sb",
+          "Sc",
+          "Se",
+          "Si",
+          "Sn",
+          "Sr",
+          "Ta",
+          "Tc",
+          "Te",
+          "Ti",
+          "Tl",
+          "V",
+          "W",
+          "Xe",
+          "Y",
+          "Zn",
+          "Zr"
+        ],
+        "asset": {
+          "id": "pseudopotentials/pseudodojo-pbesol-efficiency-sr",
+          "version": "0.4",
+          "files": [
+            {
+              "role": "pseudopotentials",
+              "path": "source/upf.tgz",
+              "url": "https://www.pseudo-dojo.org/pseudos/nc-sr-04_pbesol_standard_upf.tgz",
+              "checksum": "sha256:6e6af9f7ba82d95f8381760780c056b07bdedf7d4c33c1857c97613399ae3c55",
+              "size": 5201271
+            },
+            {
+              "role": "metadata",
+              "path": "source/djrepo.tgz",
+              "url": "https://www.pseudo-dojo.org/pseudos/nc-sr-04_pbesol_standard_djrepo.tgz",
+              "checksum": "sha256:a275c5ef6e1d32852cd9f1d4bc746708763e18cbd2a1aa3d1ed9b0b5e62e9b1c",
+              "size": 8951
+            }
+          ],
+          "preparation_revision": "2"
+        },
+        "charge_density_dual": 4,
+        "default": true,
+        "frozen_4f_core": false,
+        "note": "The default. Covers everything except lanthanides beyond La and Lu, and all actinides.",
+        "record": null
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "pseudopotentials": {
+      "status": "resolved",
+      "value": [
+        {
+          "filepath": "/Users/junwenyin/.local/share/goldilocks/assets/pseudopotentials/pseudodojo-pbesol-efficiency-sr/0.4/pseudos/Si.upf",
+          "filename": "Si.upf",
+          "header_format": "attr",
+          "provider": "pseudodojo",
+          "accuracy": "efficiency",
+          "element": "Si",
+          "pseudo_type": "NC",
+          "functional": "PBEsol",
+          "relativistic": "scalar",
+          "z_valence": 4,
+          "table_id": "pseudopotentials/pseudodojo-pbesol-efficiency-sr",
+          "cutoffs": {
+            "ecutwfc_ry": 48,
+            "ecutrho_ry": 192
+          },
+          "source_identifier": "Si.upf",
+          "content_sha256": null,
+          "content_size_bytes": null,
+          "frozen_4f_core": false,
+          "pseudo_info": {
+            "table_version": "0.4",
+            "table_relativistic": "scalar",
+            "licence": "CC-BY-4.0",
+            "citation": "van Setten et al., Comput. Phys. Commun. 226, 39 (2018)",
+            "upf_relativistic": "scalar"
+          },
+          "warnings": []
+        }
+      ],
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "relativistic": {
+      "status": "resolved",
+      "value": "scalar",
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "magnetic": {
+      "status": "resolved",
+      "value": {
+        "spin_polarized": false,
+        "magnetic_elements": [],
+        "starting_magnetization": null,
+        "tot_magnetization": null,
+        "spin_orbit_enabled": false,
+        "angle1": null,
+        "angle2": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "symmetry_eff": {
+      "status": "resolved",
+      "value": {
+        "space_group_symbol": "Fd-3m",
+        "space_group_number": 227,
+        "crystal_system": "cubic"
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "cutoffs": {
+      "status": "resolved",
+      "value": {
+        "ecutwfc_ry": 48,
+        "ecutrho_ry": 192,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "electron_count": {
+      "status": "resolved",
+      "value": {
+        "nelec": 32
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "vdw": {
+      "status": "resolved",
+      "value": {
+        "use_vdw": false,
+        "method": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "boundary": {
+      "status": "resolved",
+      "value": {
+        "assume_isolated": "none",
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "hubbard": {
+      "status": "resolved",
+      "value": {
+        "plan": "not_needed",
+        "u_by_element": {},
+        "calibration_requests": [],
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "occupations": {
+      "status": "resolved",
+      "value": {
+        "occupations": "fixed",
+        "smearing_type": null,
+        "degauss": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "k_sampling": {
+      "status": "resolved",
+      "value": {
+        "mesh": [
+          6,
+          6,
+          6
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "k_distance": 0.21687062084674835,
+        "warnings": [],
+        "k_index": 6,
+        "k_distance_interval": [
+          0.19281855,
+          0.23138226
+        ]
+      },
+      "source": "ml",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "n_irr_k": {
+      "status": "resolved",
+      "value": 20,
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "nbnd": {
+      "status": "resolved",
+      "value": {
+        "nbnd": 16,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "convergence": {
+      "status": "resolved",
+      "value": {
+        "conv_thr": 1.6e-9,
+        "etot_conv_thr": 0.00008,
+        "mixing_beta": 0.4,
+        "electron_maxstep": 80,
+        "mixing_mode": "plain",
+        "mixing_fixed_ns": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "field_sources": {
+        "conv_thr": "heuristic",
+        "etot_conv_thr": "heuristic",
+        "mixing_beta": "heuristic",
+        "electron_maxstep": "heuristic",
+        "mixing_mode": "heuristic",
+        "mixing_fixed_ns": "heuristic"
+      },
+      "reason": null,
+      "blocked_by": null
+    },
+    "job": {
+      "status": "resolved",
+      "value": {
+        "partition": "scarf",
+        "nodes": 1,
+        "ntasks": 64,
+        "ntasks_per_node": 64,
+        "walltime_h": 168,
+        "max_seconds": 574560,
+        "account": null,
+        "warnings": [
+          {
+            "code": "job.walltime_defaulted",
+            "level": "warning",
+            "category": "job",
+            "message": "walltime not specified; requesting partition 'scarf''s ceiling (168h). This slows queueing -- schedulers favour short jobs -- but guessing short risks the job being killed before it finishes, wasting the entire run. If you know roughly how long this will take, set walltime_h explicitly."
+          }
+        ]
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    },
+    "parallelisation": {
+      "status": "resolved",
+      "value": {
+        "npool": 16,
+        "ndiag": 4,
+        "nimage": null,
+        "warnings": [
+          {
+            "code": "parallelisation.npool_load_imbalance",
+            "level": "info",
+            "category": "parallelisation",
+            "message": "npool=16 divides ntasks but not n_reduced_kpoints (20) evenly; some pools will handle one more k-point than others."
+          }
+        ]
+      },
+      "source": "heuristic",
+      "field_sources": null,
+      "reason": null,
+      "blocked_by": null
+    }
+  },
+  "warnings": [
+    {
+      "code": "job.walltime_defaulted",
+      "level": "warning",
+      "category": "job",
+      "message": "walltime not specified; requesting partition 'scarf''s ceiling (168h). This slows queueing -- schedulers favour short jobs -- but guessing short risks the job being killed before it finishes, wasting the entire run. If you know roughly how long this will take, set walltime_h explicitly."
+    },
+    {
+      "code": "parallelisation.npool_load_imbalance",
+      "level": "info",
+      "category": "parallelisation",
+      "message": "npool=16 divides ntasks but not n_reduced_kpoints (20) evenly; some pools will handle one more k-point than others."
+    }
+  ]
+}

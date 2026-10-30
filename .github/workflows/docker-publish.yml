@@ -45,6 +45,8 @@ jobs:
       - working-directory: app
         run: npm run typecheck
       - working-directory: app
+        run: npm run test
+      - working-directory: app
         run: npm run build
 
   docker:
