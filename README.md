@@ -338,7 +338,7 @@ embedded panel.
 
 ```bash
 uv run poe check     # lint + backend test suite
-uv run poe web-check  # lint + build the frontend
+uv run poe web-check  # lint + type-check + build the frontend
 ```
 
 Tests that need real credentials/local services are marked `integration`

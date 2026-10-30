@@ -9,6 +9,7 @@
     "build:stfc-cloud-public": "vite build --mode stfc-cloud-public",
     "build:stfc-cloud-internal": "vite build --mode stfc-cloud-internal",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p .",
     "preview": "vite preview"
   },
   "dependencies": {

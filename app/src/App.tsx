@@ -90,7 +90,8 @@ export interface Session {
 // priority (2026-09-15): Claude > OpenAI > Gemini > Ollama (local) >
 // Goldilocks LLM. `selectedModel`'s default (`MODEL_GROUPS[0].items[0]`)
 // falls straight out of this ordering -- Claude is the default engine.
-const MODEL_GROUPS = [
+type ModelOption = { id: string; label: string; desc: string; tag: string; disabled?: boolean };
+const MODEL_GROUPS: { group: string; items: ModelOption[] }[] = [
   {
     group: "Cloud (requires API key in Settings)",
     items: [
