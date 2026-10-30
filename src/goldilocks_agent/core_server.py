@@ -14,8 +14,8 @@ Two ways to source goldilocks-core, checked in this order:
 2. Otherwise, if ``read_core_autostart_enabled()`` -- everyone else: runs
    the real published PyPI package directly, no checkout needed at all
    (``uvx --from goldilocks-core[http]==<release> goldilocks serve http``,
-   2026-09-24; pinned to one release since 2026-10-26, see
-   `CORE_PYPI_REQUIREMENT`).
+   2026-09-24; pinned to `core_pin.json`'s release since 2026-10-26, see
+   `CORE_PIN`).
 
 Either way this is a real, separate OS process, deliberately never an
 in-process import: goldilocks-agent treats goldilocks-core as an external
@@ -52,10 +52,12 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import json
 import logging
 import os
 import shlex
 import subprocess
+from importlib import resources
 
 import httpx
 
@@ -82,14 +84,20 @@ _MMACE_FORK_SPEC = (
     "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
 )
 
-# PyPI mode's exact core release -- the same one the Dockerfile clones, and
-# whose vocabulary the vendored `goldilocks-workbench` tarball speaks. Never
-# unpinned: the tarball's `HttpCoreClient` refuses any core whose
-# `/capabilities` reports a different `vocabulary_version` (core moved it
-# from "1" to "2" in junwen94/goldilocks-core bde3628), so a bare
-# `goldilocks-core[http]` would break DFT Workbench for every fresh install
-# the moment a newer core release reaches PyPI.
-CORE_PYPI_REQUIREMENT = "goldilocks-core[http]==0.1.1"
+# The one goldilocks-core release this build runs (`core_pin.json`): the
+# Dockerfile fetches its `commit`, PyPI mode installs its `version`, and the
+# vendored `goldilocks-workbench` tarball must speak its
+# `vocabulary_version` -- the tarball's `HttpCoreClient` refuses any core
+# whose `/capabilities` reports a different one (core moved it from "1" to
+# "2" in junwen94/goldilocks-core bde3628), so these can only move together.
+# `tests/test_core_pin.py` checks every site against this file.
+CORE_PIN: dict = json.loads(
+    resources.files("goldilocks_agent").joinpath("core_pin.json").read_text("utf-8")
+)
+
+# Never a bare `goldilocks-core[http]`: that would pick up whatever release
+# is newest on PyPI and break DFT Workbench for every fresh install.
+CORE_PYPI_REQUIREMENT = f"goldilocks-core[http]=={CORE_PIN['version']}"
 
 # Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000). Not
 # user-configurable: this is goldilocks-core's own hardcoded default

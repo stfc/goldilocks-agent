@@ -34,9 +34,9 @@ def test_pypi_mode_unaffected_by_mmace_setting(monkeypatch) -> None:
     assert core_server._spawn_command(None) == [
         "uvx",
         "--from",
-        # Exact release, never bare: the vendored Workbench tarball refuses a
-        # core whose vocabulary_version differs from the one it was built for.
-        "goldilocks-core[http]==0.1.1",
+        # Exact release from core_pin.json, never bare (tests/test_core_pin.py
+        # checks the version itself).
+        core_server.CORE_PYPI_REQUIREMENT,
         "goldilocks",
         "serve",
         "http",

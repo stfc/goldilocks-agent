@@ -70,6 +70,27 @@ RUN git clone --recursive --depth 1 https://github.com/msg-byu/enumlib.git /tmp/
     && chmod +x /usr/local/bin/makeStr.py \
     && rm -rf /tmp/enumlib
 
+# goldilocks-core's *source* only (a few MB) -- the default DFT Workbench
+# backend (docker-compose.yml's GOLDILOCKS_CORE_PATH) for anyone using this
+# image, not just mMACE users, since checkout mode is what mMACE requires
+# and is a strict superset of the PyPI/uvx autostart path otherwise. The
+# commit comes from core_pin.json, the one place this build names a core
+# version (tests/test_core_pin.py checks the vendored Workbench tarball and
+# PyPI mode against it). Fetched by commit -- `git clone --branch` can't
+# take a SHA -- and asserted afterwards; copied and fetched ahead of the
+# agent's own source so editing src/ doesn't refetch core. Its own deps
+# (torch et al.) are deliberately NOT installed here -- see core_server.py's
+# lazy `--extra http` sync, same "first real use pays the cost" pattern as
+# mlip-cli/.venv below.
+COPY src/goldilocks_agent/core_pin.json /tmp/core_pin.json
+RUN set -eu \
+    && set -- $(python3 -c 'import json, sys; pin = json.load(open(sys.argv[1])); print(pin["repository"], pin["commit"])' /tmp/core_pin.json) \
+    && git init -q /opt/goldilocks-core \
+    && git -C /opt/goldilocks-core fetch -q --depth 1 "$1" "$2" \
+    && git -C /opt/goldilocks-core checkout -q --detach FETCH_HEAD \
+    && test "$(git -C /opt/goldilocks-core rev-parse HEAD)" = "$2" \
+    && rm /tmp/core_pin.json
+
 # `mlip-cli/` must stay a sibling of `src/` -- config.py's mlip_cli_path()
 # resolves it relative to the installed package's own file location, not cwd.
 COPY pyproject.toml uv.lock ./
@@ -79,21 +100,6 @@ COPY mlip-cli/ ./mlip-cli/
 RUN uv sync --locked --no-group dev
 
 COPY --from=frontend-build /app/app/dist ./app/dist
-
-# goldilocks-core's *source* only (a few MB) -- the default DFT Workbench
-# backend (docker-compose.yml's GOLDILOCKS_CORE_PATH) for anyone using this
-# image, not just mMACE users, since checkout mode is what mMACE requires
-# and is a strict superset of the PyPI/uvx autostart path otherwise. Pinned
-# to v0.1.1: verified 2026-09-25 as the newest tag on the real
-# stfc/goldilocks-core remote that both matches a real PyPI release
-# (pyproject.toml's own version = "0.1.1") and already has full
-# magnetism/mMACE support (is_magnetic.py/magnetic_ordering_ml.py present,
-# goldilocks-ml==0.2.3 pinned) -- one trivial, frontend-only commit behind
-# the v2 branch tip. Its own deps (torch et al.) are deliberately NOT
-# installed here -- see core_server.py's lazy `--extra http` sync, same
-# "first real use pays the cost" pattern as mlip-cli/.venv below.
-RUN git clone --branch v0.1.1 --depth 1 \
-    https://github.com/stfc/goldilocks-core.git /opt/goldilocks-core
 
 # Pre-create the mount points for the mlip_cli_venv/goldilocks_core_venv
 # volumes (compose service `agent`) with the right ownership before they
