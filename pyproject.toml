@@ -41,8 +41,8 @@ dependencies = [
 goldilocks-agent = "goldilocks_agent.cli:main"
 
 [tool.poe.tasks.fmt]
-help = "Format src and tests with ruff"
-cmd = "ruff format src tests"
+help = "Format src, tests and scripts with ruff"
+cmd = "ruff format src tests scripts"
 
 [tool.poe.tasks.serve]
 help = "Run the agent's local HTTP/SSE server on :8080 (127.0.0.1 only)"
@@ -55,8 +55,8 @@ cmd = "python -c \"import asyncio; from goldilocks_agent.tools.structure_search.
 [tool.poe.tasks.lint]
 help = "Check style, matching the CI gate"
 sequence = [
-    { cmd = "ruff check src tests" },
-    { cmd = "ruff format --check src tests" },
+    { cmd = "ruff check src tests scripts" },
+    { cmd = "ruff format --check src tests scripts" },
 ]
 
 [tool.poe.tasks.test]
@@ -73,6 +73,10 @@ sequence = [
 [tool.poe.tasks.web-check]
 help = "Lint, type-check, test and build the agent frontend"
 shell = "cd app && npm run lint && npm run typecheck && npm run test && npm run build"
+
+[tool.poe.tasks.bump-core]
+help = "Pin a goldilocks-core release tag everywhere: rebuild the vendored Workbench, rewrite core_pin.json (needs Node >= 24)"
+cmd = "python scripts/bump_core.py"
 
 [tool.poe.tasks.docs]
 help = "Serve the docs site locally with live reload"

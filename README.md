@@ -305,11 +305,15 @@ goldilocks-core's own HTTP backend on `http://127.0.0.1:8000` for it to
 talk to (see Configuration above) -- you'll briefly see a "starting up..."
 state while that happens, or a clear error if neither
 `GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The package is
-currently a vendored tarball in `app/vendor/` (rebuilt from core's `web/`
-via `npm run build:lib && npm pack`) rather than a registry package.
-`src/goldilocks_agent/core_pin.json` records it, its sha256, and the core
-release the backend runs; `tests/test_core_pin.py` fails until all of
-them agree, so a rebuilt tarball means updating the pin too.
+currently a vendored tarball in `app/vendor/` rather than a registry
+package. `src/goldilocks_agent/core_pin.json` records it, its sha256, and
+the core release the backend runs; `tests/test_core_pin.py` fails until all
+of them agree. To move to a new core release, run `uv run poe bump-core
+vX.Y.Z` (Node >= 24 on `PATH`): it builds the tarball from that tag and
+rewrites the pin. Then re-record the DFT Workbench test fixtures against a
+core of that release (`node scripts/record-core-fixtures.mjs` in `app/`,
+see its header) -- the vendored client refuses responses from any other
+vocabulary.
 
 ## Usage
 

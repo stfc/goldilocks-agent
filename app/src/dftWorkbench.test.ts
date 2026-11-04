@@ -5,17 +5,19 @@
 // from any other vocabulary than its own, so bumping the tarball without
 // re-recording them fails here rather than in the browser.
 
-import { HttpCoreClient, createWorkspace } from "goldilocks-workbench";
+import { HttpCoreClient, createWorkspace, currentArchive } from "goldilocks-workbench";
 import { describe, expect, it, vi } from "vitest";
 import capabilities from "./__fixtures__/core/capabilities.json";
+import blockedExplanation from "./__fixtures__/core/explain-blocked.json";
 import explanation from "./__fixtures__/core/explain.json";
 import inspection from "./__fixtures__/core/inspect.json";
 import structure from "./__fixtures__/core/structure.json";
 import {
   dispatchDftTool,
-  downloadDftBundle,
+  keepBundle,
   restorableDraftPatch,
   restoreDftWorkspace,
+  saveBundle,
 } from "./dftWorkbench";
 
 type Route = (body: any) => Response;
@@ -23,8 +25,11 @@ type Route = (body: any) => Response;
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const refusal = (status: number, kind: string, message: string) =>
-  json(status, { error: { kind, message, details: {} } });
+const refusal = (status: number, kind: string, message: string, details = {}) =>
+  json(status, { error: { kind, message, details } });
+
+const archive = () =>
+  new Response(new Blob(["PK fake archive"]), { status: 200, headers: { "content-type": "application/zip" } });
 
 // A fake core serving the recorded responses (plus any per-test override);
 // any other request fails the test loudly.
@@ -33,10 +38,7 @@ function fakeCore(overrides: Record<string, Route> = {}) {
     "GET /capabilities": () => json(200, capabilities),
     "POST /inspect": () => json(200, inspection),
     "POST /explain": () => json(200, explanation),
-    "POST /run": (body) =>
-      body.respond_with === "archive"
-        ? new Response(new Blob(["PK fake archive"]), { status: 200, headers: { "content-type": "application/zip" } })
-        : json(200, {}),
+    "POST /run": (body) => (body.respond_with === "archive" ? archive() : json(200, {})),
     ...overrides,
   };
   const requests: { method: string; path: string; body: any }[] = [];
@@ -51,7 +53,8 @@ function fakeCore(overrides: Record<string, Route> = {}) {
   }) as typeof fetch;
   const saved: { filename: string }[] = [];
   const workspace = createWorkspace(new HttpCoreClient("", fetcher), (archive) => saved.push(archive));
-  return { workspace, requests, saved };
+  const paths = () => requests.map((r) => `${r.method} ${r.path}`);
+  return { workspace, requests, paths, saved };
 }
 
 const coreUp = async () => null;
@@ -68,50 +71,169 @@ describe("dispatchDftTool", () => {
     expect(requests).toEqual([]);
   });
 
-  it("dft_open_structure returns core's inspection of the structure", async () => {
-    const { workspace, requests } = fakeCore();
+  it("names a core whose vocabulary the vendored Workbench can't speak", async () => {
+    const { workspace } = fakeCore({
+      "GET /capabilities": () => json(200, { ...capabilities, vocabulary_version: "0" }),
+    });
     const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    expect(outcome).toEqual({ result: inspection });
-    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /capabilities", "POST /inspect"]);
+    expect(outcome).toEqual({ error: expect.stringMatching(/^incompatible_vocabulary: /) });
+  });
+
+  it("dft_open_structure summarizes the structure and the calculation it opened into", async () => {
+    const { workspace, requests, paths } = fakeCore();
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    expect(outcome).toEqual({
+      result: {
+        structure: {
+          formula: "Si8",
+          reduced_formula: "Si",
+          site_count: 8,
+          periodicity: [true, true, true],
+          lattice: expect.objectContaining({ lengths_angstrom: [5.431, 5.431, 5.431] }),
+          partially_occupied_sites: 0,
+        },
+        calculation: {
+          code: capabilities.codes[0].id, task: capabilities.tasks[0].id, hpc: null, overrides: {},
+        },
+        cleared_overrides: [],
+        // New core tasks reach the model from core's own capabilities.
+        tasks_available: capabilities.tasks.map((task) => task.id),
+      },
+    });
+    expect(paths()).toEqual(["GET /capabilities", "POST /inspect"]);
     // Format inferred from the name when the model leaves it out.
     expect(requests[1].body).toMatchObject({ structure_name: "Si.cif", structure_format: "cif" });
   });
 
-  it("a structure core refuses becomes the tool's error", async () => {
+  it("a structure core refuses becomes the tool's error, and the open one stays open", async () => {
+    let refuse = false;
     const { workspace } = fakeCore({
-      "POST /inspect": () => refusal(422, "invalid_structure", "cannot parse the CIF"),
+      "POST /inspect": () =>
+        refuse ? refusal(422, "invalid_structure", "cannot parse the CIF") : json(200, inspection),
     });
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    const open = workspace.getSnapshot().structureInput;
+    refuse = true;
+
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", {
+      structure_content: "not a structure", structure_name: "broken.cif",
+    });
+
     expect(outcome).toEqual({ error: "invalid_structure: cannot parse the CIF" });
+    expect(workspace.getSnapshot().structureInput).toBe(open);
   });
 
-  it("dft_review needs an open structure, then returns core's explanation", async () => {
-    const { workspace, requests } = fakeCore();
+  it("dft_review needs an open structure, then returns the records without their provenance", async () => {
+    const { workspace, paths } = fakeCore();
     expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
       error: expect.stringContaining("call dft_open_structure first"),
     });
 
     await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {}) as { result: any };
+
+    expect(paths().at(-1)).toBe("POST /explain");
+    const { records, warnings, blocking, calculation } = outcome.result;
+    expect(Object.keys(records)).toEqual(Object.keys(explanation.records));
+    expect(records.cutoffs).toEqual({
+      value: explanation.records.cutoffs.value, source: explanation.records.cutoffs.source,
+    });
+    expect(warnings).toHaveLength(explanation.warnings.length);
+    expect(blocking).toEqual([]);
+    expect(calculation.task).toBe(capabilities.tasks[0].id);
+  });
+
+  it("dft_review passes a blocking verdict on with its remedies", async () => {
+    const { workspace } = fakeCore({ "POST /explain": () => json(200, blockedExplanation) });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {}) as { result: any };
+
+    const [finding] = blockedExplanation.blocking;
+    expect(outcome.result.blocking).toEqual([
+      { summary: finding.summary, fields: finding.fields, remedies: finding.remedies },
+    ]);
+  });
+
+  it("dft_review sends a failed review again when it is called again", async () => {
+    // A failure stays its draft's outcome; without a retry the second call
+    // would only read the first one's failure back.
+    let fail = true;
+    const { workspace, paths } = fakeCore({
+      "POST /explain": () => (fail ? refusal(500, "internal_error", "boom") : json(200, explanation)),
+    });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
+      error: expect.stringContaining("internal_error: boom (goldilocks-core failed internally"),
+    });
+    fail = false;
     const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {});
 
-    expect(outcome).toEqual({ result: explanation });
-    expect(requests.at(-1)).toMatchObject({ method: "POST", path: "/explain" });
+    expect(outcome).toHaveProperty("result");
+    expect(paths().filter((path) => path === "POST /explain")).toHaveLength(2);
+  });
+
+  it("doesn't send a refusal of the draft again, which would come back the same", async () => {
+    const { workspace, paths } = fakeCore({
+      "POST /explain": () => refusal(422, "invalid_setting", "ecutwfc_ry must be positive"),
+    });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const first = await dispatchDftTool(workspace, coreUp, "dft_review", {});
+    const second = await dispatchDftTool(workspace, coreUp, "dft_review", {});
+
+    expect(second).toEqual(first);
+    expect(first).toEqual({ error: "invalid_setting: ecutwfc_ry must be positive" });
+    expect(paths().filter((path) => path === "POST /explain")).toHaveLength(1);
+  });
+
+  it("says how to reinstall core's assets when one is missing", async () => {
+    const { workspace } = fakeCore({
+      "POST /explain": () => refusal(424, "asset_not_installed", "pseudopotential table not installed"),
+    });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
+      error: expect.stringContaining("`goldilocks assets install workbench` reinstalls them"),
+    });
   });
 
   it("dft_download_bundle generates the archive but leaves saving it to a click", async () => {
-    const { workspace, saved } = fakeCore();
+    const { workspace, saved, requests } = fakeCore();
     await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    expect(await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {})).toEqual({
-      error: expect.stringContaining("call dft_review first"),
-    });
 
-    await dispatchDftTool(workspace, coreUp, "dft_review", {});
     const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
 
     expect(outcome).toMatchObject({ result: { filename: archiveName } });
+    expect(requests.at(-1)).toMatchObject({ path: "/run", body: { respond_with: "archive" } });
     // Browsers drop a save outside a direct user gesture, so the tool never
     // attempts one.
     expect(saved).toEqual([]);
+  });
+
+  it("dft_download_bundle refuses a blocked draft with the decision it needs", async () => {
+    const { workspace, paths } = fakeCore({ "POST /explain": () => json(200, blockedExplanation) });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+
+    const [finding] = blockedExplanation.blocking;
+    expect(outcome).toEqual({ error: expect.stringContaining(finding.summary) });
+    expect(outcome).toEqual({ error: expect.stringContaining('{"isolation":"periodic"}') });
+    expect(paths()).not.toContain("POST /run");
+  });
+
+  it("dft_download_bundle lists the findings of a refused generation", async () => {
+    const [finding] = blockedExplanation.blocking;
+    const { workspace } = fakeCore({
+      "POST /run": () => refusal(422, "advice_incomplete", "cannot generate", { findings: [finding] }),
+    });
+    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+
+    expect(outcome).toEqual({ error: expect.stringMatching(/^advice_incomplete: .*resolved by setting/) });
   });
 
   it("names an unknown tool instead of guessing", async () => {
@@ -122,43 +244,32 @@ describe("dispatchDftTool", () => {
   });
 });
 
-describe("downloadDftBundle", () => {
-  it("says why nothing can be saved, and saves the generated archive otherwise", async () => {
-    const { workspace, saved } = fakeCore();
-    expect(downloadDftBundle(workspace)).toMatch(/^Nothing to download yet/);
-
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    await dispatchDftTool(workspace, coreUp, "dft_review", {});
-    await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
-
-    expect(downloadDftBundle(workspace)).toBeNull();
-    await vi.waitFor(() => expect(saved).toHaveLength(1));
-    expect(saved[0].filename).toBe(archiveName);
-  });
-
-  it("says the bundle is still being prepared while core works on it", async () => {
-    const { workspace } = fakeCore({ "POST /explain": () => new Promise<Response>(() => {}) as any });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    void workspace.dispatch({ type: "review.compute" });
-
-    expect(downloadDftBundle(workspace)).toMatch(/still preparing/);
-  });
-
-  it("says there is nothing to save when the review failed", async () => {
-    const { workspace } = fakeCore({ "POST /explain": () => refusal(500, "internal", "boom") });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    await dispatchDftTool(workspace, coreUp, "dft_review", {});
-
-    expect(downloadDftBundle(workspace)).toMatch(/^There is no bundle to save right now/);
-  });
-
-  it("says the bundle is stale once the settings change", async () => {
+describe("keepBundle and saveBundle", () => {
+  it("save the archive the tool produced, even after the settings change", async () => {
     const { workspace } = fakeCore();
     await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    await dispatchDftTool(workspace, coreUp, "dft_review", {});
-    await workspace.dispatch({ type: "draft.patch", overrides: { ecutwfc_ry: 60 } });
+    await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+    const id = keepBundle(workspace);
+    expect(id).not.toBeNull();
 
-    expect(downloadDftBundle(workspace)).toMatch(/^The settings changed/);
+    await workspace.dispatch({ type: "draft.patch", overrides: { ecutwfc_ry: 60 } });
+    expect(currentArchive(workspace.getSnapshot())).toBeNull();
+
+    const save = vi.fn();
+    expect(saveBundle(id!, save)).toBeNull();
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ filename: archiveName }));
+  });
+
+  it("keep nothing without a current archive", () => {
+    const { workspace } = fakeCore();
+    expect(keepBundle(workspace)).toBeNull();
+  });
+
+  it("say why a card from before a reload has nothing to save", () => {
+    const save = vi.fn();
+    expect(saveBundle(undefined, save)).toMatch(/before the page was reloaded/);
+    expect(saveBundle("unknown-id", save)).toMatch(/before the page was reloaded/);
+    expect(save).not.toHaveBeenCalled();
   });
 });
 
@@ -188,7 +299,7 @@ describe("restorableDraftPatch", () => {
     // `draft.patch` applies any key that is present, so `task: undefined`
     // would blank the task instead of keeping core's default.
     const patch = restorableDraftPatch(
-      { vocabulary: capabilities.vocabulary_version, draft: { ...draft, task: "band", hpc: "archer2" } },
+      { vocabulary: capabilities.vocabulary_version, draft: { ...draft, task: "md", hpc: "archer2" } },
       capabilities,
     );
     expect(patch).not.toHaveProperty("task");
@@ -227,7 +338,7 @@ describe("restoreDftWorkspace", () => {
     expect(requests.find((r) => r.path === "/explain")?.body).toMatchObject({
       task: "relax", hpc: "scarf", overrides: { ecutwfc_ry: 60 },
     });
-    expect(workspace.getSnapshot().lastDownload?.filename).toBe("Si.cif-relax.zip");
+    expect(currentArchive(workspace.getSnapshot())?.filename).toBe("Si.cif-relax.zip");
     expect(forget).not.toHaveBeenCalled();
   });
 
@@ -252,24 +363,24 @@ describe("restoreDftWorkspace", () => {
     expect(forget).not.toHaveBeenCalled();
   });
 
-  it("forgets a structure core rejects for good", async () => {
+  it.each(["invalid_structure", "invalid_request"])("forgets a structure core refuses (%s)", async (kind) => {
     const { workspace } = fakeCore({
-      "POST /inspect": () => refusal(422, "invalid_structure", "cannot parse the CIF"),
+      "POST /inspect": () => refusal(422, kind, "cannot use this input"),
     });
     const forget = vi.fn();
     expect(await restoreDftWorkspace(workspace, savedState(), coreUp, forget)).toBe("forgotten");
     expect(forget).toHaveBeenCalledOnce();
   });
 
-  it("keeps the saved state after a transient failure, without a Retry banner", async () => {
+  it("keeps the saved state after any other failure, without a Retry banner", async () => {
     // Retry would reopen the structure with default settings, which the save
     // listener would write over the saved ones.
     const { workspace } = fakeCore({
-      "POST /inspect": () => refusal(502, "core_unavailable", "still starting"),
+      "POST /inspect": () => refusal(503, "core_unavailable", "still starting"),
     });
     const forget = vi.fn();
     expect(await restoreDftWorkspace(workspace, savedState(), coreUp, forget)).toBe("kept");
     expect(forget).not.toHaveBeenCalled();
-    expect(workspace.getSnapshot().failure).toBeNull();
+    expect(workspace.getSnapshot().inspectFailure).toBeNull();
   });
 });
