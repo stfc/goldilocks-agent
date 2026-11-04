@@ -1,14 +1,13 @@
-"""`core_server.py`'s spawn-command construction (2026-09-25: `--extra http`
-fix plus mMACE's lazy setup, see its own module docstring). Pure Python,
-no subprocess/network -- asserting on the *constructed command*, not real
-execution, same "which tool/args, not what happens" philosophy the rest of
-this test suite already follows for confirmation-gated tools.
+"""`core_server.py`'s spawn-command construction and bring-up state. Pure
+Python, no subprocess/network -- asserting on the *constructed command* and
+reported state, not real execution, same "which tool/args, not what happens"
+philosophy the rest of this test suite already follows for
+confirmation-gated tools.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import shlex
 import time
@@ -17,7 +16,6 @@ import httpx
 import pytest
 
 from goldilocks_agent import core_server
-from goldilocks_agent.config import mmace_checkpoint_path, read_mmace_enabled
 
 
 def test_checkout_mode_always_requests_the_http_extra() -> None:
@@ -36,10 +34,7 @@ def test_checkout_mode_always_requests_the_http_extra() -> None:
     ]
 
 
-def test_pypi_mode_installs_assets_then_serves(monkeypatch) -> None:
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MMACE_ENABLED", "1")
-    # mMACE can only ever run in checkout mode -- no addressable, persistent
-    # venv exists in PyPI/uvx mode to install its fork into.
+def test_pypi_mode_installs_assets_then_serves() -> None:
     uvx = f"uvx --from {shlex.quote(core_server.CORE_PYPI_REQUIREMENT)} goldilocks"
     # Assets first, the way checkout mode's `poe serve` does: the Workbench
     # sends fetch_missing=false, so a machine without them gets HTTP 424.
@@ -51,74 +46,13 @@ def test_pypi_mode_installs_assets_then_serves(monkeypatch) -> None:
     ]
 
 
-def test_mmace_enabled_chains_setup_ahead_of_serve(monkeypatch) -> None:
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MMACE_ENABLED", "1")
-
-    command = core_server._spawn_command("/opt/goldilocks-core")
-
-    assert command[:2] == ["sh", "-c"]
-    script = command[2]
-    checkpoint = str(mmace_checkpoint_path())
-    venv_python = "/opt/goldilocks-core/.venv/bin/python"
-    # Explicit `--python <venv>/bin/python` on both `uv pip install` calls,
-    # not `--project <path>` or a bare `cd`/inherited `VIRTUAL_ENV` -- all
-    # three confirmed live 2026-09-25 to silently install into
-    # goldilocks-agent's own `.venv` instead (this whole command is itself
-    # a child of `poe serve`'s own `uv run`, and nothing short of naming the
-    # target interpreter directly wins against that nested context).
-    assert script.count(f"--python {venv_python}") == 2
-    assert "--project" not in script
-    # The checkpoint is fetched and verified in Python before the spawn
-    # (`_ensure_mmace_checkpoint()`), not by the shell chain.
-    assert checkpoint not in script
-    assert "curl" not in script
-    assert "ase==3.28.0 e3nn==0.4.4 sphericart==1.0.9 sphericart-torch==1.0.9" in script
-    assert (
-        "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git"
-        "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd" in script
-    )
-    # `.venv/bin/python` (the `--python` target above) doesn't exist at all
-    # on a brand-new volume until something creates it -- confirmed live
-    # 2026-09-25 (`error: No virtual environment ... found for path`) -- so
-    # an explicit `uv sync --directory ... --extra http` has to run first,
-    # not just rely on the final `uv run`'s own trailing sync to have
-    # created it already.
-    sync_call = "uv sync --directory /opt/goldilocks-core --extra http"
-    assert sync_call in script
-    # Ordering: sync (creates the venv) -> manual installs -> actual server
-    # start. An explicit `uv sync` wipes the manually-installed packages
-    # (verified live 2026-09-25), so they only survive by installing *after*
-    # this specific sync, not before it.
-    sync_idx = script.index(sync_call)
-    pip_install_idx = script.index("uv pip install")
-    serve_idx = script.index("uv run --directory")
-    assert sync_idx < pip_install_idx < serve_idx
-    assert script.rstrip().endswith(
-        "uv run --directory /opt/goldilocks-core --extra http poe serve"
-    )
-
-
-def test_read_mmace_enabled_env_var(monkeypatch) -> None:
-    monkeypatch.delenv("GOLDILOCKS_AGENT_MMACE_ENABLED", raising=False)
-    assert read_mmace_enabled() is False
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MMACE_ENABLED", "1")
-    assert read_mmace_enabled() is True
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MMACE_ENABLED", "0")
-    assert read_mmace_enabled() is False
-
-
-def test_mmace_checkpoint_path_is_home_relative() -> None:
-    path = mmace_checkpoint_path()
-    assert path.name == "mace_matpes_pbe_baseline_run-3.model"
-    assert ".local/share/goldilocks/mmace" in str(path)
-
-
-def test_spawn_sets_mace_backbone_env_for_checkout_mode(monkeypatch) -> None:
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MMACE_ENABLED", "1")
+def test_spawn_leaves_the_mace_backbone_to_core(monkeypatch) -> None:
+    # Core installs mMACE's backbone with its own assets; a
+    # GOLDILOCKS_MACE_BACKBONE set here would override that copy.
+    monkeypatch.delenv("GOLDILOCKS_MACE_BACKBONE", raising=False)
     captured = {}
 
     def fake_popen(command, **kwargs):
-        captured["command"] = command
         captured["env"] = kwargs["env"]
 
         class _FakeProcess:
@@ -130,7 +64,7 @@ def test_spawn_sets_mace_backbone_env_for_checkout_mode(monkeypatch) -> None:
 
     core_server._spawn("/opt/goldilocks-core")
 
-    assert captured["env"]["GOLDILOCKS_MACE_BACKBONE"] == str(mmace_checkpoint_path())
+    assert "GOLDILOCKS_MACE_BACKBONE" not in captured["env"]
 
 
 def test_spawned_core_output_is_forwarded_with_a_prefix(capsys) -> None:
@@ -147,69 +81,6 @@ def test_spawned_core_output_is_forwarded_with_a_prefix(capsys) -> None:
     assert core_server._with_last_output("core exited.") == (
         "core exited. Last output: ValueError: bad model"
     )
-
-
-@pytest.fixture
-def fake_checkpoint(tmp_path, monkeypatch):
-    """A small stand-in for the 84MB checkpoint: its own size/md5 constants
-    and a mock transport serving whatever bytes the test puts in `served`."""
-    payload = b"mace checkpoint bytes"
-    path = tmp_path / "mmace" / "model.model"
-    served = {"body": payload, "requests": 0}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        served["requests"] += 1
-        return httpx.Response(200, content=served["body"])
-
-    real_client = httpx.Client
-    monkeypatch.setattr(core_server, "mmace_checkpoint_path", lambda: path)
-    monkeypatch.setattr(core_server, "_MMACE_CHECKPOINT_SIZE", len(payload))
-    monkeypatch.setattr(
-        core_server, "_MMACE_CHECKPOINT_MD5", hashlib.md5(payload).hexdigest()
-    )
-    monkeypatch.setattr(
-        core_server.httpx,
-        "Client",
-        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
-    )
-    return path, payload, served
-
-
-def test_checkpoint_already_verified_is_not_downloaded_again(fake_checkpoint) -> None:
-    path, payload, served = fake_checkpoint
-    path.parent.mkdir(parents=True)
-    path.write_bytes(payload)
-
-    core_server._ensure_mmace_checkpoint()
-
-    assert served["requests"] == 0
-
-
-def test_truncated_checkpoint_is_replaced(fake_checkpoint) -> None:
-    # An interrupted first download used to leave a partial file that the
-    # old `[ -f ckpt ] || curl` chain then accepted forever.
-    path, payload, served = fake_checkpoint
-    path.parent.mkdir(parents=True)
-    path.write_bytes(payload[:5])
-
-    core_server._ensure_mmace_checkpoint()
-
-    assert served["requests"] == 1
-    assert path.read_bytes() == payload
-    assert not path.with_name(f"{path.name}.part").exists()
-
-
-def test_checkpoint_download_that_fails_verification_is_discarded(
-    fake_checkpoint,
-) -> None:
-    path, _, served = fake_checkpoint
-    served["body"] = b"<html>error page</html>"
-
-    with pytest.raises(core_server._CheckpointMismatch):
-        core_server._ensure_mmace_checkpoint()
-
-    assert not path.exists()
-    assert not path.with_name(f"{path.name}.part").exists()
 
 
 def _mark_ready_against(capabilities: httpx.Response, **kwargs) -> dict:
@@ -383,3 +254,56 @@ def test_a_crashed_start_is_reported_not_left_starting(configured) -> None:
     assert first["status"] == "starting"
     assert after_crash["status"] == "error"
     assert "RuntimeError('unexpected')" in after_crash["detail"]
+
+
+def test_a_hung_start_is_stopped_before_it_is_reported(monkeypatch) -> None:
+    # Left running, it would still hold port 8000 or its asset downloads when
+    # the retry spawns another.
+    class _Running:
+        returncode = None
+
+        def poll(self):
+            return None
+
+    async def nothing_answers(client):
+        return "none"
+
+    stopped = []
+    monkeypatch.setattr(core_server, "_health", nothing_answers)
+    monkeypatch.setattr(core_server, "_spawn", lambda core_path: _Running())
+    monkeypatch.setattr(core_server, "_process", None)  # restored afterwards
+    monkeypatch.setattr(core_server, "shutdown", lambda: stopped.append(True))
+    monkeypatch.setattr(core_server, "_STARTUP_TIMEOUT", 0.01)
+    monkeypatch.setattr(core_server, "_POLL_INTERVAL", 0.001)
+    monkeypatch.setattr(core_server, "_state", {})
+    core_server._recent_output.clear()
+    core_server._recent_output.append("Installing pseudopotentials/pseudodojo")
+
+    asyncio.run(core_server._bring_up("/opt/goldilocks-core"))
+
+    assert stopped == [True]
+    assert core_server._state["status"] == "error"
+    assert "so it was stopped" in core_server._state["detail"]
+    assert "Installing pseudopotentials/pseudodojo" in core_server._state["detail"]
+
+
+def test_starting_reports_cores_latest_output(monkeypatch, configured) -> None:
+    # A first start can take many minutes; the panel shows core's latest
+    # output instead of the last failure's detail.
+    async def bring_up(core_path):
+        await asyncio.sleep(1)
+
+    configured(bring_up, {"status": "idle", "base_url": None, "detail": "old error"})
+    core_server._recent_output.clear()
+
+    async def run():
+        first = core_server.ensure_running()
+        core_server._recent_output.extend(["Resolved 120 packages", "", ""])
+        second = core_server.ensure_running()
+        core_server._task.cancel()
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first == {"status": "starting", "base_url": None, "detail": None}
+    assert second["detail"] == "Resolved 120 packages"

@@ -31,18 +31,17 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 WORKDIR /app
 
 # None of `git`/`curl`/`build-essential`/`gfortran` are in the base slim
-# image -- all needed at *runtime*, not just here, by checkout mode's own
-# lazy `--extra http` sync (core_server.py's `_spawn_command()`), long
-# after this build finishes:
-# - `git`: mMACE's fork is a `uv pip install`ed git dependency
-#   (GOLDILOCKS_AGENT_MMACE_ENABLED).
+# image -- needed by this stage's own steps below or at *runtime*, by
+# checkout mode's lazy `--extra http` sync (core_server.py's
+# `_spawn_command()`), long after this build finishes:
+# - `git`: fetches the pinned goldilocks-core commit below.
 # - `curl`: core's own `poe serve` probes port 8000 with it before starting.
 # - `build-essential` (g++/gcc/make): goldilocks-ml's own `dscribe` dependency
 #   has no prebuilt wheel for every platform (confirmed missing on
-#   linux/arm64, 2026-09-25: `uv sync --extra http` alone -- nothing to do
-#   with mMACE -- fails with `error: [Errno 2] No such file or directory:
-#   'g++'` compiling dscribe's C++ extensions from source) -- required for
-#   plain checkout-mode DFT Workbench on such platforms, not just mMACE.
+#   linux/arm64, 2026-09-25: `uv sync --extra http` fails with `error:
+#   [Errno 2] No such file or directory: 'g++'` compiling dscribe's C++
+#   extensions from source) -- required for checkout-mode DFT Workbench on
+#   such platforms.
 # - `gfortran`: builds enumlib below (also used to install `libgfortran5`,
 #   the shared library enum.x links against at runtime -- apt pulls it in
 #   as gfortran's own dependency, no separate line needed).
@@ -105,9 +104,9 @@ COPY --from=frontend-build /app/app/dist ./app/dist
 # volumes (compose service `agent`) with the right ownership before they
 # exist -- Docker seeds a fresh named volume from whatever's already at
 # that path in the image, so an empty dir owned by `goldilocks` here means
-# the later lazy `uv sync`/`uv pip install` writes (janus-core[mace] for
-# MLIP Playground, goldilocks-core's own deps plus mMACE's manual packages
-# for DFT Workbench) aren't blocked by a root-owned auto-created mount point.
+# the later lazy `uv sync` writes (janus-core[mace] for MLIP Playground,
+# goldilocks-core's own deps for DFT Workbench) aren't blocked by a
+# root-owned auto-created mount point.
 RUN useradd --create-home --home-dir /home/goldilocks goldilocks \
     && mkdir -p /app/mlip-cli/.venv /opt/goldilocks-core/.venv \
     && chown -R goldilocks:goldilocks /app /opt/goldilocks-core

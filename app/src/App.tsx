@@ -1845,9 +1845,9 @@ function CoreWorkbenchTabs({
 }
 
 // How long the reload restore waits for goldilocks-core to come up: longer
-// than core_server.py's own startup cap (15 minutes with mMACE's first-time
-// setup), which reports an error itself when that runs out.
-const CORE_SERVER_RESTORE_WAIT_MS = 20 * 60 * 1000;
+// than core_server.py's own startup cap (`_STARTUP_TIMEOUT`, an hour), which
+// reports an error itself when that runs out.
+const CORE_SERVER_RESTORE_WAIT_MS = 65 * 60 * 1000;
 
 // A plain status message for whenever the embedded Workbench isn't safe to
 // mount yet (see the `/api/core-server/ensure` polling effect in App()) --
@@ -1861,14 +1861,15 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   if (status?.status === "error") {
     return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
   }
-  // (#3) The first-ever start downloads several hundred MB of models and
-  // pseudopotentials before goldilocks-core can even begin listening
-  // (core_server.py's `_STARTUP_TIMEOUT` budgets 3 minutes for that; a
-  // subsequent cold start with everything already cached is ~1s). This
-  // message can't tell which case it's in -- `/api/core-server/ensure`
-  // doesn't expose that -- so it names the slow case rather than implying
-  // every start takes this long.
-  return "Starting goldilocks-core's Workbench backend -- first-time setup downloads models and pseudopotentials and can take a few minutes (up to ~15 minutes if MLIP's mMACE model is enabled); it's fast on every start after that.";
+  // (#3) The first start -- ever, or after a core upgrade -- installs core's
+  // dependencies and downloads its models and pseudopotentials before
+  // goldilocks-core can begin listening, which has taken over 20 minutes on a
+  // slow link (core_server.py's `_STARTUP_TIMEOUT`); a start with everything
+  // in place takes seconds. While starting, `detail` is core's latest output
+  // line. It can sit on one line for minutes: `goldilocks assets install`
+  // prints nothing until every download has finished.
+  const progress = status?.status === "starting" && status.detail ? ` Latest goldilocks-core output: ${status.detail}` : "";
+  return `Starting goldilocks-core's Workbench backend -- the first start after installing or upgrading downloads core's models and pseudopotentials and can take many minutes; later starts take seconds.${progress}`;
 }
 
 // Only activatable Tools resolve -- a `comingSoon` id (e.g. from a chat
