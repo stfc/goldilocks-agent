@@ -52,7 +52,6 @@ services:
       # mlip_cli_venv lines below.
       # GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
-      GOLDILOCKS_AGENT_MMACE_ENABLED: "1"
     ports:
       # Direct STFC-internal access (2026-09-29, same pattern as
       # goldilocks-core-DFTworkbench-stable's :8000) -- interim mode while

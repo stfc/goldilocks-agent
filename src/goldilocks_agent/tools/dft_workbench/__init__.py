@@ -2,9 +2,10 @@
 
 `dft_open_structure`/`dft_review`/`dft_download_bundle` mirror three of the
 embedded `goldilocks-workbench` panel's own actions (`source.open`,
-`review.compute`, `review.download`) so chat and the panel share one state
-object (`app/src/App.tsx`'s `coreWorkspace`) instead of a second, parallel
-Python implementation. See `tool.py`'s module docstring for why.
+`review.compute`, `review.refreshArchive`) so chat and the panel share one
+state object (`app/src/App.tsx`'s `coreWorkspace`, driven by
+`app/src/dftWorkbench.ts`) instead of a second, parallel Python
+implementation. See `tool.py`'s module docstring for why.
 
 This is the Tool's public surface -- callers (`tools/__init__.py`, tests)
 import from here, not from `tool` directly.

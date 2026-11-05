@@ -3,11 +3,30 @@
 // page's behalf (graph.py's CLIENT_EXECUTED_TOOLS, #18's restore). Kept out
 // of App.tsx so its use of the `Workspace` and snapshot types is
 // type-checked, and so it is tested against a real `createWorkspace` with
-// recorded core responses (dftWorkbench.test.ts). The API payload types
-// themselves (capabilities, structure input, task) aren't checked: the
-// vendored tarball ships without the generated schema types they come from.
+// recorded core responses (dftWorkbench.test.ts). The request payload types
+// (structure input, compute request) aren't checked: the vendored tarball
+// ships without the generated schema types they come from.
 
-import type { CalculationDraft, Workspace } from "goldilocks-workbench";
+import {
+  currentArchive,
+  currentExplain,
+  currentPreview,
+  findingsOf,
+} from "goldilocks-workbench";
+import type {
+  BlockingFinding,
+  CalculationDraft,
+  PipelineOutcome,
+  Workspace,
+  WorkspaceFailure,
+  WorkspaceSnapshot,
+} from "goldilocks-workbench";
+
+// The goldilocks-workbench types its public surface uses without exporting.
+type CoreFailure = WorkspaceFailure["failure"];
+type ExplainResult = NonNullable<WorkspaceSnapshot["reviewed"]>;
+type ArchiveDownload = NonNullable<ReturnType<typeof currentArchive>>;
+type StructureInspection = NonNullable<WorkspaceSnapshot["inspection"]>;
 
 // `{result}` or `{error}` -- the exact shape graph.py's second `interrupt()`
 // expects back as its resume value.
@@ -50,12 +69,137 @@ export async function ensureWorkspaceStarted(workspace: Workspace): Promise<void
   await workspace.dispatch({ type: "workspace.start" });
 }
 
-function coreFailureMessage(failure: { kind: string; message: string }): string {
-  return `${failure.kind}: ${failure.message}`;
+// One sentence per finding: the decision core needs, then the override
+// patches that would resolve it.
+function findingsText(findings: readonly BlockingFinding[]): string {
+  return findings
+    .map((finding) => {
+      const remedies = finding.remedies.map((remedy) => JSON.stringify(remedy)).join(" or ");
+      return remedies ? `${finding.summary} (resolved by setting ${remedies})` : finding.summary;
+    })
+    .join(" ");
+}
+
+// Why `failure` happened, for the model: the findings it carries, with their
+// remedies, else core's own kind and message. Core answers 500 when it fails
+// internally (it no longer falls back), and the same request then fails the
+// same way; 424 when its models or pseudopotentials are missing or corrupt.
+export function failureText(failure: CoreFailure): string {
+  const findings = findingsOf(failure);
+  if (findings.length > 0) return `${failure.kind}: ${findingsText(findings)}`;
+  const hint =
+    failure.status === 500
+      ? " (goldilocks-core failed internally; retrying the same request won't help, and the agent's server log has core's traceback)"
+      : failure.status === 424
+        ? " (goldilocks-core's models or pseudopotentials are missing or corrupt; `goldilocks assets install workbench` reinstalls them, and goldilocks-agent runs it whenever it starts core)"
+        : "";
+  return `${failure.kind}: ${failure.message}${hint}`;
+}
+
+// Whether sending the same request again can turn out differently: core was
+// unreachable, failed on its side, or lacked an asset. A 4xx refusal is the
+// draft's own -- a whole preview /run repeated for nothing.
+function worthRetrying(failure: CoreFailure): boolean {
+  return (
+    failure.kind === "network_error" ||
+    (failure.status !== null && (failure.status >= 500 || failure.status === 424))
+  );
 }
 
 const NO_STRUCTURE =
   "No structure has been opened in DFT Workbench yet -- call dft_open_structure first.";
+const UNSETTLED =
+  "DFT Workbench's settings kept changing while this ran -- call the tool again.";
+
+function calculationOf(snapshot: WorkspaceSnapshot) {
+  const draft = snapshot.draft;
+  return draft && { code: draft.code, task: draft.task, hpc: draft.hpc, overrides: draft.overrides };
+}
+
+// What the model needs of an inspection: the composition and cell, and how
+// many sites hold partial occupancies -- core refuses to recommend for a
+// structure with any (#229). Leaves out the file content and per-site
+// coordinates the Workbench's own viewer uses.
+function structureSummary(inspection: StructureInspection) {
+  const { structure } = inspection;
+  const { lengths_angstrom, angles_degrees, volume_angstrom3 } = structure.lattice;
+  return {
+    formula: structure.formula,
+    reduced_formula: structure.reduced_formula,
+    site_count: structure.site_count,
+    periodicity: structure.periodicity,
+    lattice: { lengths_angstrom, angles_degrees, volume_angstrom3 },
+    partially_occupied_sites: structure.sites.filter(
+      (site) => site.species.length > 1 || site.species.some((species) => species.occupancy < 1),
+    ).length,
+  };
+}
+
+// A review for the model: each record's value and the tier that decided
+// it -- or, unresolved, why not -- with the warnings and the findings that
+// block generating input files. Leaves out the provenance the Workbench's
+// cards show (model evidence, citations, per-field sources, layout), several
+// kB per review the model's context doesn't need.
+function reviewForModel(snapshot: WorkspaceSnapshot, explain: ExplainResult) {
+  return {
+    calculation: calculationOf(snapshot),
+    records: Object.fromEntries(
+      Object.entries(explain.records).map(([name, record]) => [
+        name,
+        record.status === "resolved"
+          ? { value: record.value, source: record.source }
+          : {
+              status: record.status,
+              ...(record.reason ? { reason: record.reason } : {}),
+              ...(record.blocked_by ? { blocked_by: record.blocked_by } : {}),
+            },
+      ]),
+    ),
+    warnings: explain.warnings.map(({ record, level, message }) => ({ record, level, message })),
+    blocking: explain.blocking.map(({ summary, fields, remedies }) => ({ summary, fields, remedies })),
+  };
+}
+
+// Sends `type`'s request for the current draft until it has an outcome:
+// dispatches it, waits out whatever else is in flight (the panel's own
+// auto-compute may have sent it first), and reads it back. A few rounds, as a
+// settings change meanwhile makes the outcome another draft's. Null if it
+// still has none.
+async function settle<T>(
+  workspace: Workspace,
+  type: "review.compute" | "review.refreshArchive",
+  outcomeOf: (snapshot: WorkspaceSnapshot) => PipelineOutcome<T> | null,
+  signal?: AbortSignal,
+): Promise<PipelineOutcome<T> | null> {
+  for (let round = 0; round < 3; round++) {
+    const outcome = outcomeOf(workspace.getSnapshot());
+    if (outcome !== null) return outcome;
+    await untilAborted(workspace.dispatch({ type }), signal);
+    await waitForWorkspaceIdle(workspace, signal);
+  }
+  return outcomeOf(workspace.getSnapshot());
+}
+
+// A failure stays its draft's outcome and is never sent again on its own, so
+// a tool the model calls again would only read the old failure back.
+// `failure.retry` clears it and sends the request once more -- for a failure
+// that might go differently (`worthRetrying`).
+async function retryIfFailed<T>(
+  workspace: Workspace,
+  operation: "explain" | "preview",
+  outcomeOf: (snapshot: WorkspaceSnapshot) => PipelineOutcome<T> | null,
+  signal?: AbortSignal,
+): Promise<void> {
+  const outcome = outcomeOf(workspace.getSnapshot());
+  if (outcome?.status !== "failure" || !worthRetrying(outcome.failure)) return;
+  await untilAborted(workspace.dispatch({ type: "failure.retry", operation }), signal);
+  await waitForWorkspaceIdle(workspace, signal);
+}
+
+async function explainCurrentDraft(workspace: Workspace, signal?: AbortSignal) {
+  await retryIfFailed(workspace, "explain", currentExplain, signal);
+  return settle(workspace, "review.compute", currentExplain, signal);
+}
 
 // Executes a client-executed DFT Workbench tool call by dispatching into the
 // exact same `workspace` the embedded panel's own buttons use -- one shared
@@ -76,58 +220,75 @@ export async function dispatchDftTool(
   if (readyError) return { error: readyError };
   await waitForWorkspaceIdle(workspace, signal);
   await untilAborted(ensureWorkspaceStarted(workspace), signal);
+  const started = workspace.getSnapshot();
+  if (started.capabilities === null) {
+    return {
+      error: started.startupFailure
+        ? failureText(started.startupFailure)
+        : "DFT Workbench couldn't load goldilocks-core's capabilities.",
+    };
+  }
 
   if (tool === "dft_open_structure") {
-    await untilAborted(workspace.dispatch({
-      type: "source.open",
-      input: {
-        structure_content: args.structure_content,
-        structure_name: args.structure_name,
-        structure_format: args.structure_format
-          ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
-      },
-    }), signal);
+    const input = {
+      structure_content: args.structure_content,
+      structure_name: args.structure_name,
+      structure_format: args.structure_format
+        ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
+    };
+    await untilAborted(workspace.dispatch({ type: "source.open", input }), signal);
     const snapshot = workspace.getSnapshot();
-    if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-    return { result: snapshot.inspection ?? {} };
+    if (snapshot.structureInput !== input || snapshot.inspection === null) {
+      const failed = snapshot.inspectFailure;
+      return {
+        error: failed?.input === input
+          ? failureText(failed.failure)
+          : "Another structure was opened in DFT Workbench meanwhile -- open this one again.",
+      };
+    }
+    return {
+      result: {
+        structure: structureSummary(snapshot.inspection),
+        calculation: calculationOf(snapshot),
+        // Structure-specific overrides the previous structure had set,
+        // which opening this one cleared; code, task, HPC profile and the
+        // method settings carry over.
+        cleared_overrides: snapshot.clearedOverrides,
+        tasks_available: started.capabilities.tasks.map((task) => task.id),
+      },
+    };
   }
 
   if (tool === "dft_review") {
     if (workspace.getSnapshot().structureInput === null) return { error: NO_STRUCTURE };
-    await untilAborted(workspace.dispatch({ type: "review.compute" }), signal);
-    const snapshot = workspace.getSnapshot();
-    if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-    return { result: snapshot.reviewed ?? {} };
+    const explain = await explainCurrentDraft(workspace, signal);
+    if (explain === null) return { error: UNSETTLED };
+    if (explain.status === "failure") return { error: failureText(explain.failure) };
+    return { result: reviewForModel(workspace.getSnapshot(), explain.value) };
   }
 
   if (tool === "dft_download_bundle") {
-    const before = workspace.getSnapshot();
-    if (before.structureInput === null) return { error: NO_STRUCTURE };
-    if (before.reviewed === null) {
-      return { error: "No review has been run yet -- call dft_review first." };
+    if (workspace.getSnapshot().structureInput === null) return { error: NO_STRUCTURE };
+    const explain = await explainCurrentDraft(workspace, signal);
+    if (explain === null) return { error: UNSETTLED };
+    if (explain.status === "failure") return { error: failureText(explain.failure) };
+    if (explain.value.blocking.length > 0) {
+      return {
+        error: `Input files can't be generated for the current settings: ${findingsText(explain.value.blocking)} Ask the user before changing any setting.`,
+      };
     }
-    if (before.outOfDate) await untilAborted(workspace.dispatch({ type: "review.compute" }), signal);
-    // Deliberately `review.refreshArchive`, not `review.download`: the
-    // latter ends in a real `saveArchiveToBrowser` -- an `<a>` click --
-    // which browsers silently drop unless it happens inside a *direct*
-    // user gesture's call stack. By the time this runs (an SSE event
-    // from the server, several `await`s past whatever click sent the
-    // chat message or approved the confirmation card), that gesture has
-    // long expired -- confirmed live: no file ever reached ~/Downloads.
-    // `refreshArchive` does the exact same server-side generation and
-    // fills `lastDownload` (so BundleCard shows "ready") without ever
-    // touching the DOM -- the user's own click on BundleCard's real
-    // "Download (.zip)" button then reuses that cached archive and
-    // *is* a direct gesture, so the browser actually saves it.
-    await untilAborted(workspace.dispatch({ type: "review.refreshArchive" }), signal);
-    const snapshot = workspace.getSnapshot();
-    if (snapshot.failure) return { error: coreFailureMessage(snapshot.failure) };
-    if (snapshot.lastDownload === null) {
-      return { error: "Failed to generate the DFT input bundle." };
-    }
+    // `review.refreshArchive` fetches the archive without saving it: a save
+    // is an `<a>` click, which browsers drop outside a direct user gesture,
+    // and this runs several awaits past whatever click sent the chat
+    // message. The chat's Download card saves it on the user's own click
+    // (`keepBundle`/`saveBundle`).
+    await retryIfFailed(workspace, "preview", currentPreview, signal);
+    const preview = await settle(workspace, "review.refreshArchive", currentPreview, signal);
+    if (preview === null) return { error: UNSETTLED };
+    if (preview.status === "failure") return { error: failureText(preview.failure) };
     return {
       result: {
-        filename: snapshot.lastDownload.filename,
+        filename: preview.value.filename,
         note: "Ready -- a Download button for it appears in the chat right here, and the Bundle card on the right has the same file too (browsers won't let a chat action save it automatically, a real click is needed either way).",
       },
     };
@@ -136,32 +297,49 @@ export async function dispatchDftTool(
   return { error: `Unknown DFT Workbench tool: ${tool}` };
 }
 
-// The dft-bundle-ready chat card's own button -- a *direct* click, unlike
-// the automatic dispatch inside `dispatchDftTool`, so the browser actually
-// allows the resulting `saveArchiveToBrowser` call. Reuses the
-// already-cached `lastDownload` (set by `dispatchDftTool`'s
-// `review.refreshArchive`) instead of regenerating it -- same
-// `downloadReviewed()` path the Bundle card's own button already goes
-// through. Returns why nothing can be saved instead, for the card to show
-// (#18): `review.download` itself silently does nothing with no structure
-// open (e.g. a card rehydrated after a reload, before the restore has
-// finished), with settings changed since, while the bundle is still being
-// generated, or when there is no review to generate it from.
-export function downloadDftBundle(workspace: Workspace): string | null {
-  const snapshot = workspace.getSnapshot();
-  if (snapshot.structureInput === null) {
-    return "Nothing to download yet: DFT Workbench has no structure open. If the page was just reloaded, wait for DFT Workbench to finish restoring, or ask for the bundle again.";
+// The archives chat Download cards save, by card id, for this page's
+// lifetime: each card saves the archive its own dft_download_bundle call
+// produced, not whatever the workspace holds by the time it's clicked (a
+// later settings change replaces that). A card restored after a reload finds
+// nothing here.
+const bundles = new Map<string, ArchiveDownload>();
+
+// Keeps the current draft's archive for a Download card, right after a
+// successful dft_download_bundle. Returns the card's id, or null if there is
+// no archive to keep.
+export function keepBundle(workspace: Workspace): string | null {
+  const archive = currentArchive(workspace.getSnapshot());
+  if (archive === null) return null;
+  const id = crypto.randomUUID();
+  bundles.set(id, archive);
+  return id;
+}
+
+// The browser's own save of `archive` -- goldilocks-workbench's
+// `saveArchiveToBrowser`, which it doesn't export.
+function saveToBrowser(archive: ArchiveDownload): void {
+  const url = URL.createObjectURL(archive.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = archive.filename;
+  anchor.hidden = true;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+// A Download card's click: saves the archive kept under `id`, or returns
+// why there's none for the card to show.
+export function saveBundle(
+  id: string | undefined,
+  save: (archive: ArchiveDownload) => void = saveToBrowser,
+): string | null {
+  const archive = id === undefined ? undefined : bundles.get(id);
+  if (archive === undefined) {
+    return "This bundle was generated before the page was reloaded, so it isn't held here any more. Ask for it again, or use the Bundle card in DFT Workbench.";
   }
-  if (snapshot.outOfDate) {
-    return "The settings changed since this bundle was generated. Ask for it again, or use the Bundle card in DFT Workbench.";
-  }
-  if (snapshot.lastDownload === null && snapshot.operation !== null) {
-    return "DFT Workbench is still preparing this bundle -- try again in a moment.";
-  }
-  if (snapshot.lastDownload === null && snapshot.reviewed === null) {
-    return "There is no bundle to save right now. Ask for it again, or use the Bundle card in DFT Workbench.";
-  }
-  void workspace.dispatch({ type: "review.download" });
+  save(archive);
   return null;
 }
 
@@ -203,17 +381,22 @@ export type SavedDftState = {
 
 export type RestoreOutcome = "restored" | "skipped" | "kept" | "forgotten";
 
+// The /inspect refusals of the input itself: a structure core can't read, or
+// a request document it rejects. Anything else (core unreachable or failing,
+// a frontend/backend mismatch) says nothing about the saved structure.
+const PERMANENT_INSPECT_FAILURES = new Set(["invalid_structure", "invalid_request"]);
+
 // Replays a persisted DFT Workbench state into `workspace` after a reload
-// (#18) -- a real re-run of inspect/review/generate against goldilocks-core,
+// (#18) -- a real re-run of inspect/review/preview against goldilocks-core,
 // since the Workspace has no "just set the state" action. Starts core first
 // (`ensureCoreServerReady`, null once it's up): after a reload nothing else
 // may have asked for it yet. Only replays into an untouched workspace, so a
 // structure a chat DFT tool or the panel opened while this waited for core
-// is kept ("skipped"). If core rejects the saved structure for good it is
-// forgotten (`forget`); a transient failure keeps it for the next reload,
-// and its failure is dismissed rather than left as a Retry banner -- Retry
-// would reopen the structure with default settings, which the save
-// listener would then write over the saved ones ("kept").
+// is kept ("skipped"). If core refuses the saved input itself
+// (`PERMANENT_INSPECT_FAILURES`) it is forgotten (`forget`); any other
+// failure keeps it for the next reload, and is dismissed rather than left as
+// a Retry banner -- Retry would reopen the structure with default settings,
+// which the save listener would then write over the saved ones ("kept").
 export async function restoreDftWorkspace(
   workspace: Workspace,
   saved: SavedDftState,
@@ -226,18 +409,19 @@ export async function restoreDftWorkspace(
   if (
     before.capabilities === null ||
     before.structureInput !== null ||
-    before.attemptedStructureInput !== null ||
+    before.inspectFailure !== null ||
     before.operation !== null
   ) return "skipped";
   await workspace.dispatch({ type: "source.open", input: saved.structureInput });
   const opened = workspace.getSnapshot();
   if (opened.structureInput !== saved.structureInput) {
-    if (opened.attemptedStructureInput !== saved.structureInput || !opened.failure) return "skipped";
-    if (!opened.failure.retryable) {
+    const failed = opened.inspectFailure;
+    if (failed === null || failed.input !== saved.structureInput) return "skipped";
+    if (PERMANENT_INSPECT_FAILURES.has(failed.failure.kind)) {
       forget();
       return "forgotten";
     }
-    await workspace.dispatch({ type: "failure.dismiss" });
+    await workspace.dispatch({ type: "failure.dismiss", operation: "inspect" });
     return "kept";
   }
   const patch = restorableDraftPatch(saved, before.capabilities);

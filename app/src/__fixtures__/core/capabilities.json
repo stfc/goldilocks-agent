@@ -1,6 +1,6 @@
 {
-  "core_version": "0.1.1",
-  "vocabulary_version": "1",
+  "core_version": "0.3.0",
+  "vocabulary_version": "5",
   "codes": [
     {
       "id": "quantum_espresso",
@@ -8,8 +8,12 @@
       "tasks": [
         "scf_single_point",
         "dos",
+        "band",
         "relax",
-        "vc-relax"
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
       ]
     }
   ],
@@ -29,7 +33,7 @@
     {
       "id": "dos",
       "name": "Density of states",
-      "description": "scf, then a denser nscf pass, then dos.x -- three steps sharing one prefix/outdir (v2 epic 9, #9).",
+      "description": "scf, then a denser nscf pass, then dos.x -- three steps sharing one prefix/outdir (v2 epic 9, #9). Unless set, the nscf step takes k_distance 0.10 and tetrahedra_opt occupations from aiida-quantumespresso's pdos.yaml protocol.",
       "codes": [
         "quantum_espresso"
       ],
@@ -38,6 +42,20 @@
         "pw.x",
         "pw.x",
         "dos.x"
+      ]
+    },
+    {
+      "id": "band",
+      "name": "Band structure",
+      "description": "scf, then pw.x with calculation='bands' along the written cell's high-symmetry path (K_POINTS crystal_b), then bands.x once per spin channel -- three steps sharing one prefix/outdir. Unless set, the bands step takes k_path_distance 0.025 and three times the occupied bands from aiida-quantumespresso's bands.yaml protocol.",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "step_count": 3,
+      "executables": [
+        "pw.x",
+        "pw.x",
+        "bands.x"
       ]
     },
     {
@@ -63,6 +81,54 @@
       "executables": [
         "pw.x"
       ]
+    },
+    {
+      "id": "phonon",
+      "name": "Phonon (no relaxation)",
+      "description": "scf, then ph.x on a q-point mesh (DFPT), q2r.x, and matdyn.x for the phonon DOS and for the dispersion along the band task's path -- five steps in one job sharing one prefix/outdir, with d3hess.x before ph.x under DFT-D3. The phonons are computed at the written geometry, so relax it first or use relax-phonon. Unless set, the q-mesh takes q_distance 0.3 from aiida-quantumespresso's ph protocol, and the scf k-mesh is raised against it; the dispersion takes k_path_distance 0.025 from its bands protocol.",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "step_count": 5,
+      "executables": [
+        "pw.x",
+        "ph.x",
+        "q2r.x",
+        "matdyn.x",
+        "matdyn.x"
+      ]
+    },
+    {
+      "id": "relax-phonon",
+      "name": "Phonon (incl. relaxation)",
+      "description": "A fixed-cell relax, then ph.x on its save on a q-point mesh (DFPT), q2r.x, and matdyn.x for the phonon DOS and for the dispersion along the band task's path -- five steps in one job sharing one prefix/outdir, with d3hess.x before ph.x under DFT-D3. Unless set, the relaxation takes forc_conv_thr 1e-4 from aiida-quantumespresso's pw protocol, the q-mesh q_distance 0.3 from its ph protocol and the dispersion k_path_distance 0.025 from its bands protocol, and the relaxation's k-mesh is raised against the q-mesh.",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "step_count": 5,
+      "executables": [
+        "pw.x",
+        "ph.x",
+        "q2r.x",
+        "matdyn.x",
+        "matdyn.x"
+      ]
+    },
+    {
+      "id": "vc-relax-phonon",
+      "name": "Phonon (incl. vc-relaxation)",
+      "description": "A vc-relax, then ph.x on the relaxed cell's save on a q-point mesh (DFPT), q2r.x, and matdyn.x for the phonon DOS and for the dispersion along the band task's path -- five steps in one job sharing one prefix/outdir, with d3hess.x before ph.x under DFT-D3. Refused on a cell whose FFT grid, rebuilt by the vc-relax, ph.x can refuse; relax-phonon runs there. Unless set, the relaxation takes forc_conv_thr 1e-4 from aiida-quantumespresso's pw protocol, the q-mesh q_distance 0.3 from its ph protocol and the dispersion k_path_distance 0.025 from its bands protocol; the q-mesh, the relaxation's k-mesh, raised against it, and the path are built on the input cell.",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "step_count": 5,
+      "executables": [
+        "pw.x",
+        "ph.x",
+        "q2r.x",
+        "matdyn.x",
+        "matdyn.x"
+      ]
     }
   ],
   "facts": [
@@ -80,7 +146,7 @@
         "heuristic"
       ],
       "overridable": true,
-      "description": "Whether the structure is metallic, from composition alone."
+      "description": "Whether the structure is metallic (zero DFT band gap)."
     },
     {
       "key": "is_magnetic",
@@ -104,11 +170,10 @@
       "values": null,
       "ml_target": null,
       "approaches": [
-        "human",
         "heuristic"
       ],
-      "overridable": true,
-      "description": "Whether spin-orbit coupling is likely relevant for this structure."
+      "overridable": false,
+      "description": "Whether spin-orbit coupling is likely relevant for this structure. Advice only: the spin_orbit_coupling setting enables it."
     },
     {
       "key": "needs_correlation",
@@ -129,10 +194,27 @@
       "group": "functional",
       "type": "string",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "functional",
+        "path": []
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -147,10 +229,29 @@
       "group": "pseudo_table_id",
       "type": "string",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "pseudo_table",
+        "path": [
+          "id"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -163,10 +264,29 @@
       "group": "cutoffs",
       "type": "number",
       "unit": "Ry",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "cutoffs",
+        "path": [
+          "ecutwfc_ry"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -179,58 +299,134 @@
       "group": "cutoffs",
       "type": "number",
       "unit": "Ry",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "cutoffs",
+        "path": [
+          "ecutrho_ry"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Charge-density cutoff; auto-derived from ecutwfc_ry if unset."
+      "description": "Charge-density cutoff. Unset: the largest the selected pseudopotentials publish (SSSP), or the table's charge_density_dual times the resolved ecutwfc_ry where it publishes none (PseudoDojo)."
     },
     {
       "key": "nelec",
       "group": "electron_count",
       "type": "number",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "electron_count",
+        "path": [
+          "nelec"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Total valence electron count; otherwise summed from pseudopotential z_valence."
+      "description": "Total valence electron count of the uploaded cell (otherwise summed from pseudopotential z_valence), written as tot_charge, its difference from the neutral count; refused when magnetic_ordering writes a cell of another size."
     },
     {
       "key": "spin_polarized",
       "group": "magnetic",
       "type": "boolean",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "spin_polarized"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Force spin-polarized (nspin=2) vs non-spin-polarized calculation."
+      "description": "Force spin polarization on or off: a collinear nspin=2 run, or a magnetic noncollinear one with spin_orbit_coupling."
     },
     {
       "key": "spin_orbit_coupling",
       "group": "magnetic",
       "type": "boolean",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "spin_orbit_enabled"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -243,68 +439,180 @@
       "group": "magnetic",
       "type": "number",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "tot_magnetization"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Total per-cell magnetization target; not valid together with spin_orbit_coupling."
+      "description": "Total per-cell magnetization target of a collinear spin-polarized run (nspin=2); refused with spin_orbit_coupling, whose noncollinear run takes starting_magnetization instead, and ignored when spin_polarized is false. Fixed occupations need an integer of the electron count's parity; a non-metal gets them by default only then, and smearing otherwise. A collinear band task refuses it: bands.x stops on the two Fermi energies it gives."
     },
     {
       "key": "starting_magnetization",
       "group": "magnetic",
       "type": "object",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "starting_magnetization"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Per-element starting spin-polarization fraction (each value in [-1, 1]) fed directly to the generated input, bypassing the valence-electron-based heuristic."
+      "description": "Starting spin-polarization fraction (each value strictly between -1 and 1) per site label -- the uploaded structure's labels (inspect lists them), or Ni1/Ni2/O-style labels of an applied magnetic_ordering; records.magnetic.site_labels lists the ones in force -- or per element symbol, for all of that element's sites, refused where an applied magnetic_ordering seeds them differently. A label beats its element. Sites left out keep the valence-electron-based heuristic seed, and sites with different values become separate species."
     },
     {
       "key": "magnetic_ordering",
       "group": "magnetic",
       "type": "string",
-      "enum": [
-        "afm",
-        "fm"
-      ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "ordering",
+          "applied"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Opt in to a compensated antiferromagnetic ordering search ('afm') instead of the ferromagnetic default ('fm' or unset); degrades to ferromagnetic with a warning if no ordering can be found."
+      "description": "Opt in to an antiferromagnetic ordering instead of the ferromagnetic default ('fm' or unset), over the sites that carry a local d or f moment: 'afm' applies the first candidate the magnetic-orderings listing gives (the smallest cell, then the most symmetric), 'afm-<n>' the listed candidate of that label; records.magnetic names the criterion and the other candidates of that size. A slab, wire or boxed molecule gets only candidates that keep its vacuum vectors. Any value, 'fm' included, turns spin polarization on unless spin_polarized is false, which ignores it with a warning. 'afm' degrades to ferromagnetic with a warning if there is no candidate; an 'afm-<n>' that is not listed is refused."
+    },
+    {
+      "key": "moment_direction",
+      "group": "magnetic",
+      "type": "array",
+      "items": "number",
+      "minItems": 3,
+      "maxItems": 3,
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "magnetic",
+        "path": [
+          "moment_direction",
+          "uvw"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Direction the moments of a spin-polarized spin_orbit_coupling run start along, as a lattice direction [u, v, w] of the uploaded cell (non-zero), written as QE's angle1/angle2 and used to count the k-points by magnetic symmetry. A physical choice: unset, the moments start along [0, 0, 1], with a notice. Ignored with a warning by any other run."
     },
     {
       "key": "use_vdw",
       "group": "vdw",
       "type": "boolean",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "vdw",
+        "path": [
+          "use_vdw"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Force whether a van der Waals dispersion correction is applied."
+      "description": "Force whether a van der Waals dispersion correction is applied. D3(BJ) needs parameters for the functional, which Quantum ESPRESSO has only for PBE and PBEsol: with any other functional, such as LDA, the default is no correction and true is refused."
     },
     {
       "key": "method",
@@ -314,10 +622,29 @@
         "d3bj"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "vdw",
+        "path": [
+          "method"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -330,52 +657,321 @@
       "group": "hubbard",
       "type": "boolean",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "hubbard",
+        "path": null
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Force whether a Hubbard +U correction is applied, overriding even a human-set needs_correlation fact -- see the analysis-layer needs_correlation fact for the general judgement this escalates past."
+      "description": "Force whether a Hubbard +U correction is applied, overriding even a human-set needs_correlation fact: false runs without +U, true applies the built-in U table to the structure's d and f elements."
     },
     {
       "key": "u_by_element",
       "group": "hubbard",
       "type": "object",
       "unit": "eV",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "hubbard",
+        "path": null
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Explicit Dudarev effective-U value per element, overriding the built-in table."
+      "description": "Dudarev U_eff in eV (> 0) per element symbol; replaces the built-in table, so only listed elements present in the structure get +U. La and Ac are rejected: no installed pseudopotential has an occupied La 4f or any Ac 5f channel, so pw.x stops on any U for them."
     },
     {
-      "key": "assume_isolated",
+      "key": "hubbard_projectors",
+      "group": "hubbard",
+      "type": "string",
+      "enum": [
+        "atomic",
+        "ortho-atomic"
+      ],
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "system",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "hubbard",
+        "path": [
+          "projectors"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Projector type of the HUBBARD card when an element gets +U: 'ortho-atomic', the default, which Quantum ESPRESSO recommends, or 'atomic', the only type ph.x accepts with +U. A U value is tied to the projectors it was derived with, so switching changes what a given U means; the built-in U table is used unchanged with either.",
+      "default": "ortho-atomic"
+    },
+    {
+      "key": "isolation",
       "group": "boundary",
       "type": "string",
       "enum": [
-        "martyna-tuckerman",
-        "none"
+        "isolated",
+        "periodic",
+        "slab"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
       "programs": null,
       "scope": "system",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "boundary",
+        "path": [
+          "isolation"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Force the electrostatic boundary-condition treatment for a periodic cell (e.g. 'martyna-tuckerman' for an isolated molecule/wire); 'none' for the normal fully-periodic case."
+      "description": "How the electrostatics treat periodic images. 'periodic': no truncation, the default for any cell periodic along at least one lattice vector, including molecular crystals, slabs and wires (pw.x has no 1D truncation). 'slab': Quantum ESPRESSO's 2D Coulomb truncation (assume_isolated='2D', Sohier et al. 2017), never the default; refused unless the vacuum lies along c only, a and b lie in the xy plane, c lies along z, the cell is at least 11.11 Å (21 bohr) high and the vacuum is at least 10.58 Å (20 bohr) wider than the slab, and a vc-relax needs cell_dofree='2Dxy' or '2Dshape'. 'isolated': Martyna-Tuckerman (assume_isolated='martyna-tuckerman'), the default with vacuum along all three lattice vectors and refused otherwise; pw.x computes no stress under it, so vc-relax is refused."
+    },
+    {
+      "key": "partition",
+      "group": "job",
+      "type": "string",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "task",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "job",
+        "path": [
+          "partition"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "HPC queue/partition to submit to."
+    },
+    {
+      "key": "nodes",
+      "group": "job",
+      "type": "integer",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "task",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "job",
+        "path": [
+          "nodes"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Number of compute nodes requested; otherwise the fewest on which pw.x's estimated memory per process, for the layout each step runs, times the tasks per node and a 1.2 safety factor fits a node."
+    },
+    {
+      "key": "ntasks",
+      "group": "job",
+      "type": "integer",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "task",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "job",
+        "path": [
+          "ntasks"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Total number of MPI tasks requested; otherwise nodes x cores_per_node."
+    },
+    {
+      "key": "walltime_h",
+      "group": "job",
+      "type": "number",
+      "unit": "hours",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "task",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "job",
+        "path": [
+          "walltime_h"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Requested job walltime; heuristic default is the partition's own maximum. 95% of it is split across the task's pw.x steps as max_seconds, by estimated workload. The phonon tasks write no max_seconds: their job timer creates <prefix>.EXIT at 95% of it, where pw.x or ph.x, whichever is running, stops cleanly."
+    },
+    {
+      "key": "account",
+      "group": "job",
+      "type": "string",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": null,
+      "programs": null,
+      "scope": "task",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "job",
+        "path": [
+          "account"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "HPC accounting/billing code; personal to the submitter, never guessed."
     },
     {
       "key": "occupations",
@@ -387,18 +983,42 @@
         "tetrahedra_opt"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "occupations",
+        "path": [
+          "occupations"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Electronic-occupation scheme (fixed, smearing, or tetrahedra_opt)."
+      "description": "Electronic-occupation scheme (fixed, smearing, or tetrahedra_opt). Default: smearing for a metal or unconfirmed metallicity; fixed for a non-metal where fixed occupations can run -- an even electron count without spin polarization (spin_orbit_coupling or not), any count on a spin-polarized spin_orbit_coupling run, and, for a collinear spin-polarized run, an integer tot_magnetization of the count's parity (one set, or, except on a band task, 0 for a magnetic_ordering compensated by symmetry) -- and smearing otherwise. An explicit fixed on a collinear run with no such moment is refused. On a band task it sets the scf step, whose occupations the bands step takes, tetrahedra_opt written there as cold smearing."
     },
     {
       "key": "smearing_type",
@@ -406,35 +1026,83 @@
       "type": "string",
       "enum": [
         "cold",
-        "fixed",
+        "fd",
         "gaussian",
         "mp"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "occupations",
+        "path": [
+          "smearing_type"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Smearing function used when occupations=smearing; defaults to 'cold'."
+      "description": "Smearing function used when occupations=smearing, by Quantum ESPRESSO's name: gaussian, mp (Methfessel-Paxton), cold (Marzari-Vanderbilt) or fd (Fermi-Dirac); defaults to 'cold'. Fixed occupations are occupations=fixed."
     },
     {
       "key": "degauss",
       "group": "occupations",
       "type": "number",
       "unit": "Ry",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "occupations",
+        "path": [
+          "degauss"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -450,12 +1118,36 @@
       "minItems": 3,
       "maxItems": 3,
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "k_sampling",
+        "path": [
+          "mesh"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -468,37 +1160,85 @@
       "group": "k_sampling",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "k_sampling",
+        "path": [
+          "k_index"
+        ]
+      },
       "ml_target": "k_index",
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "A specific 1-based rung on this structure's own k-mesh ladder (rung 1 is Gamma-only); wins over k_distance if both are set."
+      "description": "A specific 1-based rung on this structure's own k-mesh ladder, the distinct meshes its point group maps onto itself (rung 1 is Gamma-only); wins over k_distance if both are set."
     },
     {
       "key": "k_distance",
       "group": "k_sampling",
       "type": "number",
       "unit": "1/Angstrom",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "k_sampling",
+        "path": [
+          "k_distance"
+        ]
+      },
       "ml_target": "k_distance",
       "approaches": [
         "human",
         "ml",
         "heuristic"
       ],
-      "description": "Target k-point spacing; heuristic default is 0.15 for metals, 0.30 otherwise."
+      "description": "Target k-point spacing along each periodic axis; axes the point group mixes share the larger count, and a vacuum axis always gets one k-point. Heuristic default is 0.15 for metals or when metallicity is unknown, 0.30 for a confirmed non-metal."
     },
     {
       "key": "shift",
@@ -508,12 +1248,36 @@
       "minItems": 3,
       "maxItems": 3,
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "k_sampling",
+        "path": [
+          "shift"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -522,107 +1286,202 @@
       "description": "K-mesh origin offset per axis (0 or 1); defaults to Gamma-centered."
     },
     {
-      "key": "nosym",
-      "group": "n_irr_k",
-      "type": "boolean",
-      "unit": null,
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "Disable symmetry reduction of the k-point mesh entirely.",
-      "default": false
-    },
-    {
       "key": "nbnd",
       "group": "nbnd",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "bands",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "nbnd",
+        "path": [
+          "nbnd"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Total number of Kohn-Sham bands, overriding the formula-based value entirely."
+      "description": "Total number of Kohn-Sham bands (per spin channel with nspin=2), overriding the default written otherwise: pw.x's setup.f90 rule, with a collinear smearing run's majority channel raised for its seeded moment, and three times the occupied bands on a band task's bands step (aiida-quantumespresso's bands.yaml). Refused when below the electrons a spin channel holds (pw.x's 'too few bands'); a count that holds the moment below its seed gets a warning."
     },
     {
       "key": "extra_bands",
       "group": "nbnd",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "bands",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "nbnd",
+        "path": null
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Extra bands added on top of the formula-computed base band count."
+      "description": "Extra bands added on top of the default band count (pw.x's setup.f90 rule, with a collinear smearing run's majority channel raised for its seeded moment, or three times the occupied bands on a band task's bands step); a total below the electrons a spin channel holds is refused."
     },
     {
       "key": "conv_thr",
       "group": "convergence",
       "type": "number",
       "unit": "Ry",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "bands",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "conv_thr"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "SCF self-consistency energy-convergence threshold; otherwise scaled per atom."
+      "description": "SCF self-consistency energy-convergence threshold; otherwise scaled per atom. An nscf or bands step, which runs no SCF loop, takes it as its diagonalization threshold, 0.1 x min(0.01, conv_thr / nelec) and at least 1e-13."
     },
     {
       "key": "etot_conv_thr",
       "group": "convergence",
       "type": "number",
       "unit": "Ry",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "etot_conv_thr"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Total-energy convergence threshold between steps; otherwise scaled per atom."
+      "description": "Total-energy convergence threshold between ionic steps of a relax/vc-relax; otherwise scaled per atom."
     },
     {
       "key": "mixing_beta",
       "group": "convergence",
       "type": "number",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "mixing_beta"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -636,12 +1495,35 @@
       "group": "convergence",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "electron_maxstep"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -659,162 +1541,168 @@
         "plain"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "mixing_mode"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "SCF density-mixing algorithm; heuristic default is local-TF for 2D/molecule geometries."
+      "description": "SCF density-mixing algorithm; heuristic default is local-TF for a cell with vacuum along any lattice vector (a slab, wire or isolated system) and plain otherwise, including bulk layered crystals."
     },
     {
       "key": "mixing_fixed_ns",
       "group": "convergence",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "convergence",
+        "path": [
+          "mixing_fixed_ns"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Initial SCF iterations that freeze Hubbard occupation-matrix mixing (+U calculations)."
-    },
-    {
-      "key": "partition",
-      "group": "job",
-      "type": "string",
-      "unit": null,
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "HPC queue/partition to submit to."
-    },
-    {
-      "key": "nodes",
-      "group": "job",
-      "type": "integer",
-      "unit": null,
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "Number of compute nodes requested; otherwise sized from the estimated memory footprint."
-    },
-    {
-      "key": "ntasks",
-      "group": "job",
-      "type": "integer",
-      "unit": null,
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "Total number of MPI tasks requested; otherwise nodes x cores_per_node."
-    },
-    {
-      "key": "walltime_h",
-      "group": "job",
-      "type": "number",
-      "unit": "hours",
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "Requested job walltime; heuristic default is the partition's own maximum."
-    },
-    {
-      "key": "account",
-      "group": "job",
-      "type": "string",
-      "unit": null,
-      "codes": null,
-      "tasks": null,
-      "programs": [
-        "pw.x"
-      ],
-      "scope": "per_step",
-      "ml_target": null,
-      "approaches": [
-        "human",
-        "heuristic"
-      ],
-      "description": "HPC accounting/billing code; personal to the submitter, never guessed."
+      "description": "Number of initial SCF iterations during which pw.x holds the Hubbard occupation matrix at its starting value (+U runs only). Unset by default (QE's 0). pw.x can report convergence inside this window, so energies, forces and stresses from a nonzero value are not self-consistent DFT+U results; use it only for a preparatory run whose output seeds a separate run with ns free."
     },
     {
       "key": "npool",
       "group": "parallelisation",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "bands",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "parallelisation",
+        "path": [
+          "npool"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Number of k-point parallelization pools; must divide ntasks evenly."
+      "description": "Number of k-point pools passed to pw.x as -npool; must divide ntasks. Default: the most pools, up to one per k-point/spin pair (two per k-point with collinear spin), that keep the pools at least 80% busy."
     },
     {
       "key": "ndiag",
       "group": "parallelisation",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "scf_single_point",
+        "dos",
+        "band",
+        "relax",
+        "vc-relax",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "scf",
+        "nscf",
+        "bands",
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "parallelisation",
+        "path": [
+          "ndiag"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "ScaLAPACK linear-algebra process-grid size; only meaningful when has_scalapack is true."
+      "description": "Linear-algebra group size passed to pw.x as -ndiag; unset by default so pw.x chooses it from nbnd. Refused when its s x s grid, s = isqrt(min(ndiag, ntasks/npool)), cannot distribute nbnd bands (needs nbnd > (s-1)^2)."
     },
     {
       "key": "ion_dynamics",
@@ -826,12 +1714,30 @@
         "fire"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "ion_dynamics"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -845,31 +1751,66 @@
       "group": "relax",
       "type": "number",
       "unit": "Ry/Bohr",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "forc_conv_thr"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Force-convergence threshold for relax/vc-relax.",
-      "default": 0.001
+      "description": "Force-convergence threshold of a relaxation. Default: Quantum ESPRESSO's 1e-3 for the relax and vc-relax tasks, and 1e-4, aiida-quantumespresso's balanced pw protocol, for the relaxation of relax-phonon and vc-relax-phonon, where a looser value gets a warning."
     },
     {
       "key": "nstep",
       "group": "relax",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "nstep"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -883,12 +1824,30 @@
       "group": "relax",
       "type": "number",
       "unit": "Bohr",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "trust_radius_max"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -902,12 +1861,30 @@
       "group": "relax",
       "type": "number",
       "unit": "Bohr",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "trust_radius_min"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -921,12 +1898,30 @@
       "group": "relax",
       "type": "number",
       "unit": "Bohr",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "trust_radius_ini"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -940,12 +1935,30 @@
       "group": "relax",
       "type": "boolean",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "remove_rigid_rot"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -959,18 +1972,36 @@
       "group": "relax",
       "type": "integer",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "relax",
+        "vc-relax",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "relax",
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "fix_bottom_layers"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Fix the bottom N atomic layers of a 2D slab (if_pos) during relax/vc-relax; requires the structure to classify as 2D."
+      "description": "Fix the bottom N atomic layers of a slab (if_pos) during relax/vc-relax, counted up from the vacuum; refused unless the cell to be written has one vacuum gap, along exactly one lattice vector, and at least N layers (atoms within 0.5 Å along the normal share one). The phonon tasks refuse it: pinned atoms keep their forces, and the phonons are computed where every force is zero."
     },
     {
       "key": "cell_dofree",
@@ -989,29 +2020,7 @@
         "fixa",
         "fixb",
         "fixc",
-        "ibrav",
-        "ibrav+2Dshape",
-        "ibrav+2Dxy",
-        "ibrav+a",
-        "ibrav+b",
-        "ibrav+c",
-        "ibrav+epitaxial_ab",
-        "ibrav+epitaxial_ac",
-        "ibrav+epitaxial_bc",
-        "ibrav+fixa",
-        "ibrav+fixb",
-        "ibrav+fixc",
-        "ibrav+shape",
-        "ibrav+volume",
-        "ibrav+x",
-        "ibrav+xy",
-        "ibrav+xyz",
-        "ibrav+xz",
-        "ibrav+y",
-        "ibrav+yz",
-        "ibrav+z",
         "shape",
-        "volume",
         "x",
         "xy",
         "xyz",
@@ -1021,18 +2030,33 @@
         "z"
       ],
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "vc-relax",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "cell_dofree"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
         "heuristic"
       ],
-      "description": "Which cell degrees of freedom vc-relax may move; heuristic default is hexagon-aware for 2D structures ('ibrav+2Dxy' vs bare '2Dxy').",
+      "description": "Which cell degrees of freedom vc-relax may move, among the values pw.x honours under the written ibrav = 0 ('volume' and the 'ibrav' forms are not). Default 'all'; '2Dxy' for a slab with its vacuum along c, which is written with a along x and a, b in the xy plane. A wire or a slab with its vacuum along a or b has no default. '2Dxy' and '2Dshape' are refused unless a and b lie in the xy plane and any vacuum lies along c; the masks of Cartesian components ('a', 'b', 'c', 'x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz') are refused when the cell is written rotated.",
       "default": "all"
     },
     {
@@ -1040,12 +2064,27 @@
       "group": "relax",
       "type": "number",
       "unit": "kbar",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "vc-relax",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "press"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -1059,12 +2098,27 @@
       "group": "relax",
       "type": "number",
       "unit": "kbar",
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "vc-relax",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "press_conv_thr"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -1078,12 +2132,27 @@
       "group": "relax",
       "type": "number",
       "unit": null,
-      "codes": null,
-      "tasks": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "vc-relax",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "vc-relax"
+      ],
       "programs": [
         "pw.x"
       ],
       "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "relax",
+        "path": [
+          "cell_factor"
+        ]
+      },
       "ml_target": null,
       "approaches": [
         "human",
@@ -1091,6 +2160,454 @@
       ],
       "description": "Pseudopotential-table interpolation headroom; must exceed the maximum linear cell contraction expected during vc-relax.",
       "default": 2
+    },
+    {
+      "key": "emin",
+      "group": "dos",
+      "type": "number",
+      "unit": "eV",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "dos"
+      ],
+      "steps": [
+        "dos"
+      ],
+      "programs": [
+        "dos.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "dos",
+        "path": [
+          "emin"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Lower edge of the dos.x energy window (Emin); unset, dos.x's own, from the lowest band energy. Must be below emax."
+    },
+    {
+      "key": "emax",
+      "group": "dos",
+      "type": "number",
+      "unit": "eV",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "dos"
+      ],
+      "steps": [
+        "dos"
+      ],
+      "programs": [
+        "dos.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "dos",
+        "path": [
+          "emax"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Upper edge of the dos.x energy window (Emax); unset, dos.x's own, from the highest band energy."
+    },
+    {
+      "key": "delta_e",
+      "group": "dos",
+      "type": "number",
+      "unit": "eV",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "dos"
+      ],
+      "steps": [
+        "dos"
+      ],
+      "programs": [
+        "dos.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "dos",
+        "path": [
+          "delta_e"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "dos.x energy step of the DOS grid (DeltaE, > 0); default 0.01 eV, aiida-quantumespresso's pdos.yaml."
+    },
+    {
+      "key": "broadening",
+      "group": "dos",
+      "type": "number",
+      "unit": "Ry",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "dos"
+      ],
+      "steps": [
+        "dos"
+      ],
+      "programs": [
+        "dos.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "dos",
+        "path": [
+          "broadening"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "dos.x broadening width (degauss, > 0); unset, the nscf step's smearing width, or none after tetrahedra occupations, whose integration dos.x then uses."
+    },
+    {
+      "key": "ngauss",
+      "group": "dos",
+      "type": "integer",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "dos"
+      ],
+      "steps": [
+        "dos"
+      ],
+      "programs": [
+        "dos.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "dos",
+        "path": [
+          "ngauss"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "dos.x broadening function: -99 Fermi-Dirac, -1 cold (Marzari-Vanderbilt), 0 Gaussian (default) or 1..10 a Methfessel-Paxton order. dos.x reads it only with a broadening width, so it needs broadening unless the nscf step uses smearing."
+    },
+    {
+      "key": "k_path_distance",
+      "group": "k_path",
+      "type": "number",
+      "unit": "1/Angstrom",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "band",
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "bands",
+        "dispersion"
+      ],
+      "programs": [
+        "matdyn.x",
+        "pw.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "k_path",
+        "path": [
+          "k_path_distance"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Largest spacing between neighbouring points of the high-symmetry path that a band task's bands step and a phonon task's dispersion step follow, with 2 pi included as for k_distance: each segment takes the fewest equal steps no longer than it, except that on fixed occupations, unless isolation is 'slab', a segment of the dispersion that ends at Gamma can take a few more (49 becomes 50), so that matdyn.x lands on Gamma exactly. Default 0.025, aiida-quantumespresso's bands.yaml. The path is read from the written cell's own symmetry, so a conventional cell or a supercell gives folded bands and phonon branches."
+    },
+    {
+      "key": "q_grid",
+      "group": "q_sampling",
+      "type": "array",
+      "items": "integer",
+      "minItems": 3,
+      "maxItems": 3,
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "ph"
+      ],
+      "programs": [
+        "ph.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": true,
+      "resolved_in": {
+        "record": "q_sampling",
+        "path": [
+          "mesh"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Explicit Gamma-centred q-point mesh (nq1, nq2, nq3) of a phonon task's ph.x run; wins outright over q_distance if both are set. Each count is at most 1024 and their product at most 49152, within q2r.x's limits. Refused unless every symmetry operation pw.x keeps maps it onto itself, with one division along each vacuum axis and equal counts on two axes an operation mixes, and refused with more than 1024 irreducible q-points."
+    },
+    {
+      "key": "q_distance",
+      "group": "q_sampling",
+      "type": "number",
+      "unit": "1/Angstrom",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "ph"
+      ],
+      "programs": [
+        "ph.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "q_sampling",
+        "path": [
+          "q_distance"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Target q-point spacing of a phonon task's ph.x mesh, with 2 pi included as for k_distance: axes the point group mixes share the larger count, and a vacuum axis always gets one q-point. Default 0.3, aiida-quantumespresso's ph protocol (balanced). A mesh beyond q2r.x's limits, more than 1024 divisions along an axis or 1024 irreducible q-points, is refused. The first step's k-mesh, unless the request sets it, is raised against the q-mesh: to the next multiple of each q-axis with smearing or tetrahedra, to at least it with fixed occupations.",
+      "default": 0.3
+    },
+    {
+      "key": "tr2_ph",
+      "group": "phonon",
+      "type": "number",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "ph"
+      ],
+      "programs": [
+        "ph.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "phonon",
+        "path": [
+          "tr2_ph"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Threshold of ph.x's self-consistent linear response (> 0). Default 1e-18, aiida-quantumespresso's ph protocol (balanced); ph.x's own is 1e-12.",
+      "default": 1e-18
+    },
+    {
+      "key": "alpha_mix",
+      "group": "phonon",
+      "type": "number",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "ph"
+      ],
+      "programs": [
+        "ph.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "phonon",
+        "path": [
+          "alpha_mix"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Mixing factor of ph.x's linear-response potential, alpha_mix(1), from 0 to 1, which ph.x applies at every iteration. Default 0.4, aiida-quantumespresso's ph protocol (balanced); ph.x's own is 0.7.",
+      "default": 0.4
+    },
+    {
+      "key": "nmix_ph",
+      "group": "phonon",
+      "type": "integer",
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "ph"
+      ],
+      "programs": [
+        "ph.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "phonon",
+        "path": [
+          "nmix_ph"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Number of iterations ph.x's potential mixing uses (>= 1). Default 8, aiida-quantumespresso's ph protocol (balanced); ph.x's own is 4.",
+      "default": 8
+    },
+    {
+      "key": "asr",
+      "group": "q2r",
+      "type": "string",
+      "enum": [
+        "crystal",
+        "simple"
+      ],
+      "unit": null,
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "q2r"
+      ],
+      "programs": [
+        "q2r.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "q2r",
+        "path": [
+          "asr"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Acoustic sum rule q2r.x applies to the effective charges and matdyn.x to the force constants of the phonon DOS and the dispersion. Default 'simple', which corrects the on-site force constants at every q, where the dominant violation, the FFT-grid error, sits; 'crystal', matdyn.x's projection, corrects that violation at Gamma only and can leave spurious imaginary modes elsewhere.",
+      "default": "simple"
+    },
+    {
+      "key": "dos_q_distance",
+      "group": "phonon_dos",
+      "type": "number",
+      "unit": "1/Angstrom",
+      "codes": [
+        "quantum_espresso"
+      ],
+      "tasks": [
+        "phonon",
+        "relax-phonon",
+        "vc-relax-phonon"
+      ],
+      "steps": [
+        "phonon_dos"
+      ],
+      "programs": [
+        "matdyn.x"
+      ],
+      "scope": "per_step",
+      "structure_specific": false,
+      "resolved_in": {
+        "record": "phonon_dos",
+        "path": [
+          "dos_q_distance"
+        ]
+      },
+      "ml_target": null,
+      "approaches": [
+        "human",
+        "heuristic"
+      ],
+      "description": "Spacing of the mesh on which matdyn.x interpolates the phonon DOS (tetrahedra, every 1 cm^-1), with 2 pi included as for k_distance. Default 0.10, the dos task's nscf spacing (aiida-quantumespresso's pdos.yaml).",
+      "default": 0.1
     }
   ],
   "pseudopotential_tables": [
@@ -2477,37 +3994,61 @@
       "code": "boundary.dipole_correction_suggested",
       "level": "info",
       "category": "boundary",
-      "message": "2D structure in a periodic cell: consider a dipole correction (tefield/dipfield) if the slab is asymmetric along the vacuum direction -- not set automatically here."
+      "message": "Polar slab in a periodic cell: no symmetry operation reverses the normal of its vacuum axis, so it can carry a dipole along that normal, and its periodic images add a spurious field across the vacuum. Consider Quantum ESPRESSO's dipole correction, not set automatically here: tefield = .true., dipfield = .true., edir along the vacuum axis, emaxpos and eopreg placing the sawtooth's drop inside the vacuum, and eamp = 0."
+    },
+    {
+      "code": "convergence.mixing_fixed_ns_freezes_hubbard_occupations",
+      "level": "warning",
+      "category": "convergence",
+      "message": "mixing_fixed_ns = N holds the Hubbard occupation matrix at its starting value for the first N SCF iterations, and pw.x can report convergence inside that window; the resulting energies, forces and stresses are then not self-consistent DFT+U results. Use a nonzero value only for a preparatory run whose output seeds a separate run with ns free."
     },
     {
       "code": "cutoffs.ecutrho_derived_from_dual",
       "level": "info",
       "category": "cutoffs",
-      "message": "ecutrho derived as charge_density_dual x ecutwfc for one or more elements (no explicit value published for that pseudopotential)."
+      "message": "ecutrho derived as the table's charge_density_dual x the resolved ecutwfc: the selected pseudopotentials publish no density cutoff (PseudoDojo)."
     },
     {
       "code": "hubbard.projector_mismatch",
       "level": "warning",
       "category": "hubbard",
-      "message": "Materials Project's U values are calibrated for VASP's PAW projectors; QE's atomic/ortho-atomic/norm-atomic projectors are not guaranteed to give the same effective U for the same physical correction."
+      "message": "A built-in U value was not derived with the Quantum ESPRESSO projectors this input uses (hubbard_projectors), so the same U need not give the same correction."
     },
     {
       "code": "hubbard.starting_ns_eigenvalue_missing",
       "level": "warning",
       "category": "hubbard",
-      "message": "No starting_ns_eigenvalue initial occupation-matrix guess is provided (pitfall A10): +U calculations have multiple metastable occupation-matrix solutions and may converge to the wrong one silently. Supplying an explicit initial guess is recommended but not computed automatically here."
+      "message": "No starting_ns_eigenvalue initial occupation-matrix guess is provided: +U calculations have multiple metastable occupation-matrix solutions and may converge to the wrong one silently. Supplying an explicit initial guess is recommended but not computed automatically here."
+    },
+    {
+      "code": "hubbard.u_value_missing",
+      "level": "warning",
+      "category": "hubbard",
+      "message": "An element that would get +U has no published U value, so it gets plain DFT; u_by_element can apply one unless no installed pseudopotential carries that element's manifold."
+    },
+    {
+      "code": "hubbard.u_by_element_unused",
+      "level": "warning",
+      "category": "hubbard",
+      "message": "u_by_element names elements this structure does not contain, which are ignored."
     },
     {
       "code": "job.partition_upgraded_for_memory",
       "level": "info",
       "category": "job",
-      "message": "the default partition cannot fit the estimated memory footprint even at its node ceiling; a larger-memory partition on the same profile was used instead."
+      "message": "pw.x's estimated memory does not fit the default partition at any node count up to its ceiling; a larger-memory partition on the same profile was used instead."
     },
     {
       "code": "job.no_larger_partition_available",
       "level": "warning",
       "category": "job",
-      "message": "the estimated memory footprint does not fit the default partition even at its node ceiling, and the HPC profile has no larger -memory partition to fall back to."
+      "message": "pw.x's estimated memory does not fit the default partition at any node count up to its ceiling, and the HPC profile has no larger-memory partition to fall back to."
+    },
+    {
+      "code": "job.memory_exceeds_node",
+      "level": "warning",
+      "category": "job",
+      "message": "pw.x's estimated memory per process, times the tasks on one node and a 1.2 safety factor, exceeds a node's memory; the job is likely to run out of memory."
     },
     {
       "code": "job.walltime_defaulted",
@@ -2528,6 +4069,24 @@
       "message": "walltime_h exceeds the chosen partition's own ceiling; the scheduler will likely refuse this request."
     },
     {
+      "code": "k_path.folded_bands",
+      "level": "info",
+      "category": "k_path",
+      "message": "the written cell holds several primitive cells (a conventional cell or a supercell), so the high-symmetry path, taken from the primitive cell, gives folded bands or phonon branches; upload the primitive cell to unfold them."
+    },
+    {
+      "code": "k_path.magnetic_noncollinear_symmetry",
+      "level": "warning",
+      "category": "k_path",
+      "message": "the run is spin-polarized with spin-orbit coupling: the high-symmetry path follows the cell's symmetry without the moment directions, so segments it treats as equivalent may differ, and for the bands it assumes E(k) = E(-k), which the moments can break."
+    },
+    {
+      "code": "k_path.non_special_vertices",
+      "level": "info",
+      "category": "k_path",
+      "message": "in space group R3 or R-3 with a rhombohedral angle below 90 degrees, the path vertices B, B_1, P, P_1, Q and X are general points of the zone boundary, not points of special symmetry."
+    },
+    {
       "code": "k_sampling.grid_and_distance_conflict",
       "level": "info",
       "category": "k_sampling",
@@ -2540,16 +4099,52 @@
       "message": "both k_index and k_distance were given; k_index wins outright and k_distance is ignored."
     },
     {
+      "code": "phonon.k_mesh_raised",
+      "level": "info",
+      "category": "k_sampling",
+      "message": "the k-mesh was raised against the phonon q-mesh: with smearing or tetrahedra each k-axis to the next multiple of its q-axis, since Quantum ESPRESSO's PHonon user guide notes that the phonons of a metal converge slowly in k when q-points are not differences of k-points; with fixed occupations to at least its q-axis, since a q-mesh denser than the k-mesh can give spurious acoustic frequencies near Gamma (Petretto et al., Comput. Mater. Sci. 144, 331 (2018)). This is a convergence default, not a ph.x requirement: set k_grid, k_index or k_distance to use your own mesh."
+    },
+    {
+      "code": "phonon.k_grid_coarser_than_q",
+      "level": "warning",
+      "category": "k_sampling",
+      "message": "the requested k-mesh is coarser than the phonon q-mesh along some axis, and a q-mesh denser than the k-mesh can give spurious acoustic frequencies near Gamma (Petretto et al., Comput. Mater. Sci. 144, 331 (2018)); leave k_grid, k_index and k_distance unset for the phonon default, which raises the k-mesh against the q-mesh."
+    },
+    {
+      "code": "phonon.k_grid_not_commensurate",
+      "level": "warning",
+      "category": "k_sampling",
+      "message": "with smearing or tetrahedra, the requested k-mesh is not a multiple of the phonon q-mesh along some axis, so some q-points are not differences of k-points, and the phonons of a metal then converge very slowly in k (Quantum ESPRESSO's PHonon user guide); leave k_grid, k_index and k_distance unset for the phonon default, which raises the k-mesh against the q-mesh."
+    },
+    {
+      "code": "phonon.lanthanide_actinide_k",
+      "level": "info",
+      "category": "k_sampling",
+      "message": "the structure holds a lanthanide or an actinide and the run uses smearing or tetrahedra: if it is a metal, Nascimento et al. advise k_distance 0.10 1/Angstrom for metals of that kind (npj Comput. Mater. (2026), doi:10.1038/s41524-026-02097-8)."
+    },
+    {
       "code": "magnetic.soc_suggested",
       "level": "info",
       "category": "magnetic",
-      "message": "heavy, non-s-block elements are present; consider enabling spin_orbit_coupling (not enabled automatically -- it changes cost and setup)."
+      "message": "heavy, non-s-block elements are present; consider enabling spin_orbit_coupling (not enabled automatically -- it changes cost and setup); with it, automatic selection uses the named fully relativistic table."
     },
     {
-      "code": "magnetic.metallicity_unknown_defaulted_non_magnetic",
+      "code": "magnetic.soc_unavailable",
+      "level": "info",
+      "category": "magnetic",
+      "message": "heavy, non-s-block elements are present, where spin-orbit coupling can matter, but spin_orbit_coupling cannot be enabled for them with this functional and the registered pseudopotential tables: the table selector's refusal names what rejected each table."
+    },
+    {
+      "code": "magnetic.magnetism_unknown_defaulted_spin_polarized",
       "level": "warning",
       "category": "magnetic",
-      "message": "magnetism could not be determined; defaulted to non-magnetic."
+      "message": "magnetism could not be determined; defaulted to spin-polarized."
+    },
+    {
+      "code": "magnetic.spin_polarized_for_hubbard_open_shell",
+      "level": "warning",
+      "category": "magnetic",
+      "message": "a Hubbard U acts on an odd d or f electron count, which only a spin-polarized run can polarize; spin polarization is turned on over the llm's or is_magnetic's spin-unpolarized answer."
     },
     {
       "code": "magnetic.afm_ordering_unavailable",
@@ -2558,10 +4153,16 @@
       "message": "antiferromagnetic ordering was requested but could not be produced; kept ferromagnetic order."
     },
     {
+      "code": "magnetic.afm_no_open_shell_sites",
+      "level": "warning",
+      "category": "magnetic",
+      "message": "no site carries a local d or f moment, so there is no antiferromagnetic ordering to apply; only ferromagnetic order is available. To change that, set starting_magnetization per site label, on a cell whose labels separate the sublattices, to seed an ordering yourself."
+    },
+    {
       "code": "magnetic.afm_ordering_applied",
       "level": "info",
       "category": "magnetic",
-      "message": "a compensated antiferromagnetic ordering was found and applied; relabeled_structure now differs from structure."
+      "message": "an antiferromagnetic ordering (opposite starting moments on the sites with a local moment) was found and applied: the label, why it was picked and the other listed candidates of its size are named; the input is written for its cell, which can differ from the uploaded one."
     },
     {
       "code": "magnetic.magnetization_ignored_spin_polarized_false",
@@ -2570,22 +4171,70 @@
       "message": "tot_magnetization/starting_magnetization were given but spin_polarized is explicitly false; both are ignored."
     },
     {
+      "code": "magnetic.ordering_ignored_spin_polarized_false",
+      "level": "warning",
+      "category": "magnetic",
+      "message": "a magnetic_ordering was given but spin_polarized is explicitly false; the ordering is ignored and the run is not spin-polarized."
+    },
+    {
+      "code": "magnetic.soc_moment_direction_defaulted",
+      "level": "info",
+      "category": "magnetic",
+      "message": "the moments of this spin-orbit run start along [0 0 1] of the uploaded cell (its third lattice vector). The direction is a physical choice -- magnetic anisotropy, orbital moments and band splittings depend on it -- not a converged default; set moment_direction to a lattice direction [u, v, w] of the uploaded cell to choose another."
+    },
+    {
+      "code": "magnetic.moment_direction_ignored",
+      "level": "warning",
+      "category": "magnetic",
+      "message": "moment_direction was given but only a spin-polarized run with spin_orbit_coupling has a moment direction; it is ignored."
+    },
+    {
+      "code": "magnetic.cell_framed",
+      "level": "info",
+      "category": "magnetic",
+      "message": "the cell is written turned rigidly, with its origin moved, or idealized to its space group, in the frame where pw.x, which tests fixed Cartesian rotations only, keeps the most of its symmetry operations (a slab with its vacuum along c always with a along +x); the rotation, shift, largest displacement and number of operations kept are named and recorded as magnetic.frame."
+    },
+    {
+      "code": "is_metal.model_warning",
+      "level": "warning",
+      "category": "is_metal",
+      "message": "The model that decided is_metal returned a caveat with its prediction (for example, that it has not been externally validated); the model's own text is the message."
+    },
+    {
+      "code": "is_magnetic.model_warning",
+      "level": "warning",
+      "category": "is_magnetic",
+      "message": "The model that decided is_magnetic returned a caveat with its prediction (for example, that it has not been externally validated); the model's own text is the message."
+    },
+    {
+      "code": "k_sampling.model_warning",
+      "level": "warning",
+      "category": "k_sampling",
+      "message": "The model that decided k_sampling returned a caveat with its prediction (for example, that it has not been externally validated); the model's own text is the message."
+    },
+    {
       "code": "nbnd.spin_channel_note",
       "level": "info",
       "category": "nbnd",
-      "message": "nspin=2 doubles the number of k-points QE solves internally, not the number of bands -- nbnd here is per spin channel, unchanged from the non-spin-polarized formula."
+      "message": "nspin=2 doubles the number of k-points QE solves internally, not the number of bands -- nbnd here is per spin channel, pw.x's default rule (QE setup.f90) for a majority channel holding nelup = (nelec + |M|)/2 electrons, M being tot_magnetization or, on a smearing or tetrahedra run without one, the net moment the starting magnetization seeds, where pw.x itself would split the electrons evenly."
     },
     {
       "code": "nbnd.noncollinear_bands_doubled",
       "level": "info",
       "category": "nbnd",
-      "message": "noncollinear/spin-orbit bands hold one electron each, not two, so nbnd here is based on the full electron count rather than half of it -- roughly double a comparable non-magnetic run."
+      "message": "noncollinear/spin-orbit bands are spinors holding one electron each, not two, so nbnd here is twice pw.x's default for the same electron count and occupations without spin (QE setup.f90: padded per spin channel, then doubled)."
+    },
+    {
+      "code": "nbnd.moment_capped",
+      "level": "warning",
+      "category": "nbnd",
+      "message": "nbnd leaves the majority spin channel of a collinear smearing run no room for the moment its starting magnetization seeds: pw.x holds the moment at 2*nbnd - nelec Bohr magnetons per cell without an error, and an nscf or bands step leaves occupied majority bands out if the scf's moment reaches the seed. Raise nbnd, or unset nbnd and extra_bands."
     },
     {
       "code": "occupations.fixed_spin_polarized_needs_integer_tot_magnetization",
       "level": "warning",
       "category": "occupations",
-      "message": "occupations='fixed' with a spin-polarized system requires an integer tot_magnetization -- checks.py enforces this, not this advisor."
+      "message": "occupations='fixed' on a collinear spin-polarized run needs an integer tot_magnetization, and none was set or derived; the input is refused until tot_magnetization is set or occupations is smearing."
     },
     {
       "code": "parallelisation.npool_does_not_divide_ntasks",
@@ -2597,37 +4246,85 @@
       "code": "parallelisation.npool_exceeds_kpoints",
       "level": "warning",
       "category": "parallelisation",
-      "message": "npool exceeds the number of reduced k-points; at least one pool will have no k-point to work on."
+      "message": "npool exceeds the number of k-point/spin pairs pw.x distributes; the extra pools will have no k-point to work on."
     },
     {
       "code": "parallelisation.npool_load_imbalance",
       "level": "info",
       "category": "parallelisation",
-      "message": "npool divides ntasks but not the number of reduced k-points evenly; some pools will handle one more k-point than others."
-    },
-    {
-      "code": "parallelisation.ndiag_ignored_no_scalapack",
-      "level": "warning",
-      "category": "parallelisation",
-      "message": "ndiag was given but the code was not built with ScaLAPACK on this profile; QE ignores -ndiag in that case."
+      "message": "npool does not divide the number of k-point/spin pairs evenly; the first pools handle one more pair than the rest."
     },
     {
       "code": "parallelisation.ndiag_not_a_square_integer",
-      "level": "warning",
+      "level": "info",
       "category": "parallelisation",
-      "message": "ndiag is not a square integer; QE's own default-selection rule always picks one, and a non-square value may be rejected."
+      "message": "ndiag is not a square integer; pw.x runs the largest square grid that fits and never rejects the value."
     },
     {
-      "code": "relax.cell_dofree_non_hexagonal_2d",
+      "code": "phonon.relax_first",
+      "level": "info",
+      "category": "phonon",
+      "message": "the phonons are computed at the geometry as written, and leftover forces shift their frequencies, soft modes most. Relax it first with the same settings, hubbard_projectors included, and forc_conv_thr at most 1e-4 Ry/Bohr, or use the relax-phonon or vc-relax-phonon task, which relax in the same job; the scf prints the forces and the stress on the written geometry."
+    },
+    {
+      "code": "phonon.loose_force_threshold",
       "level": "warning",
       "category": "relax",
-      "message": "cell_dofree='2Dxy' is being used on a non-hexagonal 2D structure; QE's own docs warn the symmetry-preserving 'ibrav+2Dxy' form 'will never converge' for non-hexagonal cells, so the bare '2Dxy' form is used instead, which can silently break exact cell symmetry during relaxation."
+      "message": "the requested forc_conv_thr is looser than 1e-4 Ry/Bohr, the phonon tasks' relaxation threshold (aiida-quantumespresso's balanced protocol): the phonons are computed at the relaxed geometry, and leftover forces shift their frequencies, soft modes most. Leave forc_conv_thr unset for 1e-4, or set a smaller value."
+    },
+    {
+      "code": "phonon.vc_relax_input_cell",
+      "level": "info",
+      "category": "phonon",
+      "message": "the q-mesh, the k-mesh and the dispersion path were built on the input cell. The meshes keep their divisions on the relaxed cell, so their spacing changes with it. The path keeps its vertices' crystal coordinates, which matdyn.x applies to the relaxed cell's reciprocal vectors: they stay the same special points except in BCT, ORCF, ORCI, ORCC, RHL, MCL and MCLC cells and centred-rectangular or oblique layers, whose special points move with the axis ratios and angles, and a cell near a boundary between Setyawan-Curtarolo subtypes can change subtype. The vc-relax makes one pass: no relaxation follows its final scf on the relaxed cell, so check the forces and the stress that scf prints, and run the task again from the relaxed structure if they are large."
+    },
+    {
+      "code": "phonon.slab_lo_to_needs_2d_truncation",
+      "level": "warning",
+      "category": "phonon",
+      "message": "the slab has periodic boundaries and fixed occupations, so q2r.x and matdyn.x build the long-range (LO-TO) part of its force constants in the 3D form, which for a two-dimensional material depends on the vacuum width. Set isolation=slab, Quantum ESPRESSO's 2D Coulomb truncation, with which they use the 2D form instead."
+    },
+    {
+      "code": "phonon.magnetic_noncollinear_experimental",
+      "level": "warning",
+      "category": "phonon",
+      "message": "spin-orbit coupling with spin polarization: Quantum ESPRESSO's PHonon examples describe the phonons of magnetic systems with spin-orbit coupling as experimental (Urru and Dal Corso, Phys. Rev. B 100, 045115 (2019)); check them with care."
+    },
+    {
+      "code": "phonon.hubbard_experimental",
+      "level": "warning",
+      "category": "phonon",
+      "message": "a Hubbard U is applied: Quantum ESPRESSO's PHonon examples describe phonons with a Hubbard U (DFPT+U) as experimental (Floris et al., Phys. Rev. B 101, 064305 (2020)); check them with care."
+    },
+    {
+      "code": "phonon.d3_two_body",
+      "level": "info",
+      "category": "phonon",
+      "message": "DFT-D3 is used, and d3hess.x builds the D3 part of the dynamical matrices from two-body terms only, so the first step writes dftd3_threebody = .false.: its energy, forces and any relaxation use the same two-body D3. The relax and vc-relax tasks keep the three-body terms, so a geometry they relaxed is not at this equilibrium; relax-phonon and vc-relax-phonon relax with two-body D3."
+    },
+    {
+      "code": "q_sampling.grid_and_distance_conflict",
+      "level": "info",
+      "category": "q_sampling",
+      "message": "both q_grid and q_distance were given; q_grid wins outright and q_distance is ignored."
     },
     {
       "code": "vdw.double_counting_avoided",
       "level": "info",
       "category": "vdw",
       "message": "a vdW correction method was requested, but the chosen functional already includes dispersion physics; no correction was added to avoid double-counting it."
+    },
+    {
+      "code": "vdw.d3bj_unavailable_for_functional",
+      "level": "warning",
+      "category": "vdw",
+      "message": "a low-dimensional structure defaults to D3(BJ) dispersion, but Quantum ESPRESSO's DFT-D3 has no parameters for the chosen functional; no correction was added. Choose a functional with D3(BJ) parameters (PBE, PBEsol) if dispersion matters."
+    },
+    {
+      "code": "overrides.applies_to_multiple_steps",
+      "level": "info",
+      "category": "overrides",
+      "message": "A setting given without steps.<step>. applies to every step of the task it fits; this notice names them when that is more than one."
     }
   ],
   "sources": [

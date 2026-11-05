@@ -23,11 +23,15 @@ PIN = core_server.CORE_PIN
 TARBALL = REPO_ROOT / "app" / "vendor" / PIN["workbench"]["tarball"]
 
 
-def _bundle_js() -> str:
+def _tarball_text(name: str) -> str:
     with tarfile.open(TARBALL) as tar:
-        member = tar.extractfile("package/dist-lib/index.js")
+        member = tar.extractfile(f"package/{name}")
         assert member is not None
         return member.read().decode("utf-8")
+
+
+def _bundle_js() -> str:
+    return _tarball_text("dist-lib/index.js")
 
 
 def test_pin_names_an_stfc_release() -> None:
@@ -61,6 +65,10 @@ def test_vendored_tarball_is_the_pinned_one() -> None:
     assert vendored == [TARBALL.name]
     digest = hashlib.sha256(TARBALL.read_bytes()).hexdigest()
     assert digest == PIN["workbench"]["sha256"]
+    # core releases goldilocks-workbench under its own version, so the
+    # tarball scripts/bump_core.py packs at the tag carries it.
+    assert TARBALL.name == f"goldilocks-workbench-{PIN['version']}.tgz"
+    assert json.loads(_tarball_text("package.json"))["version"] == PIN["version"]
 
     spec = f"file:vendor/{TARBALL.name}"
     package = json.loads((REPO_ROOT / "app" / "package.json").read_text("utf-8"))

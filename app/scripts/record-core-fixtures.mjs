@@ -46,11 +46,17 @@ const compute = {
   overrides: {},
   fetch_missing: false,
 };
+// A draft core lets through /explain but blocks from generating input files:
+// `isolation=slab` needs vacuum, which a bulk structure doesn't have, so the
+// verdict carries a finding with a remedy.
+const blocked = await call("/explain", { ...compute, overrides: { isolation: "slab" } });
+if (blocked.blocking.length === 0) throw new Error("isolation=slab no longer blocks this structure");
 const fixtures = {
   "structure.json": structure,
   "capabilities.json": capabilities,
   "inspect.json": await call("/inspect", structure),
   "explain.json": await call("/explain", compute),
+  "explain-blocked.json": blocked,
 };
 const out = new URL("../src/__fixtures__/core/", import.meta.url);
 await mkdir(out, { recursive: true });

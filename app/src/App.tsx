@@ -12,7 +12,7 @@ import {
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
-import { dispatchDftTool, downloadDftBundle, restoreDftWorkspace } from "./dftWorkbench";
+import { dispatchDftTool, keepBundle, restoreDftWorkspace, saveBundle } from "./dftWorkbench";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
@@ -1845,9 +1845,9 @@ function CoreWorkbenchTabs({
 }
 
 // How long the reload restore waits for goldilocks-core to come up: longer
-// than core_server.py's own startup cap (15 minutes with mMACE's first-time
-// setup), which reports an error itself when that runs out.
-const CORE_SERVER_RESTORE_WAIT_MS = 20 * 60 * 1000;
+// than core_server.py's own startup cap (`_STARTUP_TIMEOUT`, an hour), which
+// reports an error itself when that runs out.
+const CORE_SERVER_RESTORE_WAIT_MS = 65 * 60 * 1000;
 
 // A plain status message for whenever the embedded Workbench isn't safe to
 // mount yet (see the `/api/core-server/ensure` polling effect in App()) --
@@ -1861,14 +1861,15 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   if (status?.status === "error") {
     return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
   }
-  // (#3) The first-ever start downloads several hundred MB of models and
-  // pseudopotentials before goldilocks-core can even begin listening
-  // (core_server.py's `_STARTUP_TIMEOUT` budgets 3 minutes for that; a
-  // subsequent cold start with everything already cached is ~1s). This
-  // message can't tell which case it's in -- `/api/core-server/ensure`
-  // doesn't expose that -- so it names the slow case rather than implying
-  // every start takes this long.
-  return "Starting goldilocks-core's Workbench backend -- first-time setup downloads models and pseudopotentials and can take a few minutes (up to ~15 minutes if MLIP's mMACE model is enabled); it's fast on every start after that.";
+  // (#3) The first start -- ever, or after a core upgrade -- installs core's
+  // dependencies and downloads its models and pseudopotentials before
+  // goldilocks-core can begin listening, which has taken over 20 minutes on a
+  // slow link (core_server.py's `_STARTUP_TIMEOUT`); a start with everything
+  // in place takes seconds. While starting, `detail` is core's latest output
+  // line. It can sit on one line for minutes: `goldilocks assets install`
+  // prints nothing until every download has finished.
+  const progress = status?.status === "starting" && status.detail ? ` Latest goldilocks-core output: ${status.detail}` : "";
+  return `Starting goldilocks-core's Workbench backend -- the first start after installing or upgrading downloads core's models and pseudopotentials and can take many minutes; later starts take seconds.${progress}`;
 }
 
 // Only activatable Tools resolve -- a `comingSoon` id (e.g. from a chat
@@ -1914,6 +1915,9 @@ export default function App() {
   // goldilocks-workbench package DFT Workbench's full-page detail and inline
   // panel both reuse, see CoreWorkbenchTree/CoreWorkbenchTabs).
   const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
+  // The archive a successful dft_download_bundle just kept (`keepBundle`),
+  // until that call's `tool_result` event creates its Download card.
+  const pendingBundleIdRef = useRef<string | null>(null);
   // goldilocks-agent's own /api/core-server/ensure readiness state for the
   // goldilocks-core HTTP backend the embedded Workbench above needs --
   // null until the first poll response lands. Deliberately NOT reset when
@@ -2286,10 +2290,10 @@ export default function App() {
   // they're written in (see `restorableDraftPatch`). Only ever writes a loaded
   // structure: the workspace starts empty on every page load, and clearing the
   // key on "empty" used to erase the saved state before the restore below
-  // could use it (#18). Deliberately excludes `lastDownload`: it's a real
-  // `Blob`, not JSON-serializable, and the restore effect below regenerates it
-  // fresh via `review.refreshArchive` instead of trying to freeze the exact
-  // old bytes.
+  // could use it (#18). Leaves out the generated archive (`preview`): it's a
+  // real `Blob`, not JSON-serializable, and the restore effect below
+  // regenerates it via `review.refreshArchive` instead of trying to freeze the
+  // exact old bytes.
   useEffect(() => {
     return coreWorkspace.subscribe(() => {
       const snapshot = coreWorkspace.getSnapshot();
@@ -2306,7 +2310,7 @@ export default function App() {
   }, [coreWorkspace]);
 
   // Replays the persisted structure/settings back into `coreWorkspace` once,
-  // on mount (#5). A real re-run of inspect/review/generate against
+  // on mount (#5). A real re-run of inspect/review/preview against
   // goldilocks-core's backend, not a cheap local restore -- there's no
   // "just set the state" action in goldilocks-workbench's `Workspace`
   // interface, only real actions -- so this deliberately trades the #7
@@ -3354,6 +3358,8 @@ export default function App() {
     } catch (err) {
       outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
     }
+    pendingBundleIdRef.current =
+      payload.tool === "dft_download_bundle" && "result" in outcome ? keepBundle(coreWorkspace) : null;
     // Stopped mid-chain: don't resume. Resuming would start the very model
     // turn the user just stopped; the still-paused tool call is closed by
     // graph.py's _repair_orphaned_tool_calls on their next message instead.
@@ -3473,15 +3479,18 @@ export default function App() {
             if (payload.tool === "dft_download_bundle" && payload.result?.filename) {
               // Inline download affordance, not just the Bundle card: a
               // real user click here is exactly as "direct a gesture" as
-              // clicking the card's own button (see downloadDftBundle),
-              // and having it live at the point in the transcript where it
-              // was generated is more discoverable than "go look at the
-              // right-side panel" (2026-09-25, requested after exactly
-              // that friction was flagged in real use).
+              // clicking the card's own button, and having it live at the
+              // point in the transcript where it was generated is more
+              // discoverable than "go look at the right-side panel"
+              // (2026-09-25, requested after exactly that friction was
+              // flagged in real use). It saves the archive this call
+              // produced (`saveBundle`), even after a settings change.
+              const bundleId = pendingBundleIdRef.current;
+              pendingBundleIdRef.current = null;
               replaceSession(targetSessionId, (current) => ({
                 ...current,
                 messages: [...current.messages, {
-                  role: "dft-bundle-ready", filename: payload.result.filename,
+                  role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
                 }],
               }));
             } else if (payload.tool === "find_in_databases") {
@@ -9305,7 +9314,7 @@ export default function App() {
                               <LogoImage alt="Goldilocks logo" />
                             </div>
                             <div className="message-content">
-                              <DftBundleCard filename={message.filename} onDownload={() => downloadDftBundle(coreWorkspace)} />
+                              <DftBundleCard filename={message.filename} onDownload={() => saveBundle(message.bundleId ?? undefined)} />
                             </div>
                           </div>
                         );

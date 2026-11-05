@@ -80,58 +80,33 @@ start by hand either way. Its output, including the traceback behind any
 HTTP 500, goes to goldilocks-agent's own log prefixed `[goldilocks-core]`
 (`docker compose logs agent` in Docker).
 
-**Optional: magnetism ML tier (mMACE)** -- upgrades two of DFT Workbench's
-magnetism fields (`is_magnetic` classification, magnetic-ordering ranking)
-from a heuristic/LLM tier to a real ML model. This is entirely
-goldilocks-core's feature (model, checkpoint, and classification logic all
-live there) -- goldilocks-agent only auto-starts the process that serves
-it, the same as plain DFT Workbench above. Requires **checkout mode**
-(`GOLDILOCKS_CORE_PATH`) -- the PyPI/`GOLDILOCKS_AGENT_CORE_AUTOSTART` path
-can't host this, because the `mace` fork it needs has no PyPI release and
-can only be installed into a real venv you control:
+**Magnetism ML tier (mMACE)** -- goldilocks-core's ML `is_magnetic`
+classification and magnetic-ordering ranking. Since goldilocks-core v0.3.0
+it needs no setup of its own, in either mode: `mace-torch` is an ordinary
+core dependency, and `goldilocks assets install workbench`, which the
+auto-start runs before serving, installs the model's backbone with core's
+other models. Open DFT Workbench and load a magnetic structure (e.g.
+goldilocks-core's own `src/goldilocks_core/examples/structures/Fe_bcc.cif`)
+-- the Analysis card's "is magnetic" caption reads "Goldilocks-ML
+prediction".
 
-```bash
-# 1. In your goldilocks-core checkout (same one GOLDILOCKS_CORE_PATH points
-#    at, with its `http` extra already synced per above)
-cd /path/to/your/goldilocks-core
-uv pip install ase==3.28.0 e3nn==0.4.4 sphericart==1.0.9 sphericart-torch==1.0.9
-uv pip install "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
+Upgrading from an earlier setup:
 
-# 2. One-time checkpoint download -- verify it: a truncated or error-page
-#    download still loads without error, then predicts garbage
-mkdir -p ~/.local/share/goldilocks/mmace
-curl -L -o ~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model \
-  https://data-collections.psdi.ac.uk/api/records/1g8rw-q8128/files/mace_matpes_pbe_baseline_run-3.model/content
-md5sum ~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model  # `md5` on macOS
-# expect 2486abb4f6380a599759833125565019 (84,430,851 bytes)
+- Unset `GOLDILOCKS_MACE_BACKBONE` if it still points at the v1.0 checkpoint
+  (`mace_matpes_pbe_baseline_run-3.model`). It overrides the installed
+  backbone, and core refuses the v1.0 file, so every `is_magnetic` request
+  fails.
+- A checkout with the `CheukHinHoJerry/mace` fork or `sphericart` installed
+  by hand gets its locked `mace-torch` back on the next
+  `uv sync --extra http` there.
+- The first start after the upgrade fetches the changed models and the
+  PseudoDojo tables again (from PSDI), which can take many minutes; DFT
+  Workbench says so, with core's latest output, while it runs.
 
-# 3. Back in goldilocks-agent, same shell, before starting the backend
-export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
-export GOLDILOCKS_MACE_BACKBONE=~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model
-uv run poe serve
-```
-
-With `GOLDILOCKS_AGENT_MMACE_ENABLED=1` (both Docker compose files set it),
-goldilocks-agent does steps 1-3 itself the first time DFT Workbench opens,
-and only accepts a checkpoint whose size and md5 match the published ones
--- anything else is downloaded again, and a download that still doesn't
-match stops the backend from starting with that reason.
-
-Open DFT Workbench and load a magnetic structure (e.g. goldilocks-core's
-own `src/goldilocks_core/examples/structures/Fe_bcc.cif`) -- the Analysis
-card's "is magnetic" caption switches to "Goldilocks-ML prediction" once
-the ML tier is live.
-
-One thing worth knowing: running a plain `uv sync` (with or without extra
-flags) in the checkout wipes the two manually-installed packages again --
-they're not in `uv.lock`, and never can be (PyPI rejects a git dependency
-in a published package's metadata outright). Rerun step 1 above after any
-`uv sync` there. goldilocks-agent's own auto-spawn (`uv run --directory
-<path> poe serve`) does *not* trigger this, only a `uv sync` you run
-yourself.
+goldilocks-core's `docs/mmace-setup.md` has the details.
 
 Don't confuse this with **MLIP Playground** above -- different `mace`
-package (this public fork vs. `janus-core`'s own `[mace]` extra), different
+package (core's own `mace-torch` vs. `janus-core`'s `[mace]` extra), different
 purpose (magnetism classification/ranking vs. general-purpose
 single-point/EOS/NEB/phonon calculations), different checkpoint, no shared
 configuration.
