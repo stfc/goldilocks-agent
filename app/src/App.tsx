@@ -3259,6 +3259,9 @@ export default function App() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    // The whole turn runs on this model, including the resumes after its
+    // client tool calls -- the selector stays usable while a reply streams.
+    const modelId = selectedModel.id;
 
     try {
       const response = await fetch("/api/chat", {
@@ -3267,7 +3270,7 @@ export default function App() {
         body: JSON.stringify({
           thread_id: targetSession.id,
           message: { role: "user", content },
-          model_id: selectedModel.id,
+          model_id: modelId,
           title: nextTitle,
           project_id: targetSession.projectId,
           tool: targetSession.tool ?? null,
@@ -3290,7 +3293,7 @@ export default function App() {
       });
 
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, targetSession.id, controller.signal);
+      await readChatStream(response, targetSession.id, controller.signal, modelId);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
@@ -3340,8 +3343,10 @@ export default function App() {
   // involved, the resume value is the tool's real result. Adds no
   // transcript message of its own -- the `tool_result` SSE handler's own
   // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
-  // narrated reply are what's user-visible for these tools.
-  async function runClientToolCall(sessionId, payload, signal) {
+  // narrated reply are what's user-visible for these tools. `modelId` is the
+  // turn's model: the server keeps none per thread, so a resume without it
+  // falls back to the local model (#14).
+  async function runClientToolCall(sessionId, payload, signal, modelId) {
     let outcome;
     try {
       outcome = await dispatchDftTool(
@@ -3362,11 +3367,11 @@ export default function App() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: sessionId, resume: outcome }),
+        body: JSON.stringify({ thread_id: sessionId, resume: outcome, model_id: modelId }),
         signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, signal);
+      await readChatStream(response, sessionId, signal, modelId);
     } catch (err) {
       if (err.name === "AbortError") return;
       console.error("LLM error:", err);
@@ -3399,6 +3404,8 @@ export default function App() {
   // and that POST's own nested stream -- since the stream that delivered
   // the client_tool_call has already ended by then; aborting only that one
   // used to leave Stop doing nothing for the rest of the chain (2026-10-09).
+  // `modelId` travels the same way, so every hop's resume names the model
+  // the turn started on (#14).
   //
   // The updater must stay pure (2026-10-09): the first version of this
   // tracked the bubble by object reference, reassigned *inside* the
@@ -3406,7 +3413,7 @@ export default function App() {
   // discards one result (as can any interrupted concurrent render), which
   // left that reference pointing at an object no committed state contained,
   // so every delta appended a new bubble instead of updating the existing one.
-  async function readChatStream(response, targetSessionId, signal) {
+  async function readChatStream(response, targetSessionId, signal, modelId) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const streamId = createId();
@@ -3547,7 +3554,7 @@ export default function App() {
           // resume automatically.
           try {
             const payload = JSON.parse(data);
-            await runClientToolCall(targetSessionId, payload, signal);
+            await runClientToolCall(targetSessionId, payload, signal, modelId);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -3584,15 +3591,18 @@ export default function App() {
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    // A confirmation click is a user action like send(): it resumes on the
+    // model selected now.
+    const modelId = selectedModel.id;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: sessionId, resume: { approved } }),
+        body: JSON.stringify({ thread_id: sessionId, resume: { approved }, model_id: modelId }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, controller.signal);
+      await readChatStream(response, sessionId, controller.signal, modelId);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
