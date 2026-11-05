@@ -9,6 +9,8 @@ import {
   WorkspaceProvider as CoreWorkspaceProvider,
   colorSchemeManager as coreColorSchemeManager,
   createWorkspace as createCoreWorkspace,
+  useWorkspace as useCoreWorkspace,
+  useWorkspaceSnapshot as useCoreWorkspaceSnapshot,
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
@@ -1465,6 +1467,7 @@ function SimpleSelect<TId extends string | number = string | number>({
   onSelect,
   onAsk,
   disabled,
+  valueLabel = "—",
 }: {
   label: string;
   value: TId;
@@ -1474,8 +1477,10 @@ function SimpleSelect<TId extends string | number = string | number>({
   onSelect: (id: TId) => void;
   onAsk?: (item: PickerItem<TId>) => void;
   disabled?: boolean;
+  // Trigger text when `value` matches no item.
+  valueLabel?: string;
 }) {
-  const displayValue = items.find((i) => i.id === value)?.label ?? "—";
+  const displayValue = items.find((i) => i.id === value)?.label ?? valueLabel;
   return (
     <div className={`workspace-picker${isOpen ? " open" : ""}${disabled ? " disabled" : ""}`}>
       <button className="workspace-picker-trigger" type="button" onClick={disabled ? undefined : onToggle} disabled={disabled}>
@@ -1637,16 +1642,47 @@ function DftWorkbenchStructureTab({
   chatStructures: { name: string; content: string }[];
   onFileUpload: (file: File) => void;
 }) {
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  return (
+    <MantineProvider
+      theme={workbenchTheme}
+      colorSchemeManager={coreColorSchemeManager}
+      defaultColorScheme="light"
+    >
+      <CoreWorkspaceProvider workspace={workspace}>
+        <div className="workspace-content">
+          <DftWorkbenchStructurePicker chatStructures={chatStructures} onFileUpload={onFileUpload} />
+          <CalculationContextControls />
+        </div>
+      </CoreWorkspaceProvider>
+    </MantineProvider>
+  );
+}
+
+// The Structure Setup tab's Structure section. Shows the structure open in
+// the workspace however it got there -- this dropdown, an upload here, the
+// chat's dft_open_structure, the reload restore, or core's own card in the
+// full-page view (#50). Picking or uploading only dispatches `source.open`;
+// the label follows the snapshot once core has inspected the structure.
+function DftWorkbenchStructurePicker({
+  chatStructures,
+  onFileUpload,
+}: {
+  chatStructures: { name: string; content: string }[];
+  onFileUpload: (file: File) => void;
+}) {
+  const workspace = useCoreWorkspace();
+  const { structureInput } = useCoreWorkspaceSnapshot();
   const [pickerOpen, setPickerOpen] = useState(false);
-  // Name of an upload whose dropdown selection is still pending --
-  // `onFileUpload` (=`readFile`) updates `sessionFiles` asynchronously,
-  // so the new entry's eventual index in `chatStructures` isn't known yet
-  // when `handleUpload` runs; matched by name once it actually appears,
-  // rather than predicting the index up front (`readFile` de-dupes by
-  // name and always appends, so a same-name re-upload lands at a
-  // different slot than a fresh one -- matching by name gets both right).
-  const pendingUploadNameRef = useRef<string | null>(null);
+  // The entry holding exactly the open structure, if any. What's open need
+  // not be one of this chat's files (a restore, or content the model passed
+  // to dft_open_structure), so the label doesn't depend on a match.
+  const openIdx = structureInput === null
+    ? -1
+    : chatStructures.findIndex(
+      (s) => s.name === structureInput.structure_name && s.content === structureInput.structure_content,
+    );
+  const valueLabel = structureInput?.structure_name
+    ?? (chatStructures.length === 0 ? "No structures loaded" : "—");
 
   function openStructureInCore(name: string, content: string) {
     void workspace.dispatch({
@@ -1659,64 +1695,34 @@ function DftWorkbenchStructureTab({
     });
   }
 
-  // Auto-selects a just-uploaded structure once it lands in `chatStructures`
-  // -- previously the dropdown stayed on "No structures loaded"/"--" until
-  // the user manually reopened it and re-picked the very file they'd just
-  // uploaded, even though `openStructureInCore` below had already loaded it
-  // into DFT Workbench for real.
-  useEffect(() => {
-    const name = pendingUploadNameRef.current;
-    if (name === null) return;
-    const idx = chatStructures.findIndex((s) => s.name === name);
-    if (idx !== -1) {
-      setSelectedIdx(idx);
-      pendingUploadNameRef.current = null;
-    }
-  }, [chatStructures]);
-
   function handleUpload(file: File) {
     // Sync into the composer's own Structure Viewer/Files widgets first --
     // same pipeline every other Tool's upload already goes through.
     onFileUpload(file);
-    pendingUploadNameRef.current = file.name;
     void file.text().then((content) => {
       openStructureInCore(file.name, content);
     });
   }
 
   return (
-    <MantineProvider
-      theme={workbenchTheme}
-      colorSchemeManager={coreColorSchemeManager}
-      defaultColorScheme="light"
-    >
-      <CoreWorkspaceProvider workspace={workspace}>
-        <div className="workspace-content">
-          <div className="workspace-section">
-            <div className="workspace-title">Structure</div>
-            <SimpleSelect
-              label="Structure"
-              value={selectedIdx ?? -1}
-              items={chatStructures.length === 0
-                ? [{ id: -1, label: "No structures loaded" }]
-                : chatStructures.map((s, i) => ({ id: i, label: s.name }))
-              }
-              isOpen={pickerOpen}
-              onToggle={() => setPickerOpen((open) => !open)}
-              onSelect={(id) => {
-                setSelectedIdx(id);
-                setPickerOpen(false);
-                const s = chatStructures[id];
-                if (s) openStructureInCore(s.name, s.content);
-              }}
-              disabled={chatStructures.length === 0}
-            />
-            <StructureUploadControl onFile={handleUpload} />
-          </div>
-          <CalculationContextControls />
-        </div>
-      </CoreWorkspaceProvider>
-    </MantineProvider>
+    <div className="workspace-section">
+      <div className="workspace-title">Structure</div>
+      <SimpleSelect
+        label="Structure"
+        value={openIdx}
+        valueLabel={valueLabel}
+        items={chatStructures.map((s, i) => ({ id: i, label: s.name }))}
+        isOpen={pickerOpen}
+        onToggle={() => setPickerOpen((open) => !open)}
+        onSelect={(id) => {
+          setPickerOpen(false);
+          const s = chatStructures[id];
+          if (s) openStructureInCore(s.name, s.content);
+        }}
+        disabled={chatStructures.length === 0}
+      />
+      <StructureUploadControl onFile={handleUpload} />
+    </div>
   );
 }
 
