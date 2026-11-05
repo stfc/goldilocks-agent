@@ -201,60 +201,55 @@ cd /path/to/your/goldilocks-core && uv sync --extra http
 export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
 ```
 
+The checkout has to speak the same `vocabulary_version` as the embedded
+Workbench UI (the one in `src/goldilocks_agent/core_pin.json`; a checkout
+reports its own in `src/goldilocks_core/capabilities.py`) -- otherwise
+goldilocks-agent reports an error naming both vocabulary versions instead
+of loading DFT Workbench.
+
 Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
-persistent service -- the first time you actually open DFT Workbench
-(inline or full-page), goldilocks-agent lazily runs it for you (either
-`uvx --from goldilocks-core[http] goldilocks serve http`, or your
+persistent service -- the first time something needs it (opening DFT
+Workbench inline or full-page, a chat DFT tool, or reloading a page with a
+saved DFT Workbench state), goldilocks-agent lazily runs it for you (either
+`uvx --from goldilocks-core[http]==<version> goldilocks serve http`,
+with `<version>` the core release pinned in
+`src/goldilocks_agent/core_pin.json`, or your
 checkout's own `uv run --directory <path> poe serve` if
 `GOLDILOCKS_CORE_PATH` is set), health-checking first so it reuses an
 instance you already started yourself in another terminal instead of
 double-spawning, and keeps it running for the rest of the session,
 shutting it down when goldilocks-agent's own process exits. Nothing to
-start by hand either way.
+start by hand either way. Its output, including the traceback behind any
+HTTP 500, goes to goldilocks-agent's own log prefixed `[goldilocks-core]`
+(`docker compose logs agent` in Docker).
 
-**Optional: magnetism ML tier (mMACE)** -- upgrades two of DFT Workbench's
-magnetism fields (`is_magnetic` classification, magnetic-ordering ranking)
-from a heuristic/LLM tier to a real ML model. This is entirely
-goldilocks-core's feature (model, checkpoint, and classification logic all
-live there) -- goldilocks-agent only auto-starts the process that serves
-it, the same as plain DFT Workbench above. Requires **checkout mode**
-(`GOLDILOCKS_CORE_PATH`) -- the PyPI/`GOLDILOCKS_AGENT_CORE_AUTOSTART` path
-can't host this, because the `mace` fork it needs has no PyPI release and
-can only be installed into a real venv you control:
+**Magnetism ML tier (mMACE)** -- goldilocks-core's ML `is_magnetic`
+classification and magnetic-ordering ranking. Since goldilocks-core v0.3.0
+it needs no setup of its own, in either mode: `mace-torch` is an ordinary
+core dependency, and `goldilocks assets install workbench`, which the
+auto-start runs before serving, installs the model's backbone with core's
+other models. Open DFT Workbench and load a magnetic structure (e.g.
+goldilocks-core's own `src/goldilocks_core/examples/structures/Fe_bcc.cif`)
+-- the Analysis card's "is magnetic" caption reads "Goldilocks-ML
+prediction".
 
-```bash
-# 1. In your goldilocks-core checkout (same one GOLDILOCKS_CORE_PATH points
-#    at, with its `http` extra already synced per above)
-cd /path/to/your/goldilocks-core
-uv pip install ase==3.28.0 e3nn==0.4.4 sphericart==1.0.9 sphericart-torch==1.0.9
-uv pip install "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
+Upgrading from an earlier setup:
 
-# 2. One-time checkpoint download
-mkdir -p ~/.local/share/goldilocks/mmace
-curl -L -o ~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model \
-  https://data-collections.psdi.ac.uk/api/records/1g8rw-q8128/files/mace_matpes_pbe_baseline_run-3.model/content
+- Unset `GOLDILOCKS_MACE_BACKBONE` if it still points at the v1.0 checkpoint
+  (`mace_matpes_pbe_baseline_run-3.model`). It overrides the installed
+  backbone, and core refuses the v1.0 file, so every `is_magnetic` request
+  fails.
+- A checkout with the `CheukHinHoJerry/mace` fork or `sphericart` installed
+  by hand gets its locked `mace-torch` back on the next
+  `uv sync --extra http` there.
+- The first start after the upgrade fetches the changed models and the
+  PseudoDojo tables again (from PSDI), which can take many minutes; DFT
+  Workbench says so, with core's latest output, while it runs.
 
-# 3. Back in goldilocks-agent, same shell, before starting the backend
-export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
-export GOLDILOCKS_MACE_BACKBONE=~/.local/share/goldilocks/mmace/mace_matpes_pbe_baseline_run-3.model
-uv run poe serve
-```
-
-Open DFT Workbench and load a magnetic structure (e.g. goldilocks-core's
-own `src/goldilocks_core/examples/structures/Fe_bcc.cif`) -- the Analysis
-card's "is magnetic" caption switches to "Goldilocks-ML prediction" once
-the ML tier is live.
-
-One thing worth knowing: running a plain `uv sync` (with or without extra
-flags) in the checkout wipes the two manually-installed packages again --
-they're not in `uv.lock`, and never can be (PyPI rejects a git dependency
-in a published package's metadata outright). Rerun step 1 above after any
-`uv sync` there. goldilocks-agent's own auto-spawn (`uv run --directory
-<path> poe serve`) does *not* trigger this, only a `uv sync` you run
-yourself.
+goldilocks-core's `docs/mmace-setup.md` has the details.
 
 Don't confuse this with **MLIP Playground** above -- different `mace`
-package (this public fork vs. `janus-core`'s own `[mace]` extra), different
+package (core's own `mace-torch` vs. `janus-core`'s `[mace]` extra), different
 purpose (magnetism classification/ranking vs. general-purpose
 single-point/EOS/NEB/phonon calculations), different checkpoint, no shared
 configuration.
@@ -284,11 +279,16 @@ The first time either is opened, goldilocks-agent auto-starts
 goldilocks-core's own HTTP backend on `http://127.0.0.1:8000` for it to
 talk to (see Configuration above) -- you'll briefly see a "starting up..."
 state while that happens, or a clear error if neither
-`GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The published-package
-pipeline is currently a local tarball
-(`app/vendor/goldilocks-workbench-0.0.5.tgz`, rebuilt from `core/web` via
-`npm run build:lib && npm pack`) rather than a real registry; publishing it from
-goldilocks-core's CI is still to be done there.
+`GOLDILOCKS_AGENT_CORE_AUTOSTART` nor `GOLDILOCKS_CORE_PATH` is set. The package is
+currently a vendored tarball in `app/vendor/` rather than a registry
+package. `src/goldilocks_agent/core_pin.json` records it, its sha256, and
+the core release the backend runs; `tests/test_core_pin.py` fails until all
+of them agree. To move to a new core release, run `uv run poe bump-core
+vX.Y.Z` (Node >= 24 on `PATH`): it builds the tarball from that tag and
+rewrites the pin. Then re-record the DFT Workbench test fixtures against a
+core of that release (`node scripts/record-core-fixtures.mjs` in `app/`,
+see its header) -- the vendored client refuses responses from any other
+vocabulary.
 
 ## Usage
 
@@ -332,7 +332,7 @@ embedded panel.
 
 ```bash
 uv run poe check     # lint + backend test suite
-uv run poe web-check  # lint + build the frontend
+uv run poe web-check  # lint + type-check + test + build the frontend
 ```
 
 Tests that need real credentials/local services are marked `integration`

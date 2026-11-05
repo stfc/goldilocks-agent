@@ -9,11 +9,14 @@
     "build:stfc-cloud-public": "vite build --mode stfc-cloud-public",
     "build:stfc-cloud-internal": "vite build --mode stfc-cloud-internal",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
     "dat.gui": "^0.7.9",
-    "goldilocks-workbench": "file:vendor/goldilocks-workbench-0.0.5.tgz",
+    "goldilocks-workbench": "file:vendor/goldilocks-workbench-0.3.0.tgz",
+    "html-to-image": "^1.11.13",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
@@ -32,6 +35,7 @@
     "globals": "^17.5.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
-    "vite": "^8.0.9"
+    "vite": "^8.0.9",
+    "vitest": "^4.1.11"
   }
 }

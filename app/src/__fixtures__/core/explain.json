@@ -1,0 +1,827 @@
+{
+  "records": {
+    "boundary": {
+      "status": "resolved",
+      "value": {
+        "isolation": "periodic",
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "composition": {
+      "status": "resolved",
+      "value": {
+        "elements": [
+          "Si"
+        ],
+        "transition_metals": [],
+        "lanthanides": [],
+        "actinides": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "convergence": {
+      "status": "resolved",
+      "value": {
+        "conv_thr": 1.6e-9,
+        "etot_conv_thr": 0.00008,
+        "mixing_beta": 0.4,
+        "electron_maxstep": 80,
+        "mixing_mode": "plain",
+        "mixing_fixed_ns": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": {
+        "conv_thr": "heuristic",
+        "etot_conv_thr": "heuristic",
+        "mixing_beta": "heuristic",
+        "electron_maxstep": "heuristic",
+        "mixing_mode": "heuristic",
+        "mixing_fixed_ns": "heuristic"
+      },
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "cutoffs": {
+      "status": "resolved",
+      "value": {
+        "ecutwfc_ry": 48,
+        "ecutrho_ry": 192,
+        "warnings": [
+          {
+            "code": "cutoffs.ecutrho_derived_from_dual",
+            "level": "info",
+            "category": "cutoffs",
+            "message": "ecutrho derived as charge_density_dual x ecutwfc = 4 x 48 = 192 Ry: table pseudodojo-pbesol-efficiency-sr publishes no density cutoff for Si"
+          }
+        ]
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "electron_count": {
+      "status": "resolved",
+      "value": {
+        "nelec": 32,
+        "tot_charge": 0
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "functional": {
+      "status": "resolved",
+      "value": "PBEsol",
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "geometry": {
+      "status": "resolved",
+      "value": {
+        "dimensionality": "3d",
+        "low_dimensional": false,
+        "vacuum_axes": [],
+        "vacuum_widths_angstrom": [
+          1.36,
+          1.36,
+          1.36
+        ],
+        "slab": null
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "geometry_eff": {
+      "status": "resolved",
+      "value": {
+        "dimensionality": "3d",
+        "low_dimensional": false,
+        "vacuum_axes": [],
+        "vacuum_widths_angstrom": [
+          1.36,
+          1.36,
+          1.36
+        ],
+        "slab": null
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "hubbard": {
+      "status": "resolved",
+      "value": {
+        "u_values": [],
+        "projectors": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": {
+        "needs_correlation": "heuristic"
+      },
+      "derived_from": [
+        "needs_correlation"
+      ],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "is_magnetic": {
+      "status": "resolved",
+      "value": "non_magnetic",
+      "source": "ml",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": {
+        "model_id": "magnetism.is_magnetic.mace_mlp@mace_probe_embedding.v1",
+        "asset": "models/is-magnetic-classifier@1",
+        "target_contract": "goldilocks.is_magnetic.dft_max_site_magmom_0p5ub.v1",
+        "value": false,
+        "details": {
+          "score": 3.2246216807862993e-9,
+          "threshold": 0.323869526386261,
+          "label": "non_magnetic",
+          "score_is": "uncalibrated positive-class sigmoid",
+          "threshold_selected_on": "validation"
+        },
+        "warnings": [
+          {
+            "code": "is_magnetic.model_warning",
+            "level": "warning",
+            "category": "is_magnetic",
+            "message": "magnetism.is_magnetic.mace_mlp@mace_probe_embedding.v1 has not been externally validated (MP-ALOE external validation has not been run. The metrics in training.test_metrics are an in-distribution MatPES PBE test split only. Do not treat this release as is_default until MP-ALOE validation is recorded here.)"
+          }
+        ]
+      },
+      "citations": [
+        "Goldilocks mMACE + MLP magnetism classifier (an MLP on mMACE mmace-matpes-pbe-pretrained embeddings, trained on MatPES PBE), PSDI Data Collections record sgk1t-48m42, https://data-collections.psdi.ac.uk/records/sgk1t-48m42."
+      ],
+      "reason": null,
+      "blocked_by": null
+    },
+    "is_metal": {
+      "status": "resolved",
+      "value": "non_metal",
+      "source": "ml",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": {
+        "model_id": "metallicity.is_metal.cgcnn@crystal_graph.v1",
+        "asset": "models/is-metal-classifier@1",
+        "target_contract": "goldilocks.is_metal.dft_band_gap_zero.v1",
+        "value": false,
+        "details": {
+          "score": 0.016479872167110443,
+          "threshold": 0.04782969690859318,
+          "label": "insulator",
+          "score_is": "uncalibrated positive-class softmax",
+          "threshold_selected_on": "validation",
+          "threshold_metric": "mcc",
+          "min_recall": 0.97
+        },
+        "warnings": []
+      },
+      "citations": [
+        "Elena Patyukova et al., Automatic generation of input files with optimised k-point meshes for Quantum ESPRESSO self-consistent field single-point total energy calculations, Digital Discovery (2026), DOI 10.1039/D5DD00565E."
+      ],
+      "reason": null,
+      "blocked_by": null
+    },
+    "job": {
+      "status": "resolved",
+      "value": {
+        "partition": "scarf",
+        "nodes": 1,
+        "ntasks": 64,
+        "ntasks_per_node": 64,
+        "walltime_h": 168,
+        "max_seconds_by_step": {
+          "scf": 574560
+        },
+        "memory_per_process_mb": 7.7,
+        "memory_total_mb": 409.75,
+        "account": null,
+        "warnings": [
+          {
+            "code": "job.walltime_defaulted",
+            "level": "warning",
+            "category": "job",
+            "message": "walltime not specified; requesting the ceiling of partition scarf (168h). This slows queueing -- schedulers favour short jobs -- but guessing short risks the job being killed before it finishes, wasting the entire run. If you know roughly how long this will take, set walltime_h explicitly."
+          }
+        ],
+        "timer_seconds": null
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "k_sampling": {
+      "status": "resolved",
+      "value": {
+        "mesh": [
+          6,
+          6,
+          6
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "k_distance": 0.2174377292394638,
+        "warnings": [],
+        "k_index": 6,
+        "k_distance_interval": [
+          0.19281855,
+          0.23138226
+        ]
+      },
+      "source": "ml",
+      "source_note": null,
+      "field_sources": {
+        "k_distance": "ml",
+        "shift": "heuristic"
+      },
+      "derived_from": [],
+      "model": {
+        "model_id": "k_points.k_distance.qrf@comp_struct_soap_lattice_metal.v1",
+        "asset": "models/qrf-kpoints@QRF95",
+        "target_contract": "goldilocks.k_distance.mesh_lower_bound.2pi.v1",
+        "value": 0.2174377292394638,
+        "details": {
+          "interval": [
+            0.11168761551380157,
+            0.503409206867218
+          ],
+          "coverage": null,
+          "calibrated": false,
+          "units": "1/angstrom"
+        },
+        "warnings": [
+          {
+            "code": "k_sampling.model_warning",
+            "level": "warning",
+            "category": "k_sampling",
+            "message": "k_points.k_distance.qrf@comp_struct_soap_lattice_metal.v1 records no conformal calibration, so its interval carries no coverage guarantee. The median is unaffected."
+          }
+        ]
+      },
+      "citations": [
+        "Elena Patyukova et al., Automatic generation of input files with optimised k-point meshes for Quantum ESPRESSO self-consistent field single-point total energy calculations, Digital Discovery (2026), DOI 10.1039/D5DD00565E."
+      ],
+      "reason": null,
+      "blocked_by": null
+    },
+    "magnetic": {
+      "status": "resolved",
+      "value": {
+        "cell": {
+          "formula": "Si8",
+          "nat": 8
+        },
+        "ordering": {
+          "requested": null,
+          "applied": null,
+          "criterion": "identity",
+          "alternatives": []
+        },
+        "spin_polarized": false,
+        "magnetic_elements": [],
+        "starting_magnetization": null,
+        "compensated": false,
+        "tot_magnetization": null,
+        "spin_orbit_enabled": false,
+        "angle1": null,
+        "angle2": null,
+        "seeded_moment": null,
+        "moment_direction": null,
+        "frame": {
+          "rotated": false,
+          "rotation": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "origin_shift": [
+            0,
+            0,
+            0
+          ],
+          "max_displacement_angstrom": 0,
+          "operations": 24
+        },
+        "site_labels": [
+          "Si0",
+          "Si1",
+          "Si2",
+          "Si3",
+          "Si4",
+          "Si5",
+          "Si6",
+          "Si7"
+        ],
+        "human_seeded_labels": [],
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": {
+        "spin_polarized": "heuristic",
+        "spin_orbit_coupling": "heuristic"
+      },
+      "derived_from": [
+        "is_magnetic"
+      ],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "n_irr_k": {
+      "status": "resolved",
+      "value": 20,
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "nbnd": {
+      "status": "resolved",
+      "value": {
+        "nbnd": 16,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "needs_correlation": {
+      "status": "resolved",
+      "value": false,
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "needs_soc": {
+      "status": "resolved",
+      "value": false,
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "occupations": {
+      "status": "resolved",
+      "value": {
+        "occupations": "fixed",
+        "smearing_type": null,
+        "degauss": null,
+        "tot_magnetization": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": {
+        "occupations": "heuristic"
+      },
+      "derived_from": [
+        "is_metal",
+        "magnetic",
+        "electron_count"
+      ],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "parallelisation": {
+      "status": "resolved",
+      "value": {
+        "npool": 8,
+        "ndiag": null,
+        "kpoint_spin_pairs": 20,
+        "nimage": null,
+        "warnings": [
+          {
+            "code": "parallelisation.npool_load_imbalance",
+            "level": "info",
+            "category": "parallelisation",
+            "message": "npool=8 does not divide the 20 k-point/spin pairs evenly; the first 4 pool(s) handle one more pair than the rest."
+          }
+        ]
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "pseudo_table": {
+      "status": "resolved",
+      "value": {
+        "id": "pseudodojo-pbesol-efficiency-sr",
+        "provider": "pseudodojo",
+        "upstream_table": "nc-sr-04_pbesol_standard",
+        "version": "0.4",
+        "functional": "PBEsol",
+        "relativistic": "scalar",
+        "accuracy": "efficiency",
+        "licence": "CC-BY-4.0",
+        "citation": "van Setten et al., Comput. Phys. Commun. 226, 39 (2018)",
+        "elements": [
+          "Ag",
+          "Al",
+          "Ar",
+          "As",
+          "Au",
+          "B",
+          "Ba",
+          "Be",
+          "Bi",
+          "Br",
+          "C",
+          "Ca",
+          "Cd",
+          "Cl",
+          "Co",
+          "Cr",
+          "Cs",
+          "Cu",
+          "F",
+          "Fe",
+          "Ga",
+          "Ge",
+          "H",
+          "He",
+          "Hf",
+          "Hg",
+          "I",
+          "In",
+          "Ir",
+          "K",
+          "Kr",
+          "La",
+          "Li",
+          "Lu",
+          "Mg",
+          "Mn",
+          "Mo",
+          "N",
+          "Na",
+          "Nb",
+          "Ne",
+          "Ni",
+          "O",
+          "Os",
+          "P",
+          "Pb",
+          "Pd",
+          "Po",
+          "Pt",
+          "Rb",
+          "Re",
+          "Rh",
+          "Rn",
+          "Ru",
+          "S",
+          "Sb",
+          "Sc",
+          "Se",
+          "Si",
+          "Sn",
+          "Sr",
+          "Ta",
+          "Tc",
+          "Te",
+          "Ti",
+          "Tl",
+          "V",
+          "W",
+          "Xe",
+          "Y",
+          "Zn",
+          "Zr"
+        ],
+        "asset": {
+          "id": "pseudopotentials/pseudodojo-pbesol-efficiency-sr",
+          "version": "0.4",
+          "files": [
+            {
+              "role": "pseudopotentials",
+              "path": "source/upf.tgz",
+              "url": "https://data-collections.psdi.ac.uk/api/records/8gc82-qm928/files/nc-sr-04_pbesol_standard_upf.tgz/content",
+              "checksum": "sha256:6e6af9f7ba82d95f8381760780c056b07bdedf7d4c33c1857c97613399ae3c55",
+              "size": 5201271
+            },
+            {
+              "role": "metadata",
+              "path": "source/djrepo.tgz",
+              "url": "https://data-collections.psdi.ac.uk/api/records/8gc82-qm928/files/nc-sr-04_pbesol_standard_djrepo.tgz/content",
+              "checksum": "sha256:a275c5ef6e1d32852cd9f1d4bc746708763e18cbd2a1aa3d1ed9b0b5e62e9b1c",
+              "size": 8951
+            }
+          ],
+          "preparation_revision": "2"
+        },
+        "charge_density_dual": 4,
+        "default": true,
+        "frozen_4f_core": false,
+        "note": "The default. Covers everything except lanthanides beyond La and Lu, and all actinides.",
+        "record": null
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [
+        "functional",
+        "magnetic"
+      ],
+      "model": null,
+      "citations": [
+        "van Setten et al., Comput. Phys. Commun. 226, 39 (2018)"
+      ],
+      "reason": null,
+      "blocked_by": null
+    },
+    "pseudopotentials": {
+      "status": "resolved",
+      "value": [
+        {
+          "filename": "Si.upf",
+          "header_format": "attr",
+          "provider": "pseudodojo",
+          "accuracy": "efficiency",
+          "element": "Si",
+          "pseudo_type": "NC",
+          "functional": "PBEsol",
+          "relativistic": "scalar",
+          "z_valence": 4,
+          "table_id": "pseudopotentials/pseudodojo-pbesol-efficiency-sr",
+          "asset_path": "pseudos/Si.upf",
+          "cutoffs": {
+            "ecutwfc_ry": 48,
+            "ecutrho_ry": null
+          },
+          "cutoff_hints": {
+            "low": 28,
+            "normal": 36,
+            "high": 48
+          },
+          "source_identifier": "Si.upf",
+          "content_sha256": "11cdc54d3adee0a7c251920431b2b68864bedb3fd4a2dabde642dc7f6185ec18",
+          "content_size_bytes": 225601,
+          "frozen_4f_core": false,
+          "warnings": []
+        }
+      ],
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [
+        "pseudo_table"
+      ],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "relativistic": {
+      "status": "resolved",
+      "value": "scalar",
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [
+        "magnetic"
+      ],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "symmetry": {
+      "status": "resolved",
+      "value": {
+        "space_group_symbol": "Fd-3m",
+        "space_group_number": 227,
+        "crystal_system": "cubic",
+        "reversible_axes": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "symmetry_eff": {
+      "status": "resolved",
+      "value": {
+        "space_group_symbol": "Fd-3m",
+        "space_group_number": 227,
+        "crystal_system": "cubic",
+        "reversible_axes": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "source": "heuristic",
+      "source_note": null,
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    },
+    "vdw": {
+      "status": "resolved",
+      "value": {
+        "use_vdw": false,
+        "method": null,
+        "warnings": []
+      },
+      "source": "heuristic",
+      "source_note": "3D bulk structure; no vdW correction by default.",
+      "field_sources": null,
+      "derived_from": [],
+      "model": null,
+      "citations": [],
+      "reason": null,
+      "blocked_by": null
+    }
+  },
+  "warnings": [
+    {
+      "code": "cutoffs.ecutrho_derived_from_dual",
+      "level": "info",
+      "category": "cutoffs",
+      "message": "ecutrho derived as charge_density_dual x ecutwfc = 4 x 48 = 192 Ry: table pseudodojo-pbesol-efficiency-sr publishes no density cutoff for Si",
+      "record": "cutoffs"
+    },
+    {
+      "code": "is_magnetic.model_warning",
+      "level": "warning",
+      "category": "is_magnetic",
+      "message": "magnetism.is_magnetic.mace_mlp@mace_probe_embedding.v1 has not been externally validated (MP-ALOE external validation has not been run. The metrics in training.test_metrics are an in-distribution MatPES PBE test split only. Do not treat this release as is_default until MP-ALOE validation is recorded here.)",
+      "record": "is_magnetic"
+    },
+    {
+      "code": "job.walltime_defaulted",
+      "level": "warning",
+      "category": "job",
+      "message": "walltime not specified; requesting the ceiling of partition scarf (168h). This slows queueing -- schedulers favour short jobs -- but guessing short risks the job being killed before it finishes, wasting the entire run. If you know roughly how long this will take, set walltime_h explicitly.",
+      "record": "job"
+    },
+    {
+      "code": "k_sampling.model_warning",
+      "level": "warning",
+      "category": "k_sampling",
+      "message": "k_points.k_distance.qrf@comp_struct_soap_lattice_metal.v1 records no conformal calibration, so its interval carries no coverage guarantee. The median is unaffected.",
+      "record": "k_sampling"
+    },
+    {
+      "code": "parallelisation.npool_load_imbalance",
+      "level": "info",
+      "category": "parallelisation",
+      "message": "npool=8 does not divide the 20 k-point/spin pairs evenly; the first 4 pool(s) handle one more pair than the rest.",
+      "record": "parallelisation"
+    }
+  ],
+  "blocking": [],
+  "layout": {
+    "analysis": [
+      "composition",
+      "geometry",
+      "symmetry",
+      "is_metal",
+      "is_magnetic",
+      "needs_soc",
+      "needs_correlation"
+    ],
+    "system": [
+      "functional",
+      "pseudo_table",
+      "pseudopotentials",
+      "relativistic",
+      "magnetic",
+      "symmetry_eff",
+      "geometry_eff",
+      "cutoffs",
+      "electron_count",
+      "vdw",
+      "boundary",
+      "hubbard"
+    ],
+    "steps": [
+      {
+        "name": "scf",
+        "records": [
+          "occupations",
+          "k_sampling",
+          "n_irr_k",
+          "nbnd",
+          "convergence",
+          "job",
+          "parallelisation"
+        ]
+      }
+    ]
+  }
+}

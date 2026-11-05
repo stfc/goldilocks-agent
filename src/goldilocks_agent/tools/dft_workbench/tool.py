@@ -3,7 +3,7 @@
 Unlike `mlip_playground/tool.py`, these three functions never actually run
 -- `CLIENT_EXECUTED` (aggregated into `graph.py`'s `CLIENT_EXECUTED_TOOLS`)
 always intercepts them in `call_tool` before `TOOL_DISPATCH` would be
-consulted. The real work happens in the browser: `app/src/App.tsx`'s
+consulted. The real work happens in the browser: `app/src/dftWorkbench.ts`'s
 `dispatchDftTool` calls the exact same `coreWorkspace.dispatch(...)` the
 embedded `goldilocks-workbench` panel's own buttons call, so chat and the
 panel share one state object instead of goldilocks-agent maintaining a
@@ -71,8 +71,14 @@ TOOL_SCHEMA: list[dict] = [
             "description": (
                 "Open a structure in DFT Workbench, the embedded goldilocks-"
                 "core panel -- required before dft_review or "
-                "dft_download_bundle can be called. This only parses/"
-                "validates the structure, no DFT parameters are chosen yet."
+                "dft_download_bundle can be called. Parses and validates the "
+                "structure; no DFT parameters are chosen yet. Returns a "
+                "summary of the structure (partially occupied sites must be "
+                "ordered before goldilocks-core recommends anything), the "
+                "calculation it opened into (code, task, HPC profile and "
+                "overrides, kept from the previous structure except the "
+                "structure-specific overrides listed in cleared_overrides), "
+                "and the tasks goldilocks-core offers."
             ),
             "parameters": {
                 "type": "object",
@@ -92,9 +98,14 @@ TOOL_SCHEMA: list[dict] = [
             "name": "dft_review",
             "description": (
                 "Preview goldilocks-core's DFT parameter recommendation for "
-                "the structure currently open in DFT Workbench (must call "
-                "dft_open_structure first). Read-only -- explains what would "
-                "be generated, doesn't write any files."
+                "the structure and settings currently open in DFT Workbench "
+                "(must call dft_open_structure first). Read-only, writes no "
+                "files. Returns each record's value and the source that "
+                "decided it, the warnings, and `blocking`: decisions "
+                "goldilocks-core needs before it can generate input files, "
+                "each with remedies (override patches that resolve it). "
+                "Settings are changed in the DFT Workbench panel; ask the "
+                "user before suggesting a remedy be applied."
             ),
             "parameters": {
                 "type": "object",
@@ -109,9 +120,12 @@ TOOL_SCHEMA: list[dict] = [
             "name": "dft_download_bundle",
             "description": (
                 "Generate a real DFT input bundle (e.g. Quantum ESPRESSO "
-                "input files) for the structure currently reviewed in DFT "
-                "Workbench (must call dft_open_structure, then dft_review, "
-                "first). No separate confirmation step -- explain what "
+                "input files) for the structure and settings currently open "
+                "in DFT Workbench (must call dft_open_structure first; it "
+                "reviews the current settings itself). When goldilocks-core "
+                "blocks generation, the error names the decisions it needs "
+                "and their remedies: ask the user instead of calling this "
+                "again unchanged. No separate confirmation step -- explain what "
                 "you're about to generate before calling this anyway, since "
                 "it's a real generation step, but don't ask the user to "
                 "click a 'confirm' button first. The bundle lands in the "
@@ -140,11 +154,11 @@ CLIENT_EXECUTED: set[str] = set(TOOL_DISPATCH)
 
 # No confirmation gate on any of these -- unlike MLIP Playground's real local
 # compute, nothing here is consequential *to the user's machine* until they
-# themselves click the Bundle card's Download button, which browsers already
-# force to be a direct, unavoidable click (see App.tsx's dispatchDftTool
-# comment). A chat-level "Run it" card ahead of that would just be a second,
-# redundant click gating nothing real -- 2026-09-25, removed after exactly
-# that friction was flagged in real use.
+# themselves click a Download button, which browsers already force to be a
+# direct, unavoidable click (see app/src/dftWorkbench.ts's dispatchDftTool).
+# A chat-level "Run it" card ahead of that would just be a second, redundant
+# click gating nothing real -- 2026-09-25, removed after exactly that
+# friction was flagged in real use.
 CONFIRMATION_REQUIRED: set[str] = set()
 
 CONFIRMATION_LABELS: dict[str, Callable[[dict], str]] = {}

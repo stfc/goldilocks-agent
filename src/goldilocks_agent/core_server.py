@@ -13,7 +13,9 @@ Two ways to source goldilocks-core, checked in this order:
    up local, uncommitted changes.
 2. Otherwise, if ``read_core_autostart_enabled()`` -- everyone else: runs
    the real published PyPI package directly, no checkout needed at all
-   (``uvx --from goldilocks-core[http] goldilocks serve http``, 2026-09-24).
+   (``uvx --from goldilocks-core[http]==<release> goldilocks serve http``,
+   2026-09-24; pinned to `core_pin.json`'s release since 2026-10-26, see
+   `CORE_PIN`).
 
 Either way this is a real, separate OS process, deliberately never an
 in-process import: goldilocks-agent treats goldilocks-core as an external
@@ -26,8 +28,9 @@ PyPI doesn't reopen that question, it only changes *how* the external
 subprocess gets sourced (a checkout path vs. an installable package).
 
 Lazy, singleton, process-lifetime: `ensure_running()` only ever spawns a
-subprocess the first time the frontend actually opens DFT Workbench (inline
-or full-page) in this goldilocks-agent server process's lifetime -- never
+subprocess the first time the frontend asks for it in this goldilocks-agent
+server process's lifetime -- opening DFT Workbench (inline or full-page), a
+chat DFT tool, or a page load restoring a saved DFT Workbench state -- never
 eagerly at import/startup. Once spawned it outlives any one browser
 tab/view; only this process exiting tears it down (`shutdown()`, registered
 with `atexit` -- uvicorn's normal SIGINT/SIGTERM handling exits the
@@ -50,35 +53,40 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import collections
+import contextlib
+import json
 import logging
 import os
 import shlex
+import signal
 import subprocess
+import sys
+import threading
+import time
+from importlib import resources
+from typing import TextIO
 
 import httpx
 
-from goldilocks_agent.config import (
-    mmace_checkpoint_path,
-    read_core_autostart_enabled,
-    read_core_path,
-    read_mmace_enabled,
-)
+from goldilocks_agent.config import read_core_autostart_enabled, read_core_path
 
 logger = logging.getLogger(__name__)
 
-# mMACE's fork (see README.md's Configuration section for the full manual
-# recipe this mirrors) has no PyPI release -- PyPI itself rejects a git
-# dependency in a published package's metadata, so this can never become a
-# `uv sync` extra, only an explicit `uv pip install` chained ahead of
-# `poe serve` when `read_mmace_enabled()` is set.
-_MMACE_CHECKPOINT_URL = (
-    "https://data-collections.psdi.ac.uk/api/records/1g8rw-q8128/files/"
-    "mace_matpes_pbe_baseline_run-3.model/content"
+# The one goldilocks-core release this build runs (`core_pin.json`): the
+# Dockerfile fetches its `commit`, PyPI mode installs its `version`, and the
+# vendored `goldilocks-workbench` tarball must speak its
+# `vocabulary_version` -- the tarball's `HttpCoreClient` refuses any core
+# whose `/capabilities` reports a different one, so these can only move
+# together (`scripts/bump_core.py` moves them). `tests/test_core_pin.py`
+# checks every site against this file.
+CORE_PIN: dict = json.loads(
+    resources.files("goldilocks_agent").joinpath("core_pin.json").read_text("utf-8")
 )
-_MMACE_FORK_SPEC = (
-    "mace-torch @ git+https://github.com/CheukHinHoJerry/mace.git"
-    "@19cdf6692c48e068a24e06cfe1ffc670e8aea3dd"
-)
+
+# Never a bare `goldilocks-core[http]`: that would pick up whatever release
+# is newest on PyPI and break DFT Workbench for every fresh install.
+CORE_PYPI_REQUIREMENT = f"goldilocks-core[http]=={CORE_PIN['version']}"
 
 # Matches `goldilocks-core`'s own `poe serve` task (127.0.0.1:8000). Not
 # user-configurable: this is goldilocks-core's own hardcoded default
@@ -123,40 +131,65 @@ CORE_PROXIED_PATHS = (
 # `/health` (verified live 2026-09-24 against a real goldilocks-core
 # checkout): `{"status": "ok"}` the instant the FastAPI app itself is
 # serving -- unlike `/ready`, it doesn't wait on ML asset installs, and by
-# construction of `poe serve`'s own shell script (`goldilocks assets
-# install workbench` runs to completion *before* `exec goldilocks serve
-# http` starts listening at all), assets are always already installed by
-# the time this answers. Cheap enough to use both to detect an
+# construction of both spawn commands (`goldilocks assets install
+# workbench` runs to completion *before* `goldilocks serve http` starts
+# listening at all, see `_spawn_command()`), assets are always already
+# installed by the time this answers. Cheap enough to use both to detect an
 # already-running instance before spawning, and to poll a freshly spawned
 # one until it's up.
 _HEALTH_PATH = "/health"
 _HEALTH_TIMEOUT = 2.0
-# Real measured cold start (assets already cached locally) was ~1s -- this
-# budget is generous for a from-scratch machine where `goldilocks assets
-# install workbench` still has to download models/pseudopotentials
-# (several hundred MB) before the server can start listening at all.
-_STARTUP_TIMEOUT = 180.0
-# mMACE's first-ever setup chains a lot more before `poe serve` even starts
-# listening: goldilocks-core's own deps (torch et al., via `--extra http`'s
-# lazy sync), then the manual `ase`/`e3nn`/`sphericart`/mace-torch-fork
-# installs, then the ~84MB checkpoint download -- several GB total, same
-# order of magnitude as MLIP Playground's own `_TIMEOUT = 300.0` "cold
-# MACE-MP model load plus uv sync" budget, but with more steps chained in
-# sequence, hence more headroom.
-_STARTUP_TIMEOUT_MMACE = 900.0
+# A start with core's environment and assets in place answers in seconds.
+# The first start -- ever, or after a core upgrade -- first syncs core's
+# environment and runs `goldilocks assets install workbench`, which fetches
+# whatever models and pseudopotential tables are missing or changed from
+# PSDI: at goldilocks-core v0.3.0 the PseudoDojo tables (~60 MB) took 13
+# minutes and the mMACE backbone (84 MB) up to about 7 on slow links. The
+# spawned chain exits non-zero when a step fails, which `_bring_up()`
+# reports at once, so this cap only ends a start that hangs.
+_STARTUP_TIMEOUT = 3600.0
 _POLL_INTERVAL = 0.5
+# `/capabilities` is checked once after `/health` passes, for the
+# vocabulary the vendored Workbench needs (`_mark_ready()`).
+_CAPABILITIES_TIMEOUT = 30.0
+
+# The spawned core's combined stdout/stderr goes to this process's own
+# stderr, prefixed (`_forward_output()`) -- i.e. the terminal or `docker
+# logs`, where a core 500's traceback can actually be read. The last lines
+# are also kept for `_bring_up()`'s error detail.
+_OUTPUT_PREFIX = "[goldilocks-core] "
+_recent_output: collections.deque[str] = collections.deque(maxlen=20)
+
+# How long a failed start is reported to every caller before the next call
+# retries it. The frontend polls `/api/core-server/ensure` every second and
+# stops on "error"; retrying on the very next call used to turn every
+# failure straight back into "starting" (and a respawn per poll), so the
+# error never reached the UI.
+_RETRY_AFTER_ERROR = 10.0
 
 _process: subprocess.Popen | None = None
 _task: asyncio.Task | None = None
 _state: dict = {"status": "idle", "base_url": None, "detail": None}
+_failed_at = 0.0  # time.monotonic() of the last failure
 
 
-async def _is_healthy(client: httpx.AsyncClient) -> bool:
+async def _health(client: httpx.AsyncClient) -> str:
+    """What answers `/health` at `CORE_SERVER_BASE_URL`: "core" for
+    goldilocks-core's own `{"status": "ok"}`, "other" for any other HTTP
+    answer (another dev server on the port, say), "none" when nothing does.
+    A heuristic on the response body -- it used to accept any status under
+    500, which reported an unrelated server as a ready core."""
     try:
         response = await client.get(_HEALTH_PATH, timeout=_HEALTH_TIMEOUT)
     except httpx.HTTPError:
-        return False
-    return response.status_code < 500
+        return "none"
+    try:
+        payload = response.json() if response.status_code == 200 else None
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and payload.get("status") == "ok":
+        return "core"
+    return "other"
 
 
 def _spawn_command(core_path: str | None) -> list[str]:
@@ -168,40 +201,29 @@ def _spawn_command(core_path: str | None) -> list[str]:
     never optional extras, so a fresh checkout that was never manually
     `uv sync --extra http`'d first fails with `ImportError: The HTTP
     transport requires goldilocks-core[http]` -- reproduced firsthand
-    2026-09-25 (this bug predates mMACE; it's a real gap in the plain
-    checkout-mode path this happened to surface while wiring up mMACE, which
-    *requires* checkout mode and so hits it every time). `poe serve`'s own
-    shell script already refuses to start (exit 1) if port 8000 is already
-    answering -- `ensure_running()` health-checks first precisely to avoid
-    ever hitting that path, not to work around it.
+    2026-09-25. `poe serve`'s own shell script already refuses to start
+    (exit 1) if port 8000 is already answering -- `ensure_running()`
+    health-checks first precisely to avoid ever hitting that path, not to
+    work around it.
 
-    If `read_mmace_enabled()` is also set, the same command is wrapped in
-    `sh -c` to chain mMACE's one-time manual setup ahead of it (see
-    README.md's Configuration section for the same recipe run by hand):
-    download the checkpoint (skipped if already present -- persists across
-    restarts via `$HOME`, see `mmace_checkpoint_path()`), then `uv pip
-    install` the three packages goldilocks-ml has no PyPI extra for. Order
-    matters, verified 2026-09-25: these must run *after* `--extra http`'s
-    own sync, since an explicit `uv sync` wipes them, but `uv run`'s own
-    implicit sync (left last here, as `poe serve` itself) does not touch
-    packages outside the resolved dependency set. Each step is idempotent/
-    cache-backed (`uv pip install` of an already-satisfied exact version is
-    a fast no-op) -- no hand-rolled "already done" flag needed, same as
-    `mlip_cli`'s own `uv run --project` never checking that either.
-
-    PyPI mode (`core_path` is ``None``): `uvx --from goldilocks-core[http]
+    PyPI mode (`core_path` is ``None``): `uvx --from <CORE_PYPI_REQUIREMENT>
     goldilocks serve http --host 127.0.0.1 --port 8000` -- verified live
     2026-09-24 against the real published package, no checkout anywhere on
-    disk. mMACE can never run this way -- there is no persistent, addressable
-    venv to install its fork into (see `read_mmace_enabled()`'s docstring) --
-    so `read_mmace_enabled()` is only ever consulted in the `core_path`
-    branch above. Deliberately doesn't pass `--static-root`: goldilocks-agent
-    embeds the Workbench UI itself via the `goldilocks-workbench` npm
-    package, so this process only needs to serve the JSON API, never core's
-    own standalone frontend build.
+    disk -- preceded by the same `goldilocks assets install workbench` that
+    `poe serve` runs: the Workbench sends `fetch_missing: false`, so without
+    it a machine that never installed core's assets gets HTTP 424
+    (`asset_not_installed`) from every `/explain`. `exec` hands the shell's
+    PID to the server itself. Deliberately doesn't pass `--static-root`:
+    goldilocks-agent embeds the Workbench UI itself via the
+    `goldilocks-workbench` npm package, so this process only needs to serve
+    the JSON API, never core's own standalone frontend build.
+
+    Either mode runs mMACE with nothing added here: since goldilocks-core
+    v0.3.0 its `mace-torch` is an ordinary dependency and its backbone part
+    of the `workbench` assets.
     """
     if core_path:
-        serve_cmd = [
+        return [
             "uv",
             "run",
             "--directory",
@@ -211,52 +233,12 @@ def _spawn_command(core_path: str | None) -> list[str]:
             "poe",
             "serve",
         ]
-        if read_mmace_enabled():
-            checkpoint = mmace_checkpoint_path()
-            checkpoint_q = shlex.quote(str(checkpoint))
-            fork_q = shlex.quote(_MMACE_FORK_SPEC)
-            core_path_q = shlex.quote(core_path)
-            venv_python_q = shlex.quote(f"{core_path}/.venv/bin/python")
-            # Explicit `--python <venv>/bin/python`, not `--project <path>`
-            # or a bare `cd <path>` + inherited `VIRTUAL_ENV` -- both
-            # confirmed live 2026-09-25 to silently install into
-            # goldilocks-agent's own `.venv` instead (real environment
-            # pollution, since cleaned up, while reporting success): this
-            # whole command is itself a child of `poe serve`'s own `uv run`
-            # (`UV_RUN_RECURSION_DEPTH` is already 1 by the time this runs),
-            # and neither `--project` nor an overridden `VIRTUAL_ENV` env
-            # var actually wins against that nested context -- only naming
-            # the target interpreter directly is unambiguous. That target
-            # has to actually *exist* first, though: on a brand-new
-            # (first-ever) `goldilocks_core_venv` volume, `.venv/bin/python`
-            # doesn't exist until something creates it -- confirmed live
-            # 2026-09-25 (`error: No virtual environment ... found for path`)
-            # -- hence the explicit `uv sync --directory ... --extra http`
-            # ahead of the manual installs, not just relying on `poe serve`'s
-            # own trailing sync to have created it first.
-            script = (
-                f"mkdir -p {shlex.quote(str(checkpoint.parent))} && "
-                f"[ -f {checkpoint_q} ] || "
-                f"curl -fsSL -o {checkpoint_q} {shlex.quote(_MMACE_CHECKPOINT_URL)} && "
-                f"uv sync --directory {core_path_q} --extra http && "
-                f"uv pip install --python {venv_python_q} ase==3.28.0 e3nn==0.4.4 "
-                "sphericart==1.0.9 sphericart-torch==1.0.9 && "
-                f"uv pip install --python {venv_python_q} {fork_q} && "
-                + shlex.join(serve_cmd)
-            )
-            return ["sh", "-c", script]
-        return serve_cmd
+    uvx = f"uvx --from {shlex.quote(CORE_PYPI_REQUIREMENT)} goldilocks"
     return [
-        "uvx",
-        "--from",
-        "goldilocks-core[http]",
-        "goldilocks",
-        "serve",
-        "http",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000",
+        "sh",
+        "-c",
+        f"{uvx} assets install workbench && "
+        f"exec {uvx} serve http --host 127.0.0.1 --port 8000",
     ]
 
 
@@ -265,34 +247,117 @@ def _spawn(core_path: str | None) -> subprocess.Popen:
     execs/forks internally -- both `uv run poe serve` and `uvx ... `
     are themselves multi-process chains) is detached into its own
     session, so it isn't tied to this server process's controlling
-    terminal/process group. Termination is still a plain
-    `Popen.terminate()`/`kill()` on this top-level PID (verified live
-    2026-09-24 for both spawn modes: SIGTERM to the top-level process
-    cleanly took down every descendant, including the actual `goldilocks
-    serve http` process several levels down in its own process group) --
-    no `os.killpg` needed.
+    terminal/process group, and its PID is also its process-group id --
+    `shutdown()` signals that whole group, since the top-level PID is a
+    shell while an earlier step of an `sh -c` chain runs.
 
-    `env`: merged with (never replacing) this process's own environment --
-    `GOLDILOCKS_MACE_BACKBONE` only needs adding when mMACE is enabled, so
-    `poe serve`'s own `goldilocks_core.analysis.is_magnetic`/
-    `advisors.magnetic_ordering_ml` can find the checkpoint this same
-    command just downloaded. Note this process is itself launched via
-    `uv run` (`poe serve`'s own `CMD`), which sets `VIRTUAL_ENV` to
-    goldilocks-agent's own `.venv` in *this* environment -- inherited as-is,
-    that's what made `_spawn_command()`'s mMACE setup need an explicit
-    `--python <venv>/bin/python` on its `uv pip install` calls rather than
-    relying on `cd`/an overridden `VIRTUAL_ENV` here (confirmed live
-    2026-09-25: neither actually wins against the nested `uv run` context).
+    stdout/stderr: one pipe, copied to this process's own stderr by
+    `_forward_output()` in a daemon thread (`PYTHONUNBUFFERED` so lines
+    arrive as they're written, not when a buffer fills).
+
+    `env`: this process's own environment, inherited as-is. A
+    `GOLDILOCKS_MACE_BACKBONE` set there overrides the backbone core installs
+    with its assets; one still naming the v1.0 checkpoint makes every
+    `is_magnetic` request fail (goldilocks-core's docs/mmace-setup.md).
     """
     env = os.environ.copy()
-    if core_path and read_mmace_enabled():
-        env["GOLDILOCKS_MACE_BACKBONE"] = str(mmace_checkpoint_path())
-    return subprocess.Popen(
+    env["PYTHONUNBUFFERED"] = "1"
+    _recent_output.clear()
+    process = subprocess.Popen(
         _spawn_command(core_path),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding="utf-8",
+        errors="replace",
         start_new_session=True,
         env=env,
+    )
+    threading.Thread(
+        target=_forward_output, args=(process.stdout,), daemon=True
+    ).start()
+    return process
+
+
+def _forward_output(stream: TextIO) -> None:
+    """Copies the spawned core's output to this process's stderr, prefixed,
+    keeping the last lines in `_recent_output`. Runs until the pipe closes,
+    i.e. until every process in the spawned chain has exited."""
+    for line in stream:
+        _recent_output.append(line.rstrip())
+        sys.stderr.write(_OUTPUT_PREFIX + line)
+    stream.close()
+
+
+def _last_output_line() -> str | None:
+    """The spawned core's last non-blank output line, if any. The full
+    output is in this process's own stderr."""
+    lines = [line for line in tuple(_recent_output) if line.strip()]
+    return lines[-1] if lines else None
+
+
+def _with_last_output(detail: str) -> str:
+    """`detail` plus the spawned core's last non-blank output line, if any."""
+    last = _last_output_line()
+    return f"{detail} Last output: {last}" if last else detail
+
+
+def _fail(detail: str) -> None:
+    """Records a failed start: logs it, sets `_state` to error with
+    `detail`, and starts `_RETRY_AFTER_ERROR`'s window."""
+    global _state, _failed_at
+    logger.error(detail)
+    _state = {"status": "error", "base_url": None, "detail": detail}
+    _failed_at = time.monotonic()
+
+
+async def _served_vocabulary(client: httpx.AsyncClient) -> str | None:
+    """The `vocabulary_version` the core at `CORE_SERVER_BASE_URL` reports in
+    `/capabilities`, or None if that can't be read -- the embedded Workbench
+    then reports the failure itself."""
+    try:
+        response = await client.get("/capabilities", timeout=_CAPABILITIES_TIMEOUT)
+        payload = response.json() if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    if isinstance(payload, dict) and payload.get("vocabulary_version") is not None:
+        return str(payload["vocabulary_version"])
+    return None
+
+
+async def _mark_ready(
+    client: httpx.AsyncClient, core_path: str | None, *, spawned: bool
+) -> None:
+    """Sets `_state` to ready, unless the core now answering speaks a
+    different vocabulary than `CORE_PIN` -- which the vendored Workbench
+    would refuse with a banner that can't be dismissed. That becomes an error
+    naming both versions and the likely fix instead, which the frontend and
+    its chat tools relay. A core this module spawned is stopped first, so the
+    next attempt starts from the fixed checkout instead of finding the stale
+    process still answering. `spawned`: whether the answering core is the
+    process this module started (vs. one that was already running)."""
+    global _state
+    served = await _served_vocabulary(client)
+    expected = CORE_PIN["vocabulary_version"]
+    if served is None or served == expected:
+        _state = {"status": "ready", "base_url": CORE_SERVER_BASE_URL, "detail": None}
+        return
+    if not spawned:
+        fix = (
+            f"another goldilocks-core is already serving {CORE_SERVER_BASE_URL}; "
+            f"stop it so this build can start its own ({CORE_PIN['tag']})"
+        )
+    elif core_path:
+        fix = f"check out {CORE_PIN['tag']} in GOLDILOCKS_CORE_PATH ({core_path})"
+    else:
+        fix = (
+            f"{CORE_PYPI_REQUIREMENT} doesn't match core_pin.json's "
+            "vocabulary_version, so the pin itself is wrong"
+        )
+    if spawned:
+        await asyncio.to_thread(shutdown)
+    _fail(
+        f"goldilocks-core speaks vocabulary_version {served}, but this build's "
+        f"DFT Workbench needs {expected} -- {fix}."
     )
 
 
@@ -304,18 +369,26 @@ def shutdown() -> None:
     kill. Registered both with `atexit` (normal interpreter exit, e.g.
     uvicorn's own graceful SIGINT/SIGTERM handling) and called explicitly
     from `server.py`'s lifespan shutdown phase -- belt and suspenders, and
-    idempotent either way."""
+    idempotent either way. Signals the spawned process's whole group (it is
+    its own session, so its PID is the group id): while an earlier step of an
+    `sh -c` chain runs, the top-level PID is the shell, and signalling only
+    that would orphan the step."""
     global _process
     if _process is None or _process.poll() is not None:
         return
     logger.info("Shutting down the goldilocks-core process this module spawned")
+    _signal_group(_process, signal.SIGTERM)
     try:
-        _process.terminate()
         _process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        _process.kill()
+        _signal_group(_process, signal.SIGKILL)
         _process.wait(timeout=5)
     _process = None
+
+
+def _signal_group(process: subprocess.Popen, sig: signal.Signals) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, sig)
 
 
 atexit.register(shutdown)
@@ -326,9 +399,10 @@ async def _bring_up(core_path: str | None) -> None:
     per process (guarded by `_task` in `ensure_running`). `core_path` is
     ``None`` for PyPI mode, a checkout path for checkout mode -- see
     `_spawn_command()`."""
-    global _process, _state
+    global _process
     async with httpx.AsyncClient(base_url=CORE_SERVER_BASE_URL) as client:
-        if await _is_healthy(client):
+        health = await _health(client)
+        if health == "core":
             # Already running -- the user started it themselves, or a
             # previous call already brought it up. Reuse it: spawning a
             # second instance would just fail (both spawn modes' own
@@ -337,35 +411,30 @@ async def _bring_up(core_path: str | None) -> None:
                 "goldilocks-core already answering at %s -- reusing it",
                 CORE_SERVER_BASE_URL,
             )
-            _state = {
-                "status": "ready",
-                "base_url": CORE_SERVER_BASE_URL,
-                "detail": None,
-            }
+            ours = _process is not None and _process.poll() is None
+            await _mark_ready(client, core_path, spawned=ours)
+            return
+        if health == "other":
+            # Spawning would only fail to bind -- after a full `uv sync` or
+            # asset install in PyPI mode, with a less telling message.
+            _fail(
+                f"{CORE_SERVER_BASE_URL} is answering, but not as goldilocks-core "
+                "-- stop whatever is using port 8000, then reopen DFT Workbench."
+            )
             return
 
         logger.info("Starting goldilocks-core: %s", " ".join(_spawn_command(core_path)))
         try:
             _process = _spawn(core_path)
         except OSError as exc:
-            logger.error("Failed to spawn goldilocks-core: %s", exc)
-            _state = {"status": "error", "base_url": None, "detail": str(exc)}
+            _fail(f"Failed to spawn goldilocks-core: {exc}")
             return
 
-        startup_timeout = (
-            _STARTUP_TIMEOUT_MMACE
-            if core_path and read_mmace_enabled()
-            else _STARTUP_TIMEOUT
-        )
-        deadline = asyncio.get_event_loop().time() + startup_timeout
+        deadline = asyncio.get_event_loop().time() + _STARTUP_TIMEOUT
         while asyncio.get_event_loop().time() < deadline:
-            if await _is_healthy(client):
+            if await _health(client) == "core":
                 logger.info("goldilocks-core is up at %s", CORE_SERVER_BASE_URL)
-                _state = {
-                    "status": "ready",
-                    "base_url": CORE_SERVER_BASE_URL,
-                    "detail": None,
-                }
+                await _mark_ready(client, core_path, spawned=True)
                 return
             if _process.poll() is not None:
                 hint = (
@@ -374,24 +443,26 @@ async def _bring_up(core_path: str | None) -> None:
                     "works on its own"
                     if core_path
                     else "check that "
-                    "`uvx --from goldilocks-core[http] goldilocks serve http` "
+                    f"`uvx --from {CORE_PYPI_REQUIREMENT} goldilocks serve http` "
                     "works on its own"
                 )
-                detail = (
-                    f"goldilocks-core exited (code {_process.returncode}) "
-                    f"before it started answering -- {hint}."
+                _fail(
+                    _with_last_output(
+                        f"goldilocks-core exited (code {_process.returncode}) "
+                        f"before it started answering -- {hint}."
+                    )
                 )
-                logger.error(detail)
-                _state = {"status": "error", "base_url": None, "detail": detail}
                 return
             await asyncio.sleep(_POLL_INTERVAL)
 
-    detail = (
+    # Stopped first: left running, the hung start would still hold port 8000
+    # or its asset downloads when the retry spawns another.
+    detail = _with_last_output(
         f"goldilocks-core did not answer at {CORE_SERVER_BASE_URL}{_HEALTH_PATH} "
-        f"within {startup_timeout:.0f}s of starting."
+        f"within {_STARTUP_TIMEOUT:.0f}s of starting, so it was stopped."
     )
-    logger.error(detail)
-    _state = {"status": "error", "base_url": None, "detail": detail}
+    await asyncio.to_thread(shutdown)
+    _fail(detail)
 
 
 def ensure_running() -> dict:
@@ -404,11 +475,15 @@ def ensure_running() -> dict:
       `GOLDILOCKS_AGENT_CORE_AUTOSTART` -- nothing to auto-start (the
       hosted-deployment case, or local and simply unset).
     - ``starting``: a spawn/health-check is in flight -- poll again.
+      `detail` is the spawned core's latest output line, if any, so a long
+      first start (`_STARTUP_TIMEOUT`) shows signs of life; it can stay on
+      one line for minutes while `goldilocks assets install` downloads.
     - ``ready``: something is answering at `base_url`, reused or freshly
       spawned.
     - ``error``: configured but the spawn/health-check failed; `detail`
-      has a specific reason. A later call retries from scratch (e.g. the
-      user fixed their config and reopened DFT Workbench) rather than
+      has a specific reason. Every call for `_RETRY_AFTER_ERROR` seconds
+      gets that error; the first call after that retries from scratch (e.g.
+      the user fixed their config and reopened DFT Workbench) rather than
       latching the failure forever.
     """
     global _task
@@ -416,7 +491,19 @@ def ensure_running() -> dict:
     if not core_path and not read_core_autostart_enabled():
         return {"status": "not_configured", "base_url": None, "detail": None}
     task_in_flight = _task is not None and not _task.done()
-    if not task_in_flight and _state["status"] in ("idle", "error"):
+    if _task is not None and not task_in_flight and _state["status"] == "starting":
+        # `_bring_up` sets ready or error on every path it expects, so this
+        # is an unexpected crash -- report it rather than "starting" forever.
+        reason = "cancelled" if _task.cancelled() else repr(_task.exception())
+        _fail(f"Starting goldilocks-core failed unexpectedly: {reason}")
+    retry_due = (
+        _state["status"] == "error"
+        and time.monotonic() - _failed_at >= _RETRY_AFTER_ERROR
+    )
+    if not task_in_flight and (_state["status"] == "idle" or retry_due):
         _state["status"] = "starting"
         _task = asyncio.create_task(_bring_up(core_path))
-    return dict(_state)
+    state = dict(_state)
+    if state["status"] == "starting":
+        state["detail"] = _last_output_line()
+    return state

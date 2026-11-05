@@ -12,19 +12,20 @@ export default defineConfig([
   // project's source, and was never meant to be linted as if it were.
   globalIgnores(['dist', 'public']),
   {
-    // Build config, runs under Node (via `vite build`), not the browser --
-    // needs `process`/etc., which the browser-globals block below doesn't have.
-    files: ['vite.config.js'],
+    // Build config and maintainer scripts run under Node, not the browser --
+    // they need `process`/etc., which the browser-globals block below doesn't
+    // have.
+    files: ['vite.config.js', 'scripts/**/*.mjs'],
     extends: [js.configs.recommended],
     languageOptions: {
-      ecmaVersion: 2020,
+      ecmaVersion: 'latest',
       globals: globals.node,
       sourceType: 'module',
     },
   },
   {
     files: ['**/*.{js,jsx}'],
-    ignores: ['vite.config.js'],
+    ignores: ['vite.config.js', 'scripts/**'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,

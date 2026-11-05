@@ -369,7 +369,7 @@ async def call_tool(state: MessagesState) -> dict:
     if name in CLIENT_EXECUTED_TOOLS:
         # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
         # three all just raise) never runs: the real work happens in
-        # the browser, via app/src/App.tsx's dispatchDftTool calling
+        # the browser, via app/src/dftWorkbench.ts's dispatchDftTool calling
         # the embedded goldilocks-workbench panel's own
         # `coreWorkspace.dispatch(...)`. A second interrupt hands
         # control to it; its resume value *is* the tool's result, not
