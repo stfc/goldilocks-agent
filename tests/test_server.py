@@ -8,6 +8,8 @@ about getting a real model reply (that's test_graph.py's job).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 
@@ -18,6 +20,80 @@ def _make_client(tmp_path, monkeypatch):
     from goldilocks_agent.server import app
 
     return TestClient(app)
+
+
+def _stub_litellm(monkeypatch) -> list[str]:
+    """Replaces `litellm.acompletion` with a stream that calls `dft_review`
+    on the first call and replies "Reviewed." after that. Returns the list
+    of `model` arguments it is called with."""
+    models: list[str] = []
+
+    def chunk(content=None, tool_calls=None):
+        delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    async def acompletion(*, model, **_):
+        models.append(model)
+        if len(models) == 1:
+            call = SimpleNamespace(
+                index=0,
+                id="call-1",
+                function=SimpleNamespace(name="dft_review", arguments="{}"),
+            )
+            chunks = [chunk(tool_calls=[call])]
+        else:
+            chunks = [chunk(content="Reviewed.")]
+
+        async def stream():
+            for c in chunks:
+                yield c
+
+        return stream()
+
+    monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    return models
+
+
+def _client_tool_turn(client, model_id: str) -> None:
+    """Sends a turn that pauses on the client-executed `dft_review`, then
+    resumes it with a result, both with `model_id` -- what the browser sends."""
+    first = client.post(
+        "/api/chat",
+        json={
+            "thread_id": "t",
+            "message": {"role": "user", "content": "Review it."},
+            "model_id": model_id,
+        },
+    )
+    assert "event: client_tool_call" in first.text
+    resumed = client.post(
+        "/api/chat",
+        json={"thread_id": "t", "resume": {"result": {}}, "model_id": model_id},
+    )
+    assert "Reviewed." in resumed.text
+
+
+def test_local_build_resume_runs_on_the_selected_model(tmp_path, monkeypatch) -> None:
+    """#14: a local build has no model override, so a resume after a client
+    tool call runs on the `model_id` it carries, not the local fallback."""
+    with _make_client(tmp_path, monkeypatch) as client:
+        monkeypatch.delenv("GOLDILOCKS_AGENT_MODEL")
+        models = _stub_litellm(monkeypatch)
+        _client_tool_turn(client, "anthropic-claude")
+    assert models == ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5"]
+
+
+def test_web_build_resume_stays_on_the_pinned_model(tmp_path, monkeypatch) -> None:
+    """The shared web build answers with its pinned local model only
+    (`GOLDILOCKS_AGENT_MODEL` in deploy/stfc-cloud/docker-compose.yml),
+    whatever `model_id` a request names -- resumes included."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "ollama_chat/qwen3.8:27b")
+        models = _stub_litellm(monkeypatch)
+        _client_tool_turn(client, "anthropic-claude")
+    assert models == ["ollama_chat/qwen3.8:27b", "ollama_chat/qwen3.8:27b"]
 
 
 def test_read_shared_deployment_enabled_env_var(monkeypatch) -> None:
