@@ -122,7 +122,7 @@ const MODEL_GROUPS: { group: string; items: ModelOption[] }[] = [
   },
 ];
 
-// Flattens MODEL_GROUPS to look up a persisted selection by id (#4 -- reload
+// Flattens MODEL_GROUPS to look up a persisted selection by id (cc5f0dc -- reload
 // restores it from storage, but the id alone can't tell us the display group,
 // so this recovers the full model object). Skips `disabled` entries: they
 // were never selectable in the first place, so a stale persisted id pointing
@@ -142,7 +142,7 @@ function findModelById(id) {
 // in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
 // content-less assistant turns -- design doc 12.3: chat never shows raw
 // tool args/results) but also recognizes a past `dft_download_bundle` result
-// and re-inserts its `dft-bundle-ready` card (#5) -- the checkpointer has no
+// and re-inserts its `dft-bundle-ready` card (cc5f0dc) -- the checkpointer has no
 // concept of that card, only the raw tool call/result pair, and OpenAI's
 // wire format puts the tool's *name* on the preceding assistant message's
 // `tool_calls[]`, not on the tool-role reply itself, so the id needs to be
@@ -1867,7 +1867,7 @@ function coreWorkbenchStatusMessage(status: { status: string; detail: string | n
   if (status?.status === "error") {
     return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
   }
-  // (#3) The first start -- ever, or after a core upgrade -- installs core's
+  // (cc5f0dc) The first start -- ever, or after a core upgrade -- installs core's
   // dependencies and downloads its models and pseudopotentials before
   // goldilocks-core can begin listening, which has taken over 20 minutes on a
   // slow link (core_server.py's `_STARTUP_TIMEOUT`); a start with everything
@@ -1917,7 +1917,7 @@ export default function App() {
   const [hoveredHandle, setHoveredHandle] = useState(null);
   // One workspace/client instance per app lifetime -- recreating it every
   // time DFT Workbench's detail page is opened would drop in-progress state
-  // (see junwen94/goldilocks-agent#1 -- this is the embedded
+  // (see design doc §13 -- this is the embedded
   // goldilocks-workbench package DFT Workbench's full-page detail and inline
   // panel both reuse, see CoreWorkbenchTree/CoreWorkbenchTabs).
   const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
@@ -1985,7 +1985,7 @@ export default function App() {
   // (resolve_model()'s GOLDILOCKS_AGENT_MODEL env-var override always wins
   // server-side) -- defaulting to Claude there would misrepresent which
   // model actually answers. Elsewhere (non-shared), reload used to always
-  // reset this to Claude (#4) -- restore whatever was last picked instead,
+  // reset this to Claude (cc5f0dc) -- restore whatever was last picked instead,
   // same browserStorage()/STORAGE_KEYS pattern as activeChatId.
   const [selectedModel, setSelectedModel] = useState(() =>
     SHARED_DEPLOYMENT
@@ -2246,7 +2246,7 @@ export default function App() {
       loadConversationsOnce();
       hydrateExperienceLevel();
     } else {
-      // No conversation list to check against in shared mode (#9) -- the
+      // No conversation list to check against in shared mode (cc5f0dc) -- the
       // persisted id is this tab's own `sessionStorage` entry (never
       // another visitor's, browserStorage() already picked sessionStorage
       // for SHARED_DEPLOYMENT), so it's safe to trust directly. Synthesize
@@ -2263,7 +2263,7 @@ export default function App() {
     }
   }, []);
 
-  // Restores which conversation was open before a reload (#9 -- previously
+  // Restores which conversation was open before a reload (cc5f0dc -- previously
   // nothing did, so a refresh always landed on a blank "no chat selected"
   // screen even though the conversation itself was still on the server).
   // Local-mode only: waits for `loadConversationsOnce()` above to actually
@@ -2291,7 +2291,7 @@ export default function App() {
   }, [selectedModel]);
 
   // Persists `coreWorkspace`'s structure + calc settings on every real change
-  // (#5 -- previously a reload silently dropped all of it, since `coreWorkspace`
+  // (cc5f0dc -- previously a reload silently dropped all of it, since `coreWorkspace`
   // itself is recreated empty by the `useMemo` above), with the vocabulary
   // they're written in (see `restorableDraftPatch`). Only ever writes a loaded
   // structure: the workspace starts empty on every page load, and clearing the
@@ -2316,10 +2316,10 @@ export default function App() {
   }, [coreWorkspace]);
 
   // Replays the persisted structure/settings back into `coreWorkspace` once,
-  // on mount (#5). A real re-run of inspect/review/preview against
+  // on mount (cc5f0dc). A real re-run of inspect/review/preview against
   // goldilocks-core's backend, not a cheap local restore -- there's no
   // "just set the state" action in goldilocks-workbench's `Workspace`
-  // interface, only real actions -- so this deliberately trades the #7
+  // interface, only real actions -- so this deliberately trades c7bfc57's
   // no-silent-duplicate-real-execution principle for a seamless reload here
   // (explicit call, 2026-09-28, after weighing that tradeoff against the
   // cheaper alternatives). Best-effort: a structure goldilocks-core can no
@@ -3402,7 +3402,7 @@ export default function App() {
   //
   // The streaming assistant bubble is found by its `streamId` in the live
   // `current.messages` on each delta, not rebuilt from a snapshot taken
-  // once at the start of the call (#6, 2026-09-28): a `tool_result`/
+  // once at the start of the call (cc5f0dc, 2026-09-28): a `tool_result`/
   // `client_tool_call` handler earlier in this same stream may already have
   // appended something (a `dft-bundle-ready` card, a confirmation card) via
   // `current.messages` -- reconstructing from a frozen snapshot on every
