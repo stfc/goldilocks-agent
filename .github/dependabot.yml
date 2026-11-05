@@ -1,0 +1,43 @@
+# Dependabot: once a week, one pull request per ecosystem with every minor
+# and patch update; security fixes found in between also arrive as one
+# pull request per ecosystem. Major updates still come one per pull
+# request -- they can break things and need reading.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    groups:
+      python-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+      python-security:
+        applies-to: security-updates
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    groups:
+      app-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+      app-security:
+        applies-to: security-updates
+        update-types: ["minor", "patch"]
+    ignore:
+      # The vendored goldilocks-workbench tarball pins its React peer to
+      # exactly 19.2.8, so npm can't install any other React. Remove this
+      # once a core release with a ranged peer is vendored (core #254).
+      - dependency-name: "react"
+        versions: [">=19.3.0"]
+      - dependency-name: "react-dom"
+        versions: [">=19.3.0"]
