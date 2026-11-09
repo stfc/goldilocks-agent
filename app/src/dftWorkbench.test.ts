@@ -58,13 +58,26 @@ function fakeCore(overrides: Record<string, Route> = {}) {
 }
 
 const coreUp = async () => null;
-const openArgs = { structure_content: structure.structure_content, structure_name: "Si.cif" };
+// The structure files of the chat a call belongs to (App.tsx's
+// collectChatStructures); dft_open_structure picks one by name.
+const siFile = { name: "Si.cif", content: structure.structure_content, rawExt: ".cif", ext: ".cif" };
+const brokenFile = { name: "broken.cif", content: "not a structure", rawExt: ".cif", ext: ".cif" };
+const chat = [siFile, brokenFile];
+const openArgs = { file_name: "Si.cif" };
+
+const dispatch = (
+  workspace: Parameters<typeof dispatchDftTool>[0],
+  ready: Parameters<typeof dispatchDftTool>[1],
+  tool: string,
+  args: Record<string, unknown>,
+  structures: Parameters<typeof dispatchDftTool>[4] = chat,
+) => dispatchDftTool(workspace, ready, tool, args, structures);
 const archiveName = `Si.cif-${capabilities.tasks[0].id}.zip`;
 
 describe("dispatchDftTool", () => {
   it("stops before touching core while the backend isn't up", async () => {
     const { workspace, requests } = fakeCore();
-    const outcome = await dispatchDftTool(
+    const outcome = await dispatch(
       workspace, async () => "goldilocks-core is still starting", "dft_review", {},
     );
     expect(outcome).toEqual({ error: "goldilocks-core is still starting" });
@@ -75,13 +88,13 @@ describe("dispatchDftTool", () => {
     const { workspace } = fakeCore({
       "GET /capabilities": () => json(200, { ...capabilities, vocabulary_version: "0" }),
     });
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
     expect(outcome).toEqual({ error: expect.stringMatching(/^incompatible_vocabulary: /) });
   });
 
   it("dft_open_structure summarizes the structure and the calculation it opened into", async () => {
     const { workspace, requests, paths } = fakeCore();
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
     expect(outcome).toEqual({
       result: {
@@ -102,8 +115,35 @@ describe("dispatchDftTool", () => {
       },
     });
     expect(paths()).toEqual(["GET /capabilities", "POST /inspect"]);
-    // Format inferred from the name when the model leaves it out.
-    expect(requests[1].body).toMatchObject({ structure_name: "Si.cif", structure_format: "cif" });
+    // The chat's own file goes to core, its format taken from the file.
+    expect(requests[1].body).toMatchObject({
+      structure_content: structure.structure_content, structure_name: "Si.cif", structure_format: "cif",
+    });
+  });
+
+  it("dft_open_structure names the chat's structure files when the name isn't one of them", async () => {
+    const { workspace, requests } = fakeCore();
+    const outcome = await dispatch(workspace, coreUp, "dft_open_structure", { file_name: "Si_cif" });
+
+    expect(outcome).toEqual({
+      error: 'No structure file named "Si_cif" in this chat. Structure files in this chat: "Si.cif", '
+        + '"broken.cif". Call dft_open_structure again with one of these names, or ask the user to attach the file.',
+    });
+    expect(requests).toEqual([{ method: "GET", path: "/capabilities", body: undefined }]);
+    expect(workspace.getSnapshot().structureInput).toBeNull();
+  });
+
+  it("dft_open_structure says so when the chat has no structure files", async () => {
+    const { workspace } = fakeCore();
+    const outcome = await dispatch(workspace, coreUp, "dft_open_structure", openArgs, []);
+    expect(outcome).toEqual({ error: expect.stringContaining("the chat has no structure files yet") });
+  });
+
+  it("dft_open_structure sends a POSCAR file as POSCAR", async () => {
+    const { workspace, requests } = fakeCore();
+    const poscar = { name: "POSCAR", content: "Si\n1.0\n", rawExt: "", ext: ".poscar" };
+    await dispatch(workspace, coreUp, "dft_open_structure", { file_name: "POSCAR" }, [poscar]);
+    expect(requests[1].body).toMatchObject({ structure_name: "POSCAR", structure_format: "poscar" });
   });
 
   it("a structure core refuses becomes the tool's error, and the open one stays open", async () => {
@@ -112,13 +152,11 @@ describe("dispatchDftTool", () => {
       "POST /inspect": () =>
         refuse ? refusal(422, "invalid_structure", "cannot parse the CIF") : json(200, inspection),
     });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
     const open = workspace.getSnapshot().structureInput;
     refuse = true;
 
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_open_structure", {
-      structure_content: "not a structure", structure_name: "broken.cif",
-    });
+    const outcome = await dispatch(workspace, coreUp, "dft_open_structure", { file_name: "broken.cif" });
 
     expect(outcome).toEqual({ error: "invalid_structure: cannot parse the CIF" });
     expect(workspace.getSnapshot().structureInput).toBe(open);
@@ -126,12 +164,12 @@ describe("dispatchDftTool", () => {
 
   it("dft_review needs an open structure, then returns the records without their provenance", async () => {
     const { workspace, paths } = fakeCore();
-    expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
+    expect(await dispatch(workspace, coreUp, "dft_review", {})).toEqual({
       error: expect.stringContaining("call dft_open_structure first"),
     });
 
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {}) as { result: any };
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatch(workspace, coreUp, "dft_review", {}) as { result: any };
 
     expect(paths().at(-1)).toBe("POST /explain");
     const { records, warnings, blocking, calculation } = outcome.result;
@@ -146,8 +184,8 @@ describe("dispatchDftTool", () => {
 
   it("dft_review passes a blocking verdict on with its remedies", async () => {
     const { workspace } = fakeCore({ "POST /explain": () => json(200, blockedExplanation) });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {}) as { result: any };
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    const outcome = await dispatch(workspace, coreUp, "dft_review", {}) as { result: any };
 
     const [finding] = blockedExplanation.blocking;
     expect(outcome.result.blocking).toEqual([
@@ -162,13 +200,13 @@ describe("dispatchDftTool", () => {
     const { workspace, paths } = fakeCore({
       "POST /explain": () => (fail ? refusal(500, "internal_error", "boom") : json(200, explanation)),
     });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
+    expect(await dispatch(workspace, coreUp, "dft_review", {})).toEqual({
       error: expect.stringContaining("internal_error: boom (goldilocks-core failed internally"),
     });
     fail = false;
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_review", {});
+    const outcome = await dispatch(workspace, coreUp, "dft_review", {});
 
     expect(outcome).toHaveProperty("result");
     expect(paths().filter((path) => path === "POST /explain")).toHaveLength(2);
@@ -178,10 +216,10 @@ describe("dispatchDftTool", () => {
     const { workspace, paths } = fakeCore({
       "POST /explain": () => refusal(422, "invalid_setting", "ecutwfc_ry must be positive"),
     });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    const first = await dispatchDftTool(workspace, coreUp, "dft_review", {});
-    const second = await dispatchDftTool(workspace, coreUp, "dft_review", {});
+    const first = await dispatch(workspace, coreUp, "dft_review", {});
+    const second = await dispatch(workspace, coreUp, "dft_review", {});
 
     expect(second).toEqual(first);
     expect(first).toEqual({ error: "invalid_setting: ecutwfc_ry must be positive" });
@@ -192,18 +230,18 @@ describe("dispatchDftTool", () => {
     const { workspace } = fakeCore({
       "POST /explain": () => refusal(424, "asset_not_installed", "pseudopotential table not installed"),
     });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    expect(await dispatchDftTool(workspace, coreUp, "dft_review", {})).toEqual({
+    expect(await dispatch(workspace, coreUp, "dft_review", {})).toEqual({
       error: expect.stringContaining("`goldilocks assets install workbench` reinstalls them"),
     });
   });
 
   it("dft_download_bundle generates the archive but leaves saving it to a click", async () => {
     const { workspace, saved, requests } = fakeCore();
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+    const outcome = await dispatch(workspace, coreUp, "dft_download_bundle", {});
 
     expect(outcome).toMatchObject({ result: { filename: archiveName } });
     expect(requests.at(-1)).toMatchObject({ path: "/run", body: { respond_with: "archive" } });
@@ -214,9 +252,9 @@ describe("dispatchDftTool", () => {
 
   it("dft_download_bundle refuses a blocked draft with the decision it needs", async () => {
     const { workspace, paths } = fakeCore({ "POST /explain": () => json(200, blockedExplanation) });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+    const outcome = await dispatch(workspace, coreUp, "dft_download_bundle", {});
 
     const [finding] = blockedExplanation.blocking;
     expect(outcome).toEqual({ error: expect.stringContaining(finding.summary) });
@@ -229,16 +267,16 @@ describe("dispatchDftTool", () => {
     const { workspace } = fakeCore({
       "POST /run": () => refusal(422, "advice_incomplete", "cannot generate", { findings: [finding] }),
     });
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
-    const outcome = await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+    const outcome = await dispatch(workspace, coreUp, "dft_download_bundle", {});
 
     expect(outcome).toEqual({ error: expect.stringMatching(/^advice_incomplete: .*resolved by setting/) });
   });
 
   it("names an unknown tool instead of guessing", async () => {
     const { workspace } = fakeCore();
-    expect(await dispatchDftTool(workspace, coreUp, "dft_teleport", {})).toEqual({
+    expect(await dispatch(workspace, coreUp, "dft_teleport", {})).toEqual({
       error: "Unknown DFT Workbench tool: dft_teleport",
     });
   });
@@ -247,8 +285,8 @@ describe("dispatchDftTool", () => {
 describe("keepBundle and saveBundle", () => {
   it("save the archive the tool produced, even after the settings change", async () => {
     const { workspace } = fakeCore();
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
-    await dispatchDftTool(workspace, coreUp, "dft_download_bundle", {});
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_download_bundle", {});
     const id = keepBundle(workspace);
     expect(id).not.toBeNull();
 
@@ -353,7 +391,7 @@ describe("restoreDftWorkspace", () => {
 
   it("leaves a structure opened while it waited alone", async () => {
     const { workspace } = fakeCore();
-    await dispatchDftTool(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
     const opened = workspace.getSnapshot().structureInput;
     const forget = vi.fn();
 

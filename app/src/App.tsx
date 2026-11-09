@@ -14,15 +14,19 @@ import {
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
-import { dispatchDftTool, keepBundle, restoreDftWorkspace, saveBundle } from "./dftWorkbench";
+import { dispatchDftTool, keepBundle, restoreDftWorkspace, saveBundle, structureInputFor } from "./dftWorkbench";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
+  TRUNCATED_ATTACHMENT_MARKER,
   WEAS_SUPPORTED_EXTS,
+  collectChatStructures,
+  fetchedStructureMessage,
   formatStructureLabel,
   getRawFileExtension,
   getStructureFenceLanguage,
   inferStructureExtension,
+  structuresInTranscript,
 } from "./utils/structureFiles";
 
 // React's CSSProperties type doesn't include arbitrary custom properties
@@ -45,7 +49,7 @@ type CSSPropertiesWithVars = CSSProperties & Record<`--${string}`, string | numb
 // A chat message as stored in `session.messages`. `content` is either a
 // plain string (the common case) or -- when rehydrated straight from the
 // LangGraph checkpointer -- a multimodal "parts" array (see
-// getMessageDisplayParts/extractStructureFromMessageContent for the actual
+// getMessageDisplayParts/extractStructuresFromMessageContent for the actual
 // shape-sniffing this ambiguity forces on every reader).
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -142,8 +146,11 @@ function findModelById(id) {
 // in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
 // content-less assistant turns -- design doc 12.3: chat never shows raw
 // tool args/results) but also recognizes a past `dft_download_bundle` result
-// and re-inserts its `dft-bundle-ready` card (cc5f0dc) -- the checkpointer has no
-// concept of that card, only the raw tool call/result pair, and OpenAI's
+// and re-inserts its `dft-bundle-ready` card (cc5f0dc), and a past
+// `get_structure` result as its `fetched-structure` entry (#73: the chat's
+// structure files must survive a reload, since dft_open_structure names
+// them) -- the checkpointer has no concept of either, only the raw tool
+// call/result pair, and OpenAI's
 // wire format puts the tool's *name* on the preceding assistant message's
 // `tool_calls[]`, not on the tool-role reply itself, so the id needs to be
 // cross-referenced.
@@ -159,10 +166,15 @@ function rehydrateMessages(rawMessages) {
   const messages = [];
   for (const m of rawMessages) {
     if (m.role === "tool") {
-      if (toolNameByCallId.get(m.tool_call_id) === "dft_download_bundle") {
+      const toolName = toolNameByCallId.get(m.tool_call_id);
+      if (toolName === "dft_download_bundle" || toolName === "get_structure") {
         try {
           const parsed = JSON.parse(m.content);
-          if (parsed?.filename) messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
+          if (toolName === "dft_download_bundle" && parsed?.filename) {
+            messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
+          }
+          const fetched = toolName === "get_structure" ? fetchedStructureMessage(parsed) : null;
+          if (fetched) messages.push(fetched);
         } catch { /* malformed tool payload -- skip */ }
       }
       continue;
@@ -1104,35 +1116,15 @@ function getMessageDisplayParts(message) {
 // a cut CIF/POSCAR isn't a smaller structure but a broken one (a ~45-site
 // CIF already passes 3000 chars), so typical database entries go in whole.
 // Anything still over budget is cut with an explicit marker line after its
-// fence, so neither the model nor extractStructureFromMessageContent below
+// fence, so neither the model nor extractStructuresFromMessageContent
 // mistakes a partial file for the whole one (2026-10-09: the cut used to be
 // silent, at 3000 chars for everything).
 const ATTACHMENT_CHAR_BUDGET = 3000;
 const STRUCTURE_ATTACHMENT_CHAR_BUDGET = 20000;
-const TRUNCATED_ATTACHMENT_MARKER = "[Truncated attachment:";
-
-// Recovers a structure attachment from a past user message so it still
-// shows up in the Structure Viewer after a reload (checkpointer only stores
-// `content`, never the local `sessionFiles` state). `content` may be a
-// plain string or a multimodal parts array (see getMessageDisplayParts) --
-// only the text part can carry a fenced structure attachment.
-function extractStructureFromMessageContent(content) {
-  const text = typeof content === "string" ? content : Array.isArray(content) ? content.find((part) => part.type === "text")?.text ?? "" : "";
-  const match = text.match(/\[Attached file: ([^\]]+)\]\n```([^\n]*)\n([\s\S]+?)```/);
-  if (!match) return null;
-  // A truncated attachment is not a usable structure (see the budgets above).
-  if (text.slice(match.index + match[0].length).startsWith(`\n${TRUNCATED_ATTACHMENT_MARKER}`)) return null;
-  const [, name, fenceLang, fileContent] = match;
-  const rawExt = getRawFileExtension(name);
-  const inferredExt = inferStructureExtension(name, fileContent);
-  if (!WEAS_SUPPORTED_EXTS.has(inferredExt)) return null; // e.g. a DFT output log, not a real structure
-  const fencedExt = fenceLang && fenceLang !== "text" ? `.${fenceLang.toLowerCase()}` : "";
-  return { name, rawExt, ext: inferredExt || fencedExt || rawExt, content: fileContent };
-}
 
 // Generic version of the "already sent" check -- works for any uploaded
 // file or image, not just recognized structures (unlike
-// extractStructureFromMessageContent, which intentionally returns null for
+// extractStructuresFromMessageContent, which intentionally leaves out
 // non-structure attachments).
 function isFileSentInHistory(messages, name) {
   return messages.some((msg) => {
@@ -1639,7 +1631,7 @@ function DftWorkbenchStructureTab({
   onFileUpload,
 }: {
   workspace: any;
-  chatStructures: { name: string; content: string }[];
+  chatStructures: { name: string; content: string; ext: string }[];
   onFileUpload: (file: File) => void;
 }) {
   return (
@@ -1667,7 +1659,7 @@ function DftWorkbenchStructurePicker({
   chatStructures,
   onFileUpload,
 }: {
-  chatStructures: { name: string; content: string }[];
+  chatStructures: { name: string; content: string; ext: string }[];
   onFileUpload: (file: File) => void;
 }) {
   const workspace = useCoreWorkspace();
@@ -1684,15 +1676,8 @@ function DftWorkbenchStructurePicker({
   const valueLabel = structureInput?.structure_name
     ?? (chatStructures.length === 0 ? "No structures loaded" : "—");
 
-  function openStructureInCore(name: string, content: string) {
-    void workspace.dispatch({
-      type: "source.open",
-      input: {
-        structure_content: content,
-        structure_name: name,
-        structure_format: name.toLowerCase().endsWith(".cif") ? "cif" : "poscar",
-      },
-    });
+  function openStructureInCore(file: { name: string; content: string; ext: string }) {
+    void workspace.dispatch({ type: "source.open", input: structureInputFor(file) });
   }
 
   function handleUpload(file: File) {
@@ -1700,7 +1685,7 @@ function DftWorkbenchStructurePicker({
     // same pipeline every other Tool's upload already goes through.
     onFileUpload(file);
     void file.text().then((content) => {
-      openStructureInCore(file.name, content);
+      openStructureInCore({ name: file.name, content, ext: inferStructureExtension(file.name, content) });
     });
   }
 
@@ -1717,7 +1702,7 @@ function DftWorkbenchStructurePicker({
         onSelect={(id) => {
           setPickerOpen(false);
           const s = chatStructures[id];
-          if (s) openStructureInCore(s.name, s.content);
+          if (s) openStructureInCore(s);
         }}
         disabled={chatStructures.length === 0}
       />
@@ -1766,7 +1751,7 @@ function CoreWorkbenchTabs({
   onFileUpload,
 }: {
   workspace: any;
-  chatStructures: { name: string; content: string }[];
+  chatStructures: { name: string; content: string; ext: string }[];
   onFileUpload: (file: File) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1944,6 +1929,13 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [projectTab, setProjectTab] = useState("chats");
   const [sessions, setSessions] = useState<Session[]>([]);
+  // The committed `sessions`, for code that runs inside a chat stream's
+  // reader loop, whose closure holds the render the stream started in
+  // (runClientToolCall reads the calling chat's structure files from it).
+  const sessionsRef = useRef<Session[]>([]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
   const [activeId, setActiveId] = useState(null);
   // Captured once, on the very first render (`useRef`'s argument is only
   // ever used the first time) -- both restore paths below need the id that
@@ -2187,21 +2179,16 @@ export default function App() {
   );
   const canSend = Boolean(input.trim() || attachedFiles.length > 0 || attachedImages.length > 0) && !hasPendingConfirmation;
   const currentExperience = EXPERIENCE_OPTIONS.find((option) => option.id === experienceLevel);
+  // The chat's structure files (utils/structureFiles' collectChatStructures):
+  // uploads, attachments of sent messages, and structures the chat's
+  // get_structure fetched. Only recognized structure formats -- a DFT output
+  // log is still sent to the model as context, but WEAS can't render it, so
+  // it doesn't belong in the viewer or the DFT Workbench picker.
   const chatStructures = useMemo(() => {
-    const found = [];
-    for (const sf of sessionFiles) {
-      // Only genuinely recognized structure formats are viewable here --
-      // a DFT output log or other plain-text attachment is still sent to
-      // the model as context (see attachedFiles), it just isn't something
-      // WEAS can render, so it doesn't belong in this picker.
-      if (sf.isStructure) found.push({ ...sf, inserted: attachedFiles.some(f => f.name === sf.name) });
-    }
-    for (const msg of messages) {
-      if (msg.role !== "user") continue;
-      const structure = extractStructureFromMessageContent(msg.content);
-      if (structure && !found.some(f => f.name === structure.name)) found.push(structure);
-    }
-    return found;
+    return collectChatStructures(sessionFiles, messages).map((s) => ({
+      ...s,
+      inserted: attachedFiles.some((f) => f.name === s.name),
+    }));
   }, [sessionFiles, attachedFiles, messages]);
 
   // Files > Uploaded: every file/image ever uploaded this session, structure
@@ -3221,7 +3208,7 @@ export default function App() {
       const fenceLanguage = getStructureFenceLanguage(af.ext || af.rawExt);
       // "Attached file", not "attached structure file" -- this fence now also
       // carries generic text attachments (e.g. a DFT output log) that aren't
-      // structures at all; extractStructureFromMessageContent still decides
+      // structures at all; extractStructuresFromMessageContent still decides
       // "is it a structure" from the content itself, not this label.
       const budget = af.isStructure || WEAS_SUPPORTED_EXTS.has(af.ext)
         ? STRUCTURE_ATTACHMENT_CHAR_BUDGET
@@ -3359,11 +3346,15 @@ export default function App() {
   async function runClientToolCall(sessionId, payload, signal, modelId) {
     let outcome;
     try {
+      // The structure files of the chat this call belongs to, not of
+      // whichever chat is active now (dft_open_structure picks one by name).
+      const target = sessionsRef.current.find((item) => item.id === sessionId);
       outcome = await dispatchDftTool(
         coreWorkspace,
         (readySignal) => ensureCoreServerReady(undefined, readySignal),
         payload.tool,
         payload.args ?? {},
+        target ? collectChatStructures(target.modeState?.sessionFiles ?? [], target.messages) : [],
         signal,
       );
     } catch (err) {
@@ -3506,6 +3497,16 @@ export default function App() {
                   role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
                 }],
               }));
+            } else if (payload.tool === "get_structure") {
+              // The fetched structure joins this chat's structure files
+              // (#73), so dft_open_structure can open it by its filename.
+              const fetched = fetchedStructureMessage(payload.result);
+              if (fetched) {
+                replaceSession(targetSessionId, (current) => ({
+                  ...current,
+                  messages: [...current.messages, fetched],
+                }));
+              }
             } else if (payload.tool === "find_in_databases") {
               replaceSession(targetSessionId, (current) => ({
                 ...current,
@@ -9287,6 +9288,10 @@ export default function App() {
                 ) : (
                   <div className="messages">
                     {messages.map((message, index) => {
+                      // A structure get_structure fetched: listed in the
+                      // Structure Viewer and the Workbench picker, not as a
+                      // chat bubble.
+                      if (message.role === "fetched-structure") return null;
                       if (message.role === "confirmation") {
                         return (
                           <div key={`confirmation-${index}`} className="message-row">
@@ -9574,8 +9579,8 @@ export default function App() {
                                       <span>Renderer</span><span>WEAS</span>
                                     </div>
                                     <div className="structure-viewer-row-actions">
-                                      {!messages.some(
-                                        msg => msg.role === "user" && extractStructureFromMessageContent(msg.content)?.name === activeViewerSource.name
+                                      {!structuresInTranscript(messages).some(
+                                        (s) => s.name === activeViewerSource.name
                                       ) && (
                                         <button
                                           className="ghost-icon-btn"

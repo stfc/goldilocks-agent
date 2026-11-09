@@ -178,3 +178,104 @@ export function inferStructureExtension(fileName: string = "", content: string =
     return rawExt;
   }
 }
+
+// --- Structure files in a chat -------------------------------------------
+// App.tsx's send() embeds each attached file as
+//   [Attached file: NAME]\n```LANG\nCONTENT\n```
+// followed, when the content was cut to its budget, by a line starting with
+// this marker. A cut structure is a broken one, not a smaller one.
+export const TRUNCATED_ATTACHMENT_MARKER = "[Truncated attachment:";
+
+const ATTACHMENT_FENCE = /\[Attached file: ([^\]]+)\]\n```([^\n]*)\n([\s\S]+?)```/g;
+
+// A structure file a chat holds: attached by the user or fetched by the
+// chat's get_structure tool. `ext` is the inferred structure extension.
+export interface ChatStructure {
+  name: string;
+  content: string;
+  rawExt: string;
+  ext: string;
+}
+
+// The transcript entry App.tsx keeps for a structure the chat's
+// get_structure tool fetched: appended when its tool_result arrives, rebuilt
+// from the tool message on reload. Never sent to the model, which already
+// has the tool result.
+export interface FetchedStructureMessage {
+  role: "fetched-structure";
+  name: string;
+  content: string;
+}
+
+function chatStructureOf(name: string, content: string, fenceLang = ""): ChatStructure | null {
+  const rawExt = getRawFileExtension(name);
+  const inferredExt = inferStructureExtension(name, content);
+  if (!WEAS_SUPPORTED_EXTS.has(inferredExt)) return null; // e.g. a DFT output log
+  const fencedExt = fenceLang && fenceLang !== "text" ? `.${fenceLang.toLowerCase()}` : "";
+  return { name, rawExt, ext: inferredExt || fencedExt || rawExt, content };
+}
+
+/** The structure attachments of one user message's content (a string or a
+ * multimodal parts array, whose text part carries the attachments), in
+ * order. Recognized structure formats only; truncated attachments are left
+ * out. */
+export function extractStructuresFromMessageContent(content: unknown): ChatStructure[] {
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.find((part) => part?.type === "text")?.text ?? ""
+      : "";
+  const found: ChatStructure[] = [];
+  for (const match of text.matchAll(ATTACHMENT_FENCE)) {
+    const end = (match.index ?? 0) + match[0].length;
+    if (text.slice(end).startsWith(`\n${TRUNCATED_ATTACHMENT_MARKER}`)) continue;
+    const structure = chatStructureOf(match[1], match[3], match[2]);
+    if (structure) found.push(structure);
+  }
+  return found;
+}
+
+/** The transcript entry for a get_structure result, or null when the call
+ * failed (its result is then `{error}`). */
+export function fetchedStructureMessage(result: unknown): FetchedStructureMessage | null {
+  const fetched = result as { filename?: unknown; content?: unknown } | null;
+  if (typeof fetched?.filename !== "string" || typeof fetched?.content !== "string") return null;
+  return { role: "fetched-structure", name: fetched.filename, content: fetched.content };
+}
+
+/** The structure files a transcript holds -- user messages' attachments and
+ * get_structure's fetched structures -- in the order each name first
+ * appears. A name seen again (a file attached twice) keeps its first
+ * position and takes the latest content. */
+export function structuresInTranscript(
+  messages: readonly { role: string; content?: unknown; name?: string }[],
+): ChatStructure[] {
+  const byName = new Map<string, ChatStructure>();
+  for (const message of messages) {
+    if (message.role === "user") {
+      for (const structure of extractStructuresFromMessageContent(message.content)) {
+        byName.set(structure.name, structure);
+      }
+    } else if (message.role === "fetched-structure" && typeof message.name === "string") {
+      const structure = chatStructureOf(message.name, String(message.content ?? ""));
+      if (structure) byName.set(structure.name, structure);
+    }
+  }
+  return [...byName.values()];
+}
+
+/** Every structure file a chat holds: its session files recognized as
+ * structures, then the transcript's (`structuresInTranscript`) under names
+ * not already listed. A session file wins over the transcript, since it is
+ * replaced on every re-upload. Extra fields on session files are kept. */
+export function collectChatStructures<F extends ChatStructure & { isStructure?: boolean }>(
+  sessionFiles: readonly F[],
+  messages: readonly { role: string; content?: unknown; name?: string }[],
+): (F | ChatStructure)[] {
+  const byName = new Map<string, F | ChatStructure>();
+  for (const file of sessionFiles) if (file.isStructure) byName.set(file.name, file);
+  for (const structure of structuresInTranscript(messages)) {
+    if (!byName.has(structure.name)) byName.set(structure.name, structure);
+  }
+  return [...byName.values()];
+}
