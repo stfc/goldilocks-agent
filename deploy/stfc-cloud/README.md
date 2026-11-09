@@ -101,3 +101,50 @@ cd deploy/stfc-cloud
 git -C ../.. pull
 docker compose up -d --build
 ```
+
+## Memory limit
+
+The `agent` service runs with `mem_limit: 32g` and `memswap_limit: 32g`
+(stfc/goldilocks-agent#70, 2026-11-09). Swap is not allowed past the limit.
+
+**Why a limit.** Since core v0.3.0 the agent container also runs
+goldilocks-core's mMACE processes, and the is_magnetic worker's memory grows
+with the structure: about 45 MB per atom, 11.8 GB for a 250-atom cell. Without
+a container limit, a large upload can push the VM into a global OOM kill. The
+kernel then kills the largest process on the host, which can be Ollama (19 GB
+RSS), taking chat down for everyone. Under the container limit, the kernel
+kills the largest process inside this container instead, and logs
+`Memory cgroup out of memory`.
+
+**Why 32 GB.** Measured on 2026-11-09:
+
+| What | Memory |
+|---|---|
+| Agent server (uvicorn) | 1.1 GB |
+| Idle goldilocks-core (main process + is_magnetic worker + enumlib worker) | about 3.4 GB |
+| Whole container while a ranking runs | about 4.4 GB |
+| VM RAM | 98 GB, of which Ollama uses about 19 GB |
+
+32 GB is about 7 times the busy steady state. It still fits a structure of
+roughly 600 atoms through the is_magnetic worker, and leaves most of the VM's
+RAM to Ollama, the OS, and vLLM later (#68). Lower it once
+junwen94/goldilocks-core#259 (atom limit) and stfc/goldilocks-ml#140 (no_grad
+embedding) are deployed.
+
+**What should happen at the limit.** For an oversized structure, the largest
+process in the container is the mMACE worker. Core raises `WorkerDied` for
+that request and starts a new worker on the next call. The agent server and
+core's main process stay up, and Ollama keeps running in its own container.
+
+Check after a redeploy:
+
+```bash
+docker inspect --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' \
+  "$(docker compose ps -q agent)"
+# 34359738368 34359738368
+```
+
+Before relying on the kill behaviour, try it once on the VM with an oversized
+structure: that request should fail, the next `/explain` should succeed, chat
+should keep working, and `docker compose logs agent` / `dmesg` should show the
+cgroup OOM kill.
