@@ -7,6 +7,7 @@
 
 import { HttpCoreClient, createWorkspace, currentArchive } from "goldilocks-workbench";
 import { describe, expect, it, vi } from "vitest";
+import { isDftReview, reviewRows } from "./dftReview";
 import capabilities from "./__fixtures__/core/capabilities.json";
 import blockedExplanation from "./__fixtures__/core/explain-blocked.json";
 import explanation from "./__fixtures__/core/explain.json";
@@ -187,6 +188,17 @@ describe("dispatchDftTool", () => {
     expect(warnings).toHaveLength(explanation.warnings.length);
     expect(blocking).toEqual([]);
     expect(calculation.task).toBe(capabilities.tasks[0].id);
+
+    // The chat's review card (#74) reads this same result.
+    expect(isDftReview(outcome.result)).toBe(true);
+    expect(reviewRows(outcome.result)).toEqual([
+      { label: "Functional", value: "PBEsol", source: "Heuristic default" },
+      { label: "Pseudopotentials", value: "PseudoDojo, efficiency", source: "Heuristic default" },
+      { label: "Cutoffs (wfc / rho)", value: "48 / 192 Ry", source: "Heuristic default" },
+      { label: "k-point mesh", value: "6 × 6 × 6", source: "Goldilocks-ML prediction" },
+      { label: "Occupations", value: "fixed", source: "Heuristic default" },
+      { label: "Spin", value: "non-magnetic", source: "Heuristic default" },
+    ]);
   });
 
   it("dft_review passes a blocking verdict on with its remedies", async () => {

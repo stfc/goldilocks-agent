@@ -15,6 +15,8 @@ import {
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
 import { dispatchDftTool, keepBundle, restoreDftWorkspace, saveBundle, structureInputFor } from "./dftWorkbench";
+import { DftReviewCard } from "./components/DftReviewCard";
+import { isDftReview } from "./dftReview";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
 import WeasStructureViewport from "./components/WeasStructureViewport";
 import {
@@ -146,7 +148,8 @@ function findModelById(id) {
 // in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
 // content-less assistant turns -- design doc 12.3: chat never shows raw
 // tool args/results) but also recognizes a past `dft_download_bundle` result
-// and re-inserts its `dft-bundle-ready` card (cc5f0dc), and a past
+// and re-inserts its `dft-bundle-ready` card (cc5f0dc), a past `dft_review`
+// result as its `dft-review` card (#74), and a past
 // `get_structure` result as its `fetched-structure` entry (#73: the chat's
 // structure files must survive a reload, since dft_open_structure names
 // them) -- the checkpointer has no concept of either, only the raw tool
@@ -167,11 +170,14 @@ function rehydrateMessages(rawMessages) {
   for (const m of rawMessages) {
     if (m.role === "tool") {
       const toolName = toolNameByCallId.get(m.tool_call_id);
-      if (toolName === "dft_download_bundle" || toolName === "get_structure") {
+      if (toolName === "dft_download_bundle" || toolName === "dft_review" || toolName === "get_structure") {
         try {
           const parsed = JSON.parse(m.content);
           if (toolName === "dft_download_bundle" && parsed?.filename) {
             messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
+          }
+          if (toolName === "dft_review" && isDftReview(parsed)) {
+            messages.push({ role: "dft-review", review: parsed });
           }
           const fetched = toolName === "get_structure" ? fetchedStructureMessage(parsed) : null;
           if (fetched) messages.push(fetched);
@@ -3534,6 +3540,14 @@ export default function App() {
                   role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
                 }],
               }));
+            } else if (payload.tool === "dft_review" && isDftReview(payload.result)) {
+              // The review's key values go into the transcript as a card
+              // rendered from core's result (#74), so the user reads core's
+              // numbers, not the model's retelling of them.
+              replaceSession(targetSessionId, (current) => ({
+                ...current,
+                messages: [...current.messages, { role: "dft-review", review: payload.result }],
+              }));
             } else if (payload.tool === "get_structure") {
               // The fetched structure joins this chat's structure files
               // (#73), so dft_open_structure can open it by its filename.
@@ -6039,6 +6053,65 @@ export default function App() {
           margin-top: 6px;
           font-size: 13px;
           line-height: 1.5;
+          color: var(--muted);
+        }
+
+        .review-card {
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--bg-elev);
+          padding: 12px 14px;
+          max-width: 560px;
+          line-height: 1.5;
+        }
+
+        .review-card-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--muted);
+          margin-bottom: 8px;
+        }
+
+        .review-card-blocked {
+          font-size: 13px;
+          color: var(--text);
+          background: color-mix(in srgb, #f59e0b 14%, transparent);
+          border-radius: 8px;
+          padding: 6px 10px;
+          margin-bottom: 8px;
+        }
+
+        .review-card-rows {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+
+        .review-card-rows th {
+          text-align: left;
+          font-weight: 500;
+          color: var(--muted);
+          padding: 3px 12px 3px 0;
+          white-space: nowrap;
+        }
+
+        .review-card-rows td {
+          padding: 3px 12px 3px 0;
+        }
+
+        .review-card-source {
+          color: var(--muted);
+          font-size: 12px;
+          text-align: right;
+          white-space: nowrap;
+        }
+
+        .review-card-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-top: 10px;
+          font-size: 12px;
           color: var(--muted);
         }
 
@@ -9369,6 +9442,21 @@ export default function App() {
                                   </div>
                                 )}
                               </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (message.role === "dft-review") {
+                        return (
+                          <div key={`${session?.id}-dft-review-${index}`} className="message-row">
+                            <div className="avatar assistant">
+                              <LogoImage alt="Goldilocks logo" />
+                            </div>
+                            <div className="message-content">
+                              <DftReviewCard
+                                review={message.review}
+                                onOpen={() => activateTool(getToolById("dft-workbench"))}
+                              />
                             </div>
                           </div>
                         );
