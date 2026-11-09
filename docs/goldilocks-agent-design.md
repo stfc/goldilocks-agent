@@ -3322,6 +3322,26 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
 也不小。上线前应该先在目标 VM 上实测能撑几个真实并发，而不是把 session 架构做
 精细了才发现真正的瓶颈在别处。
 
+#### ★★ 2026-11-09 补：线上继续用 qwen3.8 27B，但关掉思考（stfc/goldilocks-agent#76，#68 第一阶段的结论）
+
+- **实测**（2026-11-09，VM 容器日志里 220 次调用）：p50 7.8 s、p95 64 s，85% 的时间在生成。
+  原因是 qwen3.8 默认先思考（"medium"），而 `call_llm` 只读 `delta.content`，思考内容被丢掉，
+  **用户对着空白干等**。
+- **#68 的模型 A/B** 比较了 Ministral 3（3B/8B/14B）和关掉思考的 qwen。3B 最快（Mac 上每步耗时中位数
+  0.7 s，qwen 3.8 s），在 #73 和 #72 之后工具决策也够用。**Junwen 决定保留 qwen3.8 27B，关掉思考。**
+- **实现**：`resolve_model` 给所有 `ollama_chat/` 模型加上 `reasoning_effort="none"`，litellm 会把它转成
+  Ollama 的 `think: false`（已对照 litellm 源码确认）；不支持思考的模型也接受这个参数（用 ministral-3:3b 实测过）。
+  **qwen3.8 还要换成不思考模式的采样参数**：temperature 0.7、top_p 0.8（模型卡）。Ollama 自带的
+  temperature 1.0、top_p 0.95 是思考模式用的，只关思考不换参数，线上跑的就是没测过的配置。
+  云端模型保持各自的默认值。
+- **验收**：#72 的 eval 用的就是这组设置（关思考、0.7/0.8、加 system prompt），qwen 19 例 × 3 遍全对，
+  M2/M4 的总结里没有自己的值（见 12.2 补）。上线后用容器日志重新统计 p50/p95，和上面的数字对比。
+- **连带影响**：stfc/goldilocks-agent#71（把思考过程显示成可折叠块）关掉思考后没有内容可显示，#46（换成 mistral）
+  也不再需要，两条都以 not planned 关闭。
+- **vLLM 仍然要做**（为了并发，#68 后续阶段），模型还是 qwen。切到 vLLM 后关思考要换一种写法：
+  Qwen 系列用 chat template 的 `enable_thinking` 参数，litellm 的 `hosted_vllm/` 会不会转换
+  `reasoning_effort` **尚未验证**，切换时要对 qwen3.8 实测。
+
 ### 19.8 待决 / 已知缺口（本节范围内）
 
 - [x] ~~**TLS 证书获取方式**~~ → **已定（2026-09-24，STFC Cloud IT/David Fairbrother 邮件确认）**：

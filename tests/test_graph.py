@@ -690,6 +690,39 @@ def test_resolve_model_non_vllm_override_ignores_vllm_api_base(monkeypatch) -> N
     assert extra == {}
 
 
+def test_qwen_answers_without_thinking_at_its_non_thinking_sampling(
+    monkeypatch,
+) -> None:
+    """qwen3.8's hidden thinking was most of the wait on the shared VM
+    (2026-11-09); `reasoning_effort="none"` is litellm's way to send
+    Ollama `think: false`, and the model card's non-thinking sampling goes
+    with it. Both the local fallback and the shared deployment's pinned
+    model get them."""
+    qwen_options = {"reasoning_effort": "none", "temperature": 0.7, "top_p": 0.8}
+    monkeypatch.delenv("GOLDILOCKS_AGENT_MODEL", raising=False)
+    assert resolve_model() == (LOCAL_MODEL, qwen_options)
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "ollama_chat/qwen3.8:27b")
+    assert resolve_model() == ("ollama_chat/qwen3.8:27b", qwen_options)
+
+
+def test_other_ollama_models_answer_without_thinking_at_their_own_sampling(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "ollama_chat/ministral-3:3b")
+    assert resolve_model() == (
+        "ollama_chat/ministral-3:3b",
+        {"reasoning_effort": "none"},
+    )
+
+
+def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("GOLDILOCKS_AGENT_MODEL", raising=False)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    model, extra = resolve_model("anthropic-claude")
+    assert model == "anthropic/claude-sonnet-5"
+    assert extra == {"api_key": "k"}
+
+
 @pytest.mark.integration
 @requires_local_model
 def test_experience_level_changes_response_length() -> None:
