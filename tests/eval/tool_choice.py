@@ -5,9 +5,10 @@ history; the eval asks a model for the next assistant step the way
 `graph.call_llm` does (the agent's own system message and TOOL_SCHEMAS,
 OpenAI-style messages, streamed through litellm) and checks whether that step
 is the expected one: which tool, with valid arguments, or no tool. Free-form
-answers are not judged, except that a Chinese question gets a Chinese answer,
-the image case names a number, and a summary of tool results states no
-parameter values of its own.
+answers are not judged, except that an answer comes in the question's language,
+the image case names a number, a summary of tool results states no parameter
+values of its own, and the open-goal cases (G) name the task to switch or the
+task the review actually ran.
 
 Tool results in the multi-step cases are built from goldilocks-core 0.3.0's
 recorded responses in app/src/__fixtures__/core, trimmed the way
@@ -183,7 +184,9 @@ def _review_result(name: str) -> dict:
     records = {}
     for key, r in explain["records"].items():
         if r["status"] == "resolved":
-            records[key] = {"value": r["value"], "source": r["source"]}
+            records[key] = {"value": r["value"], "source": r["source"]} | (
+                {"source_note": r["source_note"]} if r.get("source_note") else {}
+            )
         else:
             records[key] = {"status": r["status"]} | {
                 k: r[k] for k in ("reason", "blocked_by") if r.get(k)
@@ -360,7 +363,17 @@ def expect_tool(
     return check
 
 
-def expect_answer(lang: str | None = None, contains: str | None = None) -> Check:
+# A few common German words: a 2026-11-09 run answered an English question in
+# German.
+_GERMAN = re.compile(r"\b(ich|und|die|der|nicht|ist|Sie|für|nach)\b")
+
+
+def expect_answer(
+    lang: str | None = None, contains: str | None = None, mentions: tuple = ()
+) -> Check:
+    """No tool call, a non-empty answer in ``lang`` that contains ``contains``
+    and mentions every word in ``mentions`` (case-insensitive)."""
+
     def check(step: Step) -> str | None:
         if step.tool_calls:
             return f"called {step.tool_calls[0]['name']}"
@@ -368,9 +381,25 @@ def expect_answer(lang: str | None = None, contains: str | None = None) -> Check
             return "empty answer"
         if lang == "zh" and not re.search(r"[一-鿿]", step.content):
             return "answer is not in Chinese"
+        if lang == "en" and (
+            re.search(r"[一-鿿]", step.content)
+            or len(_GERMAN.findall(step.content)) >= 3
+        ):
+            return "answer is not in English"
         if contains is not None and contains not in step.content:
             return f"answer lacks {contains!r}"
-        return None
+        missing = [w for w in mentions if w.lower() not in step.content.lower()]
+        return f"answer doesn't mention {', '.join(missing)}" if missing else None
+
+    return check
+
+
+def expect_one_of(*checks: Check) -> Check:
+    """Passes if any of ``checks`` does."""
+
+    def check(step: Step) -> str | None:
+        failures = [c(step) for c in checks]
+        return None if None in failures else " / ".join(failures)
 
     return check
 
@@ -426,7 +455,8 @@ def expect_values_from(messages: list[dict]) -> Check:
     results or the user's messages in ``messages``: none of the model's own."""
     tool_outputs = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
     user_text = [m["content"] for m in messages if m["role"] == "user"]
-    known = _numbers(tool_outputs) + _numbers(user_text)
+    # Unsigned: the patterns above keep only the digits of "-2.10 eV".
+    known = [abs(n) for n in _numbers(tool_outputs) + _numbers(user_text)]
     meshes = _meshes(tool_outputs)
 
     def check(step: Step) -> str | None:
@@ -485,6 +515,18 @@ def cases() -> list[Case]:
         *open_turn,
         call("dft_review", {}, "c2"),
         result("c2", _review_result("explain")),
+    ]
+    band_open = [
+        user(
+            _attached(
+                "Si.cif",
+                "cif",
+                SI_CIF,
+                "I want to calculate the band structure of this.",
+            )
+        ),
+        call("dft_open_structure", si_open_args, "c1"),
+        result("c1", _open_result()),
     ]
     blocked_turn = [
         *open_turn,
@@ -721,6 +763,63 @@ def cases() -> list[Case]:
                 _names("GaAs_mp-2534.cif"),
                 "not the fetched file's name",
             ),
+        ),
+        # open-ended goals (2026-11-09 browser runs: "I want to study NaCl")
+        Case(
+            "G1",
+            "goal",
+            [user("I want to study NaCl")],
+            expect_one_of(
+                expect_tool("find_in_databases", _formula("NaCl")),
+                expect_answer(lang="en"),
+            ),
+        ),
+        Case(
+            "G2",
+            "goal",
+            [user("我想研究NaCl")],
+            expect_one_of(
+                expect_tool("find_in_databases", _formula("NaCl")),
+                expect_answer(lang="zh"),
+            ),
+        ),
+        # No tool sets the task: the user switches it in DFT Workbench. Telling
+        # them straight away is best; reviewing the open SCF first is fine if
+        # the answer after it does (G5).
+        Case(
+            "G3",
+            "goal",
+            band_open,
+            expect_one_of(
+                expect_answer(mentions=("band", "task")), expect_tool("dft_review")
+            ),
+        ),
+        Case(
+            "G5",
+            "goal",
+            [
+                *band_open,
+                call("dft_review", {}, "c2"),
+                result("c2", _review_result("explain")),
+            ],
+            expect_answer(mentions=("band", "task")),
+        ),
+        # The user says it's switched; the review shows it isn't.
+        Case(
+            "G4",
+            "goal",
+            [
+                *band_open,
+                assistant(
+                    "The structure is open with the task scf_single_point. For a "
+                    "band structure, switch the Task to band in DFT Workbench, "
+                    "then tell me and I'll review the parameters."
+                ),
+                user("Done, I switched it."),
+                call("dft_review", {}, "c2"),
+                result("c2", _review_result("explain")),
+            ],
+            expect_answer(mentions=("scf",)),
         ),
         # image attached in the composer (App.tsx sends it as an image_url part)
         Case(

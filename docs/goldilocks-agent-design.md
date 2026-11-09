@@ -1249,6 +1249,43 @@ goldilocks 的形状正好是它：
 | Ministral 3 3B | 55/57 | 1/3 | 自己给了 4×4×4、60 Ry |
 | Ministral 3 3B，experience level 选 "new" | 49/57 | 0/3 | D3 先去搜数据库，M6 不调工具：较长的"多解释"会把小模型带偏 |
 
+#### ★★ 2026-11-09 再补：开放式目标实测，prompt 加两句
+
+**浏览器实测**：在本地起真实的 agent、core 和浏览器，配置和线上一样（qwen 关思考，"familiar" 等级）。
+
+| 用户的说法 | 模型做了什么 |
+|---|---|
+| "我想研究NaCl" | 三轮完成：搜数据库 → 取结构 → 打开 → review → 生成输入文件，数值和 core 一致 |
+| "我想算 NaCl 的能带" | 告诉用户去 DFT Workbench 里把任务切换成 `band`；用户谎称"改好了"时，从 review 结果里发现任务没变，并如实说明 |
+| "I want to study NaCl" | 工具调用对，但有一次用德语回答；同样设置重复 10 次，全部是英文，是偶发 |
+
+**新加的 eval 用例**：开放目标单列一类，`tests/eval/tool_choice.py` 的 G1–G5：
+
+| 用例 | 场景 |
+|---|---|
+| G1 / G2 | 英文和中文的"想研究 NaCl"：去搜数据库或追问，语言要和用户一致 |
+| G3 / G5 | 结构已打开（SCF），用户要能带：要提醒用户切换任务 |
+| G4 | 用户说已切换，review 却仍是 SCF：要如实说明 |
+
+**G4 暴露的问题**：模型能看出任务没变，但三次里有两次没等用户要求，就自己生成了 SCF 的输入文件。
+
+原因有两个：
+- system prompt 把三个 DFT 工具写成一条"打开 → review → 生成"的流水线；
+- `dft_download_bundle` 的描述又说不需要单独确认。
+
+**决定（Junwen 2026-11-09）**：第三段加两句。
+
+> Settings, the task included, are changed by the user in DFT Workbench, not by you;
+> dft_review shows what is set. Call dft_download_bundle only when the user asks for input files.
+
+**效果**：qwen（"familiar" 等级）跑全部 24 个用例 × 3 遍：
+
+- 全部通过，72/72；
+- G4 从 0/3 变成 3/3，G5 从 2/3 变成 3/3；
+- M3（用户明确要求生成）仍然 3/3。
+
+**同一批改动的另一项**：`reviewForModel` 现在会带上记录的 `source_note`（core 给出的推荐理由）。这样 goldilocks-core#259 跳过 mMACE 时，模型能告诉用户原因。
+
 ### 12.3 ★★ 已定（2026-09-15）：聊天区与右侧面板怎么分工
 
 ⚠️ 这条填的是 12.2 那张表里"聊天 + 右侧面板双栏"一行留下的空——先前那行写着
