@@ -69,6 +69,13 @@ services:
     depends_on:
       - ollama
     restart: unless-stopped
+    # Container-wide memory backstop (stfc/goldilocks-agent#70): goldilocks-core's
+    # mMACE worker grows with the structure (~45 MB/atom, 11.8 GB at 250 atoms,
+    # 2026-11-09). At the limit the kernel kills the largest process in THIS
+    # container -- that worker -- instead of a host-wide OOM kill hitting Ollama.
+    # See README.md "Memory limit".
+    mem_limit: 32g
+    memswap_limit: 32g
 
   # Serves qwen3.8:27b on this VM's own GPU (requires nvidia-container-toolkit
   # configured as the Docker runtime on the host -- see README.md). Not
