@@ -90,6 +90,13 @@ services:
       # 80GB card has ~46GB free with this one model loaded, no reason to
       # ever unload it.
       OLLAMA_KEEP_ALIVE: "-1"
+      # Four chats generate at once instead of queuing behind one slot
+      # (2026-11-09: parallel slots instead of switching to vLLM, #68). Each
+      # slot gets 65536 tokens of context, so the KV cache stays the size of
+      # the single 262144-token slot it replaces (~16 GB); the longest
+      # production prompt so far is 19.9k tokens. See README.md "Concurrency".
+      OLLAMA_NUM_PARALLEL: "4"
+      OLLAMA_CONTEXT_LENGTH: "65536"
     deploy:
       resources:
         reservations:
