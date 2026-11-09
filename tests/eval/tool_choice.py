@@ -477,6 +477,18 @@ def expect_values_from(messages: list[dict]) -> Check:
     return check
 
 
+def values_mentioned(content: str) -> int:
+    """How many parameter values (numbers with units, k-meshes) an answer
+    names. #74 shows a review's values in a card; the report prints this for
+    M2 to show how much of the card the answer repeats (not a pass/fail
+    check: on 2026-11-09 asking the model not to repeat them made answers
+    longer and still named them)."""
+    return len(
+        set(_UNIT_VALUE.findall(content))
+        | {m.group(0) for m in _MESH.finditer(content)}
+    )
+
+
 def expect_all(*checks: Check) -> Check:
     def check(step: Step) -> str | None:
         return next((f for c in checks if (f := c(step)) is not None), None)
@@ -982,6 +994,15 @@ def report(results: list[dict], case_list: list[Case]) -> None:
                 f"{(fails[0] if fails else '')[:16]}"
             )
         print(f"{case.id:6s}" + "".join(f"{c:>24s}" for c in cells))
+    if any(c.id == "M2" for c in case_list):
+        print(
+            "\n== M2: parameter values each answer names (the review card shows them)"
+        )
+        for res in results:
+            counts = [
+                values_mentioned(r["content"]) for r in res["rows"] if r["case"] == "M2"
+            ]
+            print(f"{res['spec'][:46]:46s} {counts}")
 
 
 async def main() -> None:

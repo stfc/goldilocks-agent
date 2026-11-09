@@ -1340,6 +1340,33 @@ SSE 事件（如 `"Calculating k-points…"`），`goldilocks-web/src/App.jsx`
 > 用自己的视觉语言（沿用旧 webapp 的主题 token，见 13.x），不是
 > `import` `goldilocks-core/web` 的组件。
 
+#### ★★ 2026-11-09 补：聊天里放一张紧凑的 review 卡片（stfc/goldilocks-agent#74）
+
+**对上面"结构化内容只在右侧面板渲染"这条的修订。**
+
+**问题**：#68 的 A/B 和 #72、#81 的 eval 都看到，模型在聊天里转述 core 的推荐值时会出错：
+- 自己建议 60 Ry、12×12×12；
+- 把 1.6×10⁻⁹ Ry 换算错了约 10⁶ 倍。
+
+用户看聊天比看面板多，所以聊天里的数值应该直接来自 core。
+
+**决定（Junwen）**：
+- 每次 `dft_review` 之后，在聊天记录里插一张紧凑卡片：
+  - 6–8 个关键值（泛函、赝势、截断能、k 网格、占据方式、自旋；有 DFT+U 或 vdW 时也列出）；
+  - 每项的来源，用 Workbench 自己的叫法；
+  - 阻塞项、警告数，以及一个 "Open in DFT Workbench" 按钮。
+- 数值取自 `dft_review` 的结果（`reviewForModel`），不经模型。卡片随对话保存，刷新后从历史重建。
+- 代码在 `app/src/dftReview.ts` 和 `app/src/components/DftReviewCard.tsx`。
+- 起初的计划是让 core 导出完整的记录组件（goldilocks-core#262）嵌进聊天，后来放弃了。那套组件是给宽面板设计的：25 条以上的记录，每条带来源、引用和模型证据。放进聊天又长又重，还和旁边的面板重复。core#262 已关闭。
+
+**prompt 不改**：试过两种写法让模型别把卡片里的数值再列一遍（"don't list them again"、"don't repeat its numbers"）。
+
+- 模型仍会在解释里带上 3–5 个数值（都是对的）。
+- 回答长度反而增加约 20%。
+- G4 从 3/3 降到 2/3。
+
+所以模型的文字保持原样，和卡片有重复，但卡片是权威的显示。eval 的报告会列出 M2 每次回答提到几个参数值（现在是 5），只记录、不判失败。
+
 ### 12.4 ★★ 已定（2026-09-15）：四个 MODE 不是并列的四块，是一条管线
 
 先前 12.1 那张表已经隐约看得出四个 MODE 风险不均，但没说清楚**它们彼此是
