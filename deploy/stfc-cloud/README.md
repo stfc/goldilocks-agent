@@ -94,7 +94,50 @@ domain-wide nginx config lived in the portal repo's own deploy folder.
    (`docker-compose.yml`'s commented-out
    `GOLDILOCKS_AGENT_MLIP_ENABLED`/`mlip_cli_venv`).
 
+## Concurrency: four Ollama slots
+
+Ollama serves four chats at once: `OLLAMA_NUM_PARALLEL: "4"` and
+`OLLAMA_CONTEXT_LENGTH: "65536"` on the `ollama` service (2026-11-09). Before
+that it had one slot (`n_slots = 1`, 262144 tokens), so concurrent chats
+queued, and a tool-using turn makes 2-4 model calls. The KV cache is allocated
+when the model loads, at slots x context per slot: 4 x 65536 is the same
+~16 GB as the single slot it replaces.
+
+Usage is low (9 client IPs in 30 days, at most 48 model calls in a day), so
+this was chosen over switching to vLLM (#68). On a Mac the four slots ran four
+chats at once but gave no more total throughput than one; the A100's numbers
+decide whether four is right. If bursts outgrow four, 8 x 65536 costs about
+16 GB more GPU memory.
+
+**Measure, then switch** (from `deploy/stfc-cloud`):
+
+```bash
+cd ~/goldilocks-agent && git pull && cd deploy/stfc-cloud
+# Before: the running Ollama still has one slot.
+docker compose exec -T agent python - < ollama_concurrency_bench.py | tee ~/ollama-slots-before.txt
+# Recreate only Ollama with the new settings. Chat is down while the model
+# reloads (10-55 s).
+docker compose up -d ollama
+docker compose logs ollama | grep -E "n_slots|n_ctx_slot"    # n_slots = 4, n_ctx_slot = 65536
+nvidia-smi --query-gpu=memory.used --format=csv              # about the same as before (~36 GB)
+# After:
+docker compose exec -T agent python - < ollama_concurrency_bench.py | tee ~/ollama-slots-after.txt
+```
+
+The script sends 1, 2, 4 and 8 chats at once, each with the agent's system
+prompt and about 4k tokens of attached structure. It prints when the last one
+finished, the aggregate token rate, and each chat's rate while decoding. Expect:
+- one chat about as fast as before;
+- "last finished" for 2 and 4 chats well below the one-slot times;
+- 8 chats queueing for the extra four.
+
+**Roll back:** delete the two lines and run `docker compose up -d ollama` again.
+
 ## vLLM side by side (stfc/goldilocks-agent#68)
+
+Not in use: on 2026-11-09 Junwen chose Ollama's parallel slots (above) over
+switching to vLLM. The service stays here, behind its profile, in case bursts
+outgrow what Ollama's slots can serve.
 
 The `vllm` service serves the same chat model as Ollama (qwen3.8 27B, thinking
 off) for a load test, while Ollama keeps serving production. It sits behind the

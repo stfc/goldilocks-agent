@@ -3424,6 +3424,24 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   Qwen 系列用 chat template 的 `enable_thinking` 参数，litellm 的 `hosted_vllm/` 会不会转换
   `reasoning_effort` **尚未验证**，切换时要对 qwen3.8 实测。
 
+#### ★★ 2026-11-09 再补：不换 vLLM，Ollama 开 4 个槽位（推翻同日"为并发换 vLLM"的决定）
+
+- **为什么不换**：线上流量很低（30 天 9 个 IP，单日最多 48 次模型调用）。关掉思考（#76）以后单次调用约快一倍。
+  所以 vLLM 的主要好处（并发和跨用户的前缀缓存）现在用不上，却要多维护一个 GPU 服务。
+  这个硬件 vLLM 官方也没验证过（A100 不在它的 recipe 里）。**Junwen 决定不换。**
+- **替代办法**：Ollama 自己开多个槽位，`OLLAMA_NUM_PARALLEL=4`、`OLLAMA_CONTEXT_LENGTH=65536`。
+  - KV cache 在加载模型时按"槽位数 × 每槽上下文"一次分配。4 × 65536 和原来 1 × 262144 一样，约 16 GB。
+  - 线上最长的提示是 19.9k token，每槽 64k 足够。
+- **本机实测**（Mac，Ollama 0.40.15）：qwen3.8 这种混合注意力模型可以开多槽（`n_slots = 4`），4 个请求同时出字。
+  但总吞吐量没有提高（单个 22.9 tok/s，4 个同时合计 24.3 tok/s）。
+  A100 上要用 `deploy/stfc-cloud/ollama_concurrency_bench.py` 在切换前后各测一次。
+- **槽位数的取舍**：Junwen 问过要不要多于 4 个。
+  - 槽位是"同时生成的请求数"，不是在线人数。20 人的 workshop 按每人每分钟一条消息、每条约 3 次 × 5 s 粗算，平均同时约 5 个请求。
+  - 8 × 65536 要多占约 16 GB 显存，会挤占将来 GPU mMACE（goldilocks-core#268）的预算。
+  - 8 × 32768 显存不变，但单个对话只剩 32k 上下文，超出后 Ollama 会截掉前文。
+  - 所以先上 4 个，测速里带"8 个同时"一档，看排队情况再定。
+- `docker-compose.yml` 里的 `vllm` 服务（#80）留着，放在 profile 后面不启动。并发真不够时可以接着用。
+
 ### 19.8 待决 / 已知缺口（本节范围内）
 
 - [x] ~~**TLS 证书获取方式**~~ → **已定（2026-09-24，STFC Cloud IT/David Fairbrother 邮件确认）**：
