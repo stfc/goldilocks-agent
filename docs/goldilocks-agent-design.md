@@ -1171,6 +1171,22 @@ goldilocks 的形状正好是它：
 | **Post Analysis**（2026-09-15 新增）| 解析/画图/解读已有的计算结果，不限于本会话产出的 | 用 `inspect` + 十五之四的解析机制；**界面上先只是一个占位面板，功能待建**（见实施计划）|
 | **AiiDA**（2026-09-15 新增）| 浏览/监控 AiiDA 进程、状态、provenance | 走十五之一已定的"外部服务，agent 自己的工具节点调"；**界面上先只是一个占位面板，功能待建**（见实施计划）|
 
+#### ★★ 2026-11-09 补：两个 Tool 只在本地版提供；AiiDA 改为 AiiDAlab-QE
+
+**决定（Junwen 2026-11-09）**：
+
+- **只在本地版提供两个 Tool**：MLIP Playground（在用户自己的机器上跑 MACE）和 AiiDA 那一项。
+  - 线上（共享部署）的 All Tools 页把它们列在单独一组 "Coming soon (available in the local version)"。
+  - Beyond DFT 仍在普通的 "Coming soon" 里，本地版也没开放。
+- **MLIP Playground 在本地重新启用**：它从 2026-10-09 起在线上和本地都停用。
+  - 原来的 `MLIP_PLAYGROUND_RELEASED` 常量删掉，改成按部署判断：`tools.tool_schemas(shared_deployment=...)` 和 `mlip_playground_offered()`。
+  - 线上的模型看不到 `run_mlip_*`。`call_tool` 拒绝本部署没提供的任何工具，按"未知工具"处理，不弹确认卡。线上的 `/api/mlip/*` 返回 404。
+  - 本地能不能真的跑 MACE，仍由原来的 opt-in `GOLDILOCKS_AGENT_MLIP_ENABLED` 决定。
+- **AiiDA 那一项改为 AiiDAlab-QE**（https://aiidalab-qe.readthedocs.io/ ，AiiDAlab 的 Quantum ESPRESSO 应用）。
+  - 内部 id 仍是 `aiida`，这样存过的会话还能打开。
+  - **它在本地版也还没有后端**，只有入口。Junwen 决定先把它放进"本地版已提供"那一组，实现另开 issue 排进计划。
+- 实现上，前端 `TOOLS` 里用 `localOnly` 标记这两项，`comingSoon` 仍表示"哪里都没开放"。
+
 ### 12.1 ★ 先做 DFT Workspace，而且只做 scf
 
 **不是因为它最容易 —— 它最难。是因为只有它能检验 v2 core 的契约。**

@@ -24,18 +24,18 @@ embedded panel.
   [Configuration](configuration.md).
 - **Post Analysis** is partial today -- only its phonon visualizer (open
   any phonopy `band.yaml`) is real.
-- **Coming soon** (shown only in the full-page All Tools view, not
-  openable this release): **MLIP Playground** (MACE single-point/geomopt/
-  EOS/NEB/phonons, confirmation-gated -- code and tests intact) and
-  **Beyond DFT**. To re-enable either, drop
-  `comingSoon: true` from its `TOOLS` entry in `app/src/App.tsx`; MLIP
-  Playground also needs `MLIP_PLAYGROUND_RELEASED = True` in
-  `src/goldilocks_agent/tools/__init__.py`, which is what keeps its
-  `run_mlip_*` LLM tools and `/api/mlip/*` routes off meanwhile -- and,
-  on the STFC Cloud web deployment, `GOLDILOCKS_AGENT_MLIP_ENABLED` plus
-  the `mlip_cli_venv` volume uncommented in
-  `deploy/stfc-cloud/docker-compose.yml`.
-- **AiiDA** is not built yet.
+- **Local version only**: **MLIP Playground** (MACE single-point/geomopt/
+  EOS/NEB/phonons, confirmation-gated; running it also needs
+  `GOLDILOCKS_AGENT_MLIP_ENABLED`, see Configuration above) and
+  **AiiDAlab-QE**. Their `TOOLS` entries in `app/src/App.tsx` are
+  `localOnly`: the STFC Cloud web deployment lists them under "Coming soon
+  (available in the local version)", hides MLIP Playground's `run_mlip_*`
+  tools from the chat model and refuses its `/api/mlip/*` routes
+  (`mlip_playground_offered()` in `src/goldilocks_agent/tools/__init__.py`).
+- **Coming soon** everywhere (shown only in the full-page All Tools view):
+  **Beyond DFT**. To re-enable it, drop `comingSoon: true` from its `TOOLS`
+  entry in `app/src/App.tsx`.
+- **AiiDAlab-QE** has its entry but no backend yet.
 - Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
   use a Tool panel's own "Upload structure" button, to add it to the
   current chat.

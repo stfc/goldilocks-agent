@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from goldilocks_agent.config import read_shared_deployment_enabled
 from goldilocks_agent.tools.dft_workbench.tool import (
     CLIENT_EXECUTED as _DFT_CLIENT_EXECUTED,
     CONFIRMATION_LABELS as _DFT_CONFIRMATION_LABELS,
@@ -70,34 +71,46 @@ from goldilocks_agent.tools.structure_search.tool import (
     TOOL_SCHEMA as _STRUCTURE_SEARCH_SCHEMA,
 )
 
-# MLIP Playground is "Coming soon" this release (2026-10-09): App.tsx's
-# TOOLS entry is marked `comingSoon`, so its panel is unreachable, and this
-# flag keeps its `run_mlip_*` tools away from the LLM and makes server.py's
-# `/api/mlip/*` routes 404. To bring it back: set this True *and* drop
-# `comingSoon` from App.tsx's "ml-analysis" entry; the STFC Cloud web
-# deployment additionally needs its MLIP lines uncommented in
-# deploy/stfc-cloud/docker-compose.yml.
-MLIP_PLAYGROUND_RELEASED = False
 
-TOOL_SCHEMAS: list[dict] = [
-    *_STRUCTURE_SEARCH_SCHEMA,
-    *(_MLIP_SCHEMA if MLIP_PLAYGROUND_RELEASED else []),
-    *_DFT_SCHEMA,
-]
+# MLIP Playground runs MACE on the user's own machine, so only the local
+# version offers it; the shared web deployment lists it as coming soon,
+# "available in the local version" (Junwen, 2026-11-09; App.tsx's
+# `localOnly`). Whether a local install may actually run it is the separate
+# opt-in, `config.read_mlip_enabled()`. Its dispatch and confirmation entries
+# stay registered everywhere: `graph.call_tool` refuses any tool the
+# deployment didn't offer before reaching them.
+def tool_schemas(*, shared_deployment: bool) -> list[dict]:
+    """The tools the chat model is offered on a local or shared deployment."""
+    return [
+        *_STRUCTURE_SEARCH_SCHEMA,
+        *([] if shared_deployment else _MLIP_SCHEMA),
+        *_DFT_SCHEMA,
+    ]
+
+
+def offered_tool_schemas() -> list[dict]:
+    """The tools the chat model is offered on this deployment."""
+    return tool_schemas(shared_deployment=read_shared_deployment_enabled())
+
+
+def mlip_playground_offered() -> bool:
+    """Whether this deployment offers MLIP Playground (its panel and routes)."""
+    return not read_shared_deployment_enabled()
+
+
 TOOL_DISPATCH: dict[str, Callable[..., Awaitable]] = {
     **_STRUCTURE_SEARCH_DISPATCH,
-    **(_MLIP_DISPATCH if MLIP_PLAYGROUND_RELEASED else {}),
+    **_MLIP_DISPATCH,
     **_DFT_DISPATCH,
 }
 # structure_search/DFT Workbench have no confirmation-required tools --
-# only MLIP Playground contributes to these two sets so far, so both are
-# empty while it's unreleased.
+# only MLIP Playground contributes to these two sets so far.
 CONFIRMATION_REQUIRED_TOOLS: set[str] = {
-    *(_MLIP_CONFIRMATION_REQUIRED if MLIP_PLAYGROUND_RELEASED else set()),
+    *_MLIP_CONFIRMATION_REQUIRED,
     *_DFT_CONFIRMATION_REQUIRED,
 }
 CONFIRMATION_LABELS: dict[str, Callable[[dict], str]] = {
-    **(_MLIP_CONFIRMATION_LABELS if MLIP_PLAYGROUND_RELEASED else {}),
+    **_MLIP_CONFIRMATION_LABELS,
     **_DFT_CONFIRMATION_LABELS,
 }
 # Only DFT Workbench's tools are client-executed so far -- MLIP Playground

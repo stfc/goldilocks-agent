@@ -13,10 +13,11 @@ submission).
 > inline, as tabs, and full-page, as a grid), talking to a
 > `goldilocks-core` HTTP backend goldilocks-agent auto-starts for you (see
 > Configuration below). **MLIP Playground** (local MACE calculations via
-> `janus-core`, built) and **Beyond DFT** (panel-only) are parked under
-> *Coming soon* this release -- shown only in the full-page All Tools
-> view, not openable (see Usage below). **Post Analysis** is partial
-> (only its phonon visualizer is real). **AiiDA** is not built. See
+> `janus-core`, built) is in the local version only; the web deployment
+> lists it as coming soon. **Beyond DFT** (panel-only) is parked under
+> *Coming soon* -- shown only in the full-page All Tools view, not
+> openable (see Usage below). **Post Analysis** is partial (only its
+> phonon visualizer is real). **AiiDAlab-QE** is not built yet. See
 > [`docs/goldilocks-agent-design.md`](docs/goldilocks-agent-design.md) for
 > the full product design and
 > [`docs/goldilocks-agent-implementation-plan.md`](docs/goldilocks-agent-implementation-plan.md)
@@ -313,17 +314,17 @@ embedded panel.
   Tool's panel the way it drives Find in Databases. Its
   magnetism fields can additionally run on a real ML tier (mMACE) instead
   of heuristic/LLM -- separate opt-in setup, see Configuration above.
-- **Coming soon** (shown only in the full-page All Tools view, not
-  openable this release): **MLIP Playground** (MACE single-point/geomopt/
-  EOS/NEB/phonons, confirmation-gated -- code and tests intact) and
-  **Beyond DFT**. To re-enable either, drop
-  `comingSoon: true` from its `TOOLS` entry in `app/src/App.tsx`; MLIP
-  Playground also needs `MLIP_PLAYGROUND_RELEASED = True` in
-  `src/goldilocks_agent/tools/__init__.py`, which is what keeps its
-  `run_mlip_*` LLM tools and `/api/mlip/*` routes off meanwhile -- and,
-  on the STFC Cloud web deployment, `GOLDILOCKS_AGENT_MLIP_ENABLED` plus
-  the `mlip_cli_venv` volume uncommented in
-  `deploy/stfc-cloud/docker-compose.yml`.
+- **Local version only**: **MLIP Playground** (MACE single-point/geomopt/
+  EOS/NEB/phonons, confirmation-gated; running it also needs
+  `GOLDILOCKS_AGENT_MLIP_ENABLED`, see Configuration above) and
+  **AiiDAlab-QE**. Their `TOOLS` entries in `app/src/App.tsx` are
+  `localOnly`: the STFC Cloud web deployment lists them under "Coming soon
+  (available in the local version)", hides MLIP Playground's `run_mlip_*`
+  tools from the chat model and refuses its `/api/mlip/*` routes
+  (`mlip_playground_offered()` in `src/goldilocks_agent/tools/__init__.py`).
+- **Coming soon** everywhere (shown only in the full-page All Tools view):
+  **Beyond DFT**. To re-enable it, drop `comingSoon: true` from its `TOOLS`
+  entry in `app/src/App.tsx`.
 - Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
   use a Tool panel's own "Upload structure" button, to add it to the
   current chat.

@@ -65,7 +65,7 @@ from goldilocks_agent.tools import (
     CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED_TOOLS,
     TOOL_DISPATCH,
-    TOOL_SCHEMAS,
+    offered_tool_schemas,
 )
 
 # design doc 16.5: one .db, shared with the six scientific-artifact tables --
@@ -314,7 +314,11 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     # concatenated in order before it's valid JSON.
     tool_calls_acc: dict[int, dict[str, Any]] = {}
     response = await litellm.acompletion(
-        model=model, messages=messages, tools=TOOL_SCHEMAS, stream=True, **extra
+        model=model,
+        messages=messages,
+        tools=offered_tool_schemas(),
+        stream=True,
+        **extra,
     )
     async for chunk in response:
         delta = chunk.choices[0].delta
@@ -409,6 +413,22 @@ async def call_tool(state: MessagesState) -> dict:
         raise RuntimeError("tool node reached with no unanswered tool call")
     name = call["name"]
     writer = get_stream_writer()
+    # A tool this deployment doesn't offer (MLIP Playground's on the shared
+    # web deployment) is unknown here, whatever the model calls: no
+    # confirmation card, no dispatch.
+    offered = {schema["function"]["name"] for schema in offered_tool_schemas()}
+    if name not in offered:
+        output = {"error": f"Unknown tool: {name!r}"}
+        writer({"type": "tool_result", "tool": name, "result": output})
+        return {
+            "messages": [
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": json.dumps(output),
+                }
+            ]
+        }
     if name in CONFIRMATION_REQUIRED_TOOLS:
         decision = interrupt(
             {
