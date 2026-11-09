@@ -25,10 +25,11 @@ from langgraph.types import Command
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.graph import (
     LOCAL_MODEL,
+    SYSTEM_PROMPT,
     _repair_orphaned_tool_calls,
     build_graph,
-    experience_level_system_message,
     resolve_model,
+    system_message,
 )
 from goldilocks_agent.tools import MLIP_PLAYGROUND_RELEASED
 
@@ -645,16 +646,26 @@ def test_dft_download_bundle_tool_call_pauses_for_client_execution() -> None:
     assert not resumed_state.next
 
 
-def test_experience_level_system_message_shape() -> None:
-    assert experience_level_system_message(None) is None
-    assert experience_level_system_message("nonsense") is None
-    for level in ("new", "familiar", "advanced"):
-        message = experience_level_system_message(level)
-        assert message["role"] == "system"
-        # Design doc 12.2: this must never look like it changes recommended
-        # values/parameters, only explanation depth -- the guardrail sentence
-        # is the mechanism for that, so its presence is worth asserting on.
-        assert "never change which values" in message["content"]
+def test_system_message_without_an_experience_level_asks_for_brief_answers() -> None:
+    for level in (None, "", "nonsense"):
+        assert system_message(level) == {
+            "role": "system",
+            "content": f"{SYSTEM_PROMPT}\n\nAnswer briefly.",
+        }
+
+
+def test_system_message_pitches_answers_at_the_experience_level() -> None:
+    contents = {
+        level: system_message(level)["content"] for level in ("new", "advanced")
+    }
+    for content in contents.values():
+        assert content.startswith(f"{SYSTEM_PROMPT}\n\n")
+        assert "Answer briefly." not in content
+        # Design doc 12.2: the level changes how much is explained, never a
+        # value -- the guardrail sentence is the mechanism for that.
+        assert content.endswith("never the values you report.")
+    assert "new to computational materials science" in contents["new"]
+    assert "advanced computational materials researcher" in contents["advanced"]
 
 
 def test_resolve_model_wires_vllm_api_base_for_hosted_vllm_override(

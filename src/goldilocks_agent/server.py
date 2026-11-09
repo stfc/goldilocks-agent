@@ -36,6 +36,7 @@ from pydantic import BaseModel
 
 from goldilocks_agent import core_server, store
 from goldilocks_agent.config import (
+    ExperienceLevel,
     configured_providers,
     read_experience_level,
     read_shared_deployment_enabled,
@@ -106,6 +107,11 @@ class ChatRequest(BaseModel):
     message: ChatMessage | None = None
     resume: dict | None = None
     model_id: str | None = None
+    # The shared deployment's per-tab Settings choice (design doc §19.2):
+    # there, the server has no per-user place to keep it, so the browser
+    # sends it with every request. Ignored by a local build, which reads its
+    # own saved preference (see _experience_level_for).
+    experience_level: ExperienceLevel | None = None
     # Sidebar index fields -- written to the `conversations` table, never
     # replayed into the graph. `title` is the client's already-computed
     # (truncated) title; `project_id` only takes effect the first time this
@@ -225,10 +231,26 @@ def _reject_if_over_chat_concurrency_limit() -> None:
         )
 
 
+def _experience_level_for(request: ChatRequest) -> str | None:
+    """The experience level the system prompt is pitched at (design doc 12.2).
+
+    Local build: the saved preference, read server-side -- one source of
+    truth (design doc 16), so changing it in Settings takes effect on the
+    very next turn of every open chat. Shared deployment (§19.2): that one
+    global file would apply one visitor's setting to every concurrent
+    anonymous user, so it's never consulted there; the level the visitor's
+    own tab sent is used instead.
+    """
+    if read_shared_deployment_enabled():
+        return request.experience_level
+    return read_experience_level()
+
+
 async def _stream_reply(
     graph,
     thread_id: str,
     model_id: str | None,
+    experience_level: str | None,
     *,
     message: dict | None = None,
     resume: dict | None = None,
@@ -237,16 +259,7 @@ async def _stream_reply(
         "configurable": {
             "thread_id": thread_id,
             "model_id": model_id,
-            # Read server-side, not client-supplied -- one source of truth
-            # (design doc 16), and it means changing the setting in Settings
-            # takes effect on the very next turn of every open chat. Except
-            # in the shared deployment (§19.2): that one global file would
-            # otherwise apply one person's preference to every concurrent
-            # anonymous user, so it's never consulted there -- always the
-            # graph's own default instead.
-            "experience_level": (
-                None if read_shared_deployment_enabled() else read_experience_level()
-            ),
+            "experience_level": experience_level,
         }
     }
     # A resume answers a pending interrupt (see ChatRequest) -- the graph is
@@ -301,6 +314,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
                 app.state.graph,
                 request.thread_id,
                 request.model_id,
+                _experience_level_for(request),
                 resume=request.resume,
             ),
             media_type="text/event-stream",
@@ -327,6 +341,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
             app.state.graph,
             request.thread_id,
             request.model_id,
+            _experience_level_for(request),
             message=request.message.model_dump(),
         ),
         media_type="text/event-stream",
@@ -374,11 +389,16 @@ async def get_credentials_status() -> dict[str, bool]:
 
 @app.get("/api/preferences")
 async def get_preferences() -> dict:
+    _reject_in_shared_deployment()
     return {"experience_level": read_experience_level()}
 
 
 @app.post("/api/preferences")
 async def save_preferences(request: PreferencesUpdate) -> dict:
+    # One file on the server: in the shared deployment, every visitor would
+    # be writing the same preference (§19.2). Each tab sends its own level
+    # with its chat requests there instead.
+    _reject_in_shared_deployment()
     try:
         write_experience_level(request.experience_level)
     except ValueError as exc:

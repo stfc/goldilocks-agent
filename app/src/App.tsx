@@ -1011,6 +1011,16 @@ function writeStorage(key, value) {
   browserStorage().setItem(key, value);
 }
 
+// The experience level a chat request carries (design doc 12.2). Only the
+// shared deployment sends one: its server has no per-user place to keep the
+// Settings choice, so each tab keeps its own and sends it every time
+// (§19.2). A local build's server reads its own saved preference instead.
+function experienceLevelForChat(): string | null {
+  if (!SHARED_DEPLOYMENT) return null;
+  const level = readStorage(STORAGE_KEYS.experience, "");
+  return EXPERIENCE_OPTIONS.some((option) => option.id === level) ? level : null;
+}
+
 // localStorage is string-only -- readStorage's raw string would produce
 // invalid unitless CSS (React only auto-appends "px" to actual numbers),
 // so pane widths need explicit parsing/guarding on the way back out.
@@ -3008,10 +3018,14 @@ export default function App() {
     setPendingExperience(nextExperience);
     writeStorage(STORAGE_KEYS.experience, nextExperience);
     setShowOnboarding(false);
-    // The model only ever reads this from the server (design doc 12.2: a
-    // user preference like an API key, not conversation state) -- localStorage
-    // above is just so the UI doesn't flash the onboarding modal before this
-    // request finishes.
+    // The shared deployment keeps it in this tab only and sends it with each
+    // chat request (experienceLevelForChat); its server refuses the one
+    // global preferences file (§19.2).
+    if (SHARED_DEPLOYMENT) return;
+    // A local build's model only ever reads this from the server (design doc
+    // 12.2: a user preference like an API key, not conversation state) --
+    // localStorage above is just so the UI doesn't flash the onboarding modal
+    // before this request finishes.
     fetch("/api/preferences", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3268,6 +3282,7 @@ export default function App() {
           thread_id: targetSession.id,
           message: { role: "user", content },
           model_id: modelId,
+          experience_level: experienceLevelForChat(),
           title: nextTitle,
           project_id: targetSession.projectId,
           tool: targetSession.tool ?? null,
@@ -3370,7 +3385,12 @@ export default function App() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: sessionId, resume: outcome, model_id: modelId }),
+        body: JSON.stringify({
+          thread_id: sessionId,
+          resume: outcome,
+          model_id: modelId,
+          experience_level: experienceLevelForChat(),
+        }),
         signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
@@ -3614,7 +3634,12 @@ export default function App() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: sessionId, resume: { approved }, model_id: modelId }),
+        body: JSON.stringify({
+          thread_id: sessionId,
+          resume: { approved },
+          model_id: modelId,
+          experience_level: experienceLevelForChat(),
+        }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);

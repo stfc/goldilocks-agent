@@ -22,19 +22,19 @@ def _make_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def _stub_litellm(monkeypatch) -> list[str]:
+def _stub_litellm(monkeypatch) -> list[dict]:
     """Replaces `litellm.acompletion` with a stream that calls `dft_review`
     on the first call and replies "Reviewed." after that. Returns the list
-    of `model` arguments it is called with."""
-    models: list[str] = []
+    of calls it gets, each as its `model` and `messages` arguments."""
+    calls: list[dict] = []
 
     def chunk(content=None, tool_calls=None):
         delta = SimpleNamespace(content=content, tool_calls=tool_calls)
         return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
 
-    async def acompletion(*, model, **_):
-        models.append(model)
-        if len(models) == 1:
+    async def acompletion(*, model, messages, **_):
+        calls.append({"model": model, "messages": messages})
+        if len(calls) == 1:
             call = SimpleNamespace(
                 index=0,
                 id="call-1",
@@ -52,26 +52,41 @@ def _stub_litellm(monkeypatch) -> list[str]:
 
     monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
     monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
-    return models
+    return calls
 
 
-def _client_tool_turn(client, model_id: str) -> None:
+def _client_tool_turn(client, model_id: str, **fields) -> None:
     """Sends a turn that pauses on the client-executed `dft_review`, then
-    resumes it with a result, both with `model_id` -- what the browser sends."""
+    resumes it with a result, both with `model_id` and any other request
+    `fields` -- what the browser sends."""
     first = client.post(
         "/api/chat",
         json={
             "thread_id": "t",
             "message": {"role": "user", "content": "Review it."},
             "model_id": model_id,
+            **fields,
         },
     )
     assert "event: client_tool_call" in first.text
     resumed = client.post(
         "/api/chat",
-        json={"thread_id": "t", "resume": {"result": {}}, "model_id": model_id},
+        json={
+            "thread_id": "t",
+            "resume": {"result": {}},
+            "model_id": model_id,
+            **fields,
+        },
     )
     assert "Reviewed." in resumed.text
+
+
+def _system_prompts(calls: list[dict]) -> list[str]:
+    """The system message content of each model call, which must come first."""
+    for call in calls:
+        assert call["messages"][0]["role"] == "system"
+        assert all(m["role"] != "system" for m in call["messages"][1:])
+    return [call["messages"][0]["content"] for call in calls]
 
 
 def test_local_build_resume_runs_on_the_selected_model(tmp_path, monkeypatch) -> None:
@@ -79,9 +94,12 @@ def test_local_build_resume_runs_on_the_selected_model(tmp_path, monkeypatch) ->
     tool call runs on the `model_id` it carries, not the local fallback."""
     with _make_client(tmp_path, monkeypatch) as client:
         monkeypatch.delenv("GOLDILOCKS_AGENT_MODEL")
-        models = _stub_litellm(monkeypatch)
+        calls = _stub_litellm(monkeypatch)
         _client_tool_turn(client, "anthropic-claude")
-    assert models == ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5"]
+    assert [c["model"] for c in calls] == [
+        "anthropic/claude-sonnet-5",
+        "anthropic/claude-sonnet-5",
+    ]
 
 
 def test_web_build_resume_stays_on_the_pinned_model(tmp_path, monkeypatch) -> None:
@@ -91,9 +109,75 @@ def test_web_build_resume_stays_on_the_pinned_model(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
     with _make_client(tmp_path, monkeypatch) as client:
         monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "ollama_chat/qwen3.8:27b")
-        models = _stub_litellm(monkeypatch)
+        calls = _stub_litellm(monkeypatch)
         _client_tool_turn(client, "anthropic-claude")
-    assert models == ["ollama_chat/qwen3.8:27b", "ollama_chat/qwen3.8:27b"]
+    assert [c["model"] for c in calls] == [
+        "ollama_chat/qwen3.8:27b",
+        "ollama_chat/qwen3.8:27b",
+    ]
+
+
+def test_every_model_call_starts_with_the_system_prompt_and_never_stores_it(
+    tmp_path, monkeypatch
+) -> None:
+    """#72: the system prompt goes first on every call, the resume after a
+    client tool call included, and never into the checkpointer -- a
+    reworded prompt reaches old chats too."""
+    from goldilocks_agent.graph import system_message
+
+    monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: None)
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_litellm(monkeypatch)
+        _client_tool_turn(client, "local")
+        history = client.get("/api/chat/t").json()["messages"]
+    assert _system_prompts(calls) == [system_message(None)["content"]] * 2
+    assert [m["role"] for m in history] == ["user", "assistant", "tool", "assistant"]
+
+
+def test_local_build_pitches_the_prompt_at_the_saved_experience_level(
+    tmp_path, monkeypatch
+) -> None:
+    """A local build reads its own saved preference (design doc 12.2), not
+    a level a request names."""
+    from goldilocks_agent.graph import system_message
+
+    monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: "new")
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_litellm(monkeypatch)
+        _client_tool_turn(client, "local", experience_level="advanced")
+    assert _system_prompts(calls) == [system_message("new")["content"]] * 2
+
+
+def test_web_build_pitches_the_prompt_at_the_level_the_tab_sends(
+    tmp_path, monkeypatch
+) -> None:
+    """The shared deployment has no per-user place to keep the setting, so
+    each tab sends its own (§19.2); the one server-side file is never read
+    there, and its routes are refused."""
+    from goldilocks_agent.graph import system_message
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: "new")
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_litellm(monkeypatch)
+        _client_tool_turn(client, "local", experience_level="advanced")
+        assert client.get("/api/preferences").status_code == 404
+        saved = client.post("/api/preferences", json={"experience_level": "new"})
+        assert saved.status_code == 404
+    assert _system_prompts(calls) == [system_message("advanced")["content"]] * 2
+
+
+def test_chat_rejects_an_unknown_experience_level(tmp_path, monkeypatch) -> None:
+    with _make_client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "t",
+                "message": {"role": "user", "content": "Hi"},
+                "experience_level": "expert",
+            },
+        )
+    assert response.status_code == 422
 
 
 def test_read_shared_deployment_enabled_env_var(monkeypatch) -> None:

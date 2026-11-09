@@ -143,11 +143,34 @@ def resolve_model(model_id: str | None = None) -> tuple[str, dict]:
     return LOCAL_MODEL, _ollama_options(LOCAL_MODEL)
 
 
+# What the assistant is for and how to use its tools (stfc/goldilocks-agent#72,
+# design doc 12.2). Without it, the #68 A/B saw small models invent
+# parameters instead of calling dft_review, print a fetched structure
+# instead of opening it, and -- Ollama's Ministral template fills in its own
+# "Le Chat" prompt when a request has none -- introduce themselves as a
+# generic assistant. The third paragraph also rules out values of the
+# model's own: Ministral 3 14B volunteered cutoffs and k-meshes that
+# contradicted core's.
+SYSTEM_PROMPT = """\
+You are the assistant in Goldilocks Workbench. You help users set up DFT \
+calculations (Quantum ESPRESSO) with goldilocks-core, which chooses the \
+calculation parameters.
+
+Tools:
+- find_in_databases, then get_structure: find an existing computed structure \
+when the user asks for one.
+- dft_open_structure, then dft_review, then dft_download_bundle: open a \
+structure, show goldilocks-core's recommended parameters, and generate the \
+input files.
+
+Report the values and sources the tools return. Never invent parameter values \
+or suggest values of your own; if the user wants different settings, say which \
+setting to change in DFT Workbench. When generation is blocked, explain what \
+needs deciding and ask the user. Answer in the user's language."""
+
 # Modeled on ChatGPT/Claude's "custom instructions" -- a short, fixed blurb
-# about the user, injected as a system message rather than stored as a
-# conversation turn. Design doc 12.2 (★ already decided, never actually
-# wired up until now): this must only change explanation depth/register,
-# **never** which values or parameters get recommended -- the guardrail
+# about the user. Design doc 12.2: this must only change explanation
+# depth/register, **never** which values get reported -- the guardrail
 # sentence below says so explicitly so the model doesn't conflate "less
 # experienced" with "give safer/different numbers."
 _EXPERIENCE_LEVEL_PROMPTS = {
@@ -169,17 +192,26 @@ _EXPERIENCE_LEVEL_PROMPTS = {
 }
 
 _EXPERIENCE_LEVEL_GUARDRAIL = (
-    "This only affects how much you explain and which register you use -- "
-    "it must never change which values, defaults, or parameters you would "
-    "otherwise recommend for a calculation."
+    "This changes only how much you explain, never the values you report."
 )
 
+# With no experience level set, answers stay short: the level, when there
+# is one, is the only thing that sets their length.
+_NO_EXPERIENCE_LEVEL = "Answer briefly."
 
-def experience_level_system_message(level: str | None) -> dict | None:
-    prompt = _EXPERIENCE_LEVEL_PROMPTS.get(level or "")
-    if prompt is None:
-        return None
-    return {"role": "system", "content": f"{prompt} {_EXPERIENCE_LEVEL_GUARDRAIL}"}
+
+def system_message(experience_level: str | None) -> dict:
+    """The system message `call_llm` sends first: SYSTEM_PROMPT, then how much
+    to explain for the user's experience level. One message, not two: some
+    chat templates (vLLM serves HF ones) reject a system message that isn't
+    the first."""
+    level_prompt = _EXPERIENCE_LEVEL_PROMPTS.get(experience_level or "")
+    pitch = (
+        f"{level_prompt} {_EXPERIENCE_LEVEL_GUARDRAIL}"
+        if level_prompt
+        else _NO_EXPERIENCE_LEVEL
+    )
+    return {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{pitch}"}
 
 
 def _repair_orphaned_tool_calls(messages: list[dict]) -> list[dict]:
@@ -254,14 +286,12 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
         convert_to_openai_messages(state["messages"])
     )
     configurable = config.get("configurable", {})
-    experience_level = configurable.get("experience_level")
-    system_message = experience_level_system_message(experience_level)
-    if system_message:
-        # Injected fresh every call, never written into `state["messages"]` --
-        # it's a live preference (design doc 12.2), not conversation content
-        # or provenance, so it doesn't belong in the checkpointer's history
-        # and can change immediately if the user changes the setting mid-chat.
-        messages = [system_message, *messages]
+    # Built fresh every call, never written into `state["messages"]` -- the
+    # experience level is a live preference (design doc 12.2), not
+    # conversation content or provenance, so it doesn't belong in the
+    # checkpointer's history and can change immediately if the user changes
+    # the setting mid-chat; and a reworded prompt reaches old chats too.
+    messages = [system_message(configurable.get("experience_level")), *messages]
     model_id = configurable.get("model_id")
     model, extra = resolve_model(model_id)
     writer = get_stream_writer()
