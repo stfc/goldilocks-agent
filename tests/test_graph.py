@@ -31,7 +31,6 @@ from goldilocks_agent.graph import (
     resolve_model,
     system_message,
 )
-from goldilocks_agent.tools import MLIP_PLAYGROUND_RELEASED
 
 _OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
@@ -61,14 +60,6 @@ requires_anthropic_key = pytest.mark.skipif(
 requires_mlip_enabled = pytest.mark.skipif(
     not os.environ.get("GOLDILOCKS_AGENT_MLIP_ENABLED"),
     reason="GOLDILOCKS_AGENT_MLIP_ENABLED not set -- MLIP Playground opt-in",
-)
-
-# The LLM is only offered `run_mlip_*` once MLIP Playground is released
-# (tools/__init__.py) -- and it's the only Tool with confirmation-gated
-# tools, so the confirmation-interrupt tests below wait on it too.
-requires_mlip_released = pytest.mark.skipif(
-    not MLIP_PLAYGROUND_RELEASED,
-    reason="MLIP Playground is Coming soon -- MLIP_PLAYGROUND_RELEASED is False",
 )
 
 _TEST_NACL_CIF = """\
@@ -278,7 +269,6 @@ def test_llm_node_calls_find_in_databases_tool() -> None:
 
 @pytest.mark.integration
 @requires_anthropic_key
-@requires_mlip_released
 def test_mlip_tool_call_pauses_for_confirmation_and_can_be_declined() -> None:
     """First real exercise of `call_tool`'s interrupt gate (graph.py,
     2026-09-15) -- a real model call asked to run a confirmation-required
@@ -471,7 +461,6 @@ def test_new_message_while_tool_interrupt_pending_self_heals_instead_of_crashing
 @pytest.mark.integration
 @requires_anthropic_key
 @requires_mlip_enabled
-@requires_mlip_released
 def test_mlip_tool_call_runs_for_real_once_approved() -> None:
     graph = build_graph(InMemorySaver())
     config = {
@@ -500,7 +489,6 @@ def test_mlip_tool_call_runs_for_real_once_approved() -> None:
 @pytest.mark.integration
 @requires_anthropic_key
 @requires_mlip_enabled
-@requires_mlip_released
 def test_mlip_neb_tool_call_runs_for_real_and_llm_reports_the_real_barrier() -> None:
     """NEB's first real end-to-end run (previously only checked against
     source, see acceptance-testing task) -- a real Claude call drives

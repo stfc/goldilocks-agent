@@ -22,23 +22,25 @@ def _make_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def _stub_litellm(monkeypatch) -> list[dict]:
-    """Replaces `litellm.acompletion` with a stream that calls `dft_review`
-    on the first call and replies "Reviewed." after that. Returns the list
-    of calls it gets, each as its `model` and `messages` arguments."""
+def _stub_litellm(
+    monkeypatch, tool: str = "dft_review", arguments: str = "{}"
+) -> list[dict]:
+    """Replaces `litellm.acompletion` with a stream that calls `tool` on the
+    first call and replies "Reviewed." after that. Returns the list of calls
+    it gets, each as its `model`, `messages` and `tools` arguments."""
     calls: list[dict] = []
 
     def chunk(content=None, tool_calls=None):
         delta = SimpleNamespace(content=content, tool_calls=tool_calls)
         return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
 
-    async def acompletion(*, model, messages, **_):
-        calls.append({"model": model, "messages": messages})
+    async def acompletion(*, model, messages, tools, **_):
+        calls.append({"model": model, "messages": messages, "tools": tools})
         if len(calls) == 1:
             call = SimpleNamespace(
                 index=0,
                 id="call-1",
-                function=SimpleNamespace(name="dft_review", arguments="{}"),
+                function=SimpleNamespace(name=tool, arguments=arguments),
             )
             chunks = [chunk(tool_calls=[call])]
         else:
@@ -333,12 +335,11 @@ def test_chat_indexes_conversation_even_when_model_call_fails(
         assert conversations[0]["title"] == "Hello"
 
 
-def test_mlip_routes_404_while_unreleased(tmp_path, monkeypatch) -> None:
-    """MLIP Playground is "Coming soon" (`MLIP_PLAYGROUND_RELEASED`) -- every
-    `/api/mlip/*` route must refuse before touching the `janus` CLI, even
-    with GOLDILOCKS_AGENT_MLIP_ENABLED on (as the local docker-compose.yml
-    has it)."""
-    monkeypatch.setattr("goldilocks_agent.server.MLIP_PLAYGROUND_RELEASED", False)
+def test_mlip_routes_404_in_the_shared_deployment(tmp_path, monkeypatch) -> None:
+    """MLIP Playground is offered by the local version only -- on the web
+    deployment every `/api/mlip/*` route must refuse before touching the
+    `janus` CLI, even with GOLDILOCKS_AGENT_MLIP_ENABLED on."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
     monkeypatch.setenv("GOLDILOCKS_AGENT_MLIP_ENABLED", "1")
 
     # A gate regression must fail here, not start a multi-GB `uv sync` of
@@ -364,7 +365,36 @@ def test_mlip_routes_404_while_unreleased(tmp_path, monkeypatch) -> None:
             ("/api/mlip/neb", neb),
             ("/api/mlip/phonons", structure),
         ]:
-            assert client.post(path, json=body).status_code == 404, path
+            response = client.post(path, json=body)
+            assert response.status_code == 404, path
+            assert "local version" in response.json()["detail"]
+
+
+def test_web_build_refuses_an_mlip_tool_call_it_never_offered(
+    tmp_path, monkeypatch
+) -> None:
+    """The web deployment's chat model isn't offered `run_mlip_*`; if it
+    calls one anyway, call_tool answers "unknown tool" -- no confirmation
+    card, nothing run."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_litellm(
+            monkeypatch,
+            tool="run_mlip_singlepoint",
+            arguments='{"structure_content": "x", "structure_name": "x.cif"}',
+        )
+        reply = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "t",
+                "message": {"role": "user", "content": "Run MACE."},
+            },
+        )
+    offered = {t["function"]["name"] for t in calls[0]["tools"]}
+    assert not any(name.startswith("run_mlip_") for name in offered)
+    assert "confirmation_needed" not in reply.text
+    assert "Unknown tool: 'run_mlip_singlepoint'" in reply.text
+    assert "Reviewed." in reply.text
 
 
 def test_mlip_endpoint_degrades_clearly_when_not_configured(
@@ -372,9 +402,8 @@ def test_mlip_endpoint_degrades_clearly_when_not_configured(
 ) -> None:
     """No GOLDILOCKS_AGENT_MLIP_ENABLED in a fresh dev environment -- real
     code path, not a mock, exercising `client._require_enabled()`'s own
-    RuntimeError. Forced released so this keeps covering the route body
-    while MLIP Playground is "Coming soon"."""
-    monkeypatch.setattr("goldilocks_agent.server.MLIP_PLAYGROUND_RELEASED", True)
+    RuntimeError, on the local version, which offers MLIP Playground."""
+    monkeypatch.delenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", raising=False)
     monkeypatch.delenv("GOLDILOCKS_AGENT_MLIP_ENABLED", raising=False)
     with _make_client(tmp_path, monkeypatch) as client:
         response = client.post(

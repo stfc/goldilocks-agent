@@ -25,9 +25,8 @@ import pytest
 
 from goldilocks_agent.tools import (
     CONFIRMATION_REQUIRED_TOOLS,
-    MLIP_PLAYGROUND_RELEASED,
     TOOL_DISPATCH,
-    TOOL_SCHEMAS,
+    tool_schemas,
 )
 from goldilocks_agent.tools.mlip_playground import (
     EosResult,
@@ -153,16 +152,20 @@ loop_
 """
 
 
-def test_llm_is_offered_mlip_tools_only_once_released() -> None:
-    """While MLIP Playground is "Coming soon" its panel can't open, so none
-    of its tools may reach the LLM's tool list, dispatch table, or
-    confirmation gate -- and all of them must come back once released."""
+def test_only_the_local_version_offers_mlip_tools_to_the_llm() -> None:
+    """MLIP Playground runs MACE on the user's own machine: the local version
+    offers its tools, the shared web deployment doesn't (2026-11-09). Its
+    dispatch and confirmation entries stay registered; graph.call_tool
+    refuses a tool the deployment didn't offer before reaching them."""
     mlip_names = set(MLIP_TOOL_DISPATCH)
-    offered = {schema["function"]["name"] for schema in TOOL_SCHEMAS}
-    expected = mlip_names if MLIP_PLAYGROUND_RELEASED else set()
-    assert offered & mlip_names == expected
-    assert set(TOOL_DISPATCH) & mlip_names == expected
-    assert CONFIRMATION_REQUIRED_TOOLS & mlip_names == expected
+
+    def offered(shared: bool) -> set[str]:
+        return {s["function"]["name"] for s in tool_schemas(shared_deployment=shared)}
+
+    assert offered(False) >= mlip_names
+    assert offered(True) & mlip_names == set()
+    assert set(TOOL_DISPATCH) >= mlip_names
+    assert mlip_names <= CONFIRMATION_REQUIRED_TOOLS
 
 
 def test_singlepoint_result_trims_forces_for_llm_but_keeps_them_for_panel() -> None:

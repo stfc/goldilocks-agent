@@ -2,7 +2,7 @@
 
 Not collected by pytest, and needs the models it names. Each case is a chat
 history; the eval asks a model for the next assistant step the way
-`graph.call_llm` does (the agent's own system message and TOOL_SCHEMAS,
+`graph.call_llm` does on the web deployment (the agent's system message and tools,
 OpenAI-style messages, streamed through litellm) and checks whether that step
 is the expected one: which tool, with valid arguments, or no tool. Free-form
 answers are not judged, except that an answer comes in the question's language,
@@ -46,7 +46,10 @@ import openai
 from PIL import Image, ImageDraw
 
 from goldilocks_agent.graph import system_message
-from goldilocks_agent.tools import TOOL_SCHEMAS
+from goldilocks_agent.tools import tool_schemas
+
+# The web deployment's tools: the eval picks and checks the web chat model.
+TOOL_SCHEMAS = tool_schemas(shared_deployment=True)
 
 FIXTURES = Path(__file__).resolve().parents[2] / "app" / "src" / "__fixtures__" / "core"
 SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in TOOL_SCHEMAS}

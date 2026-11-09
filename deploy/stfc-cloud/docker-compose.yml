@@ -44,12 +44,11 @@ services:
       # OPENAI_API_KEY:
       # GEMINI_API_KEY:
       # MP_API_KEY:
-      # MLIP Playground is "Coming soon" this release (2026-10-09,
-      # MLIP_PLAYGROUND_RELEASED in src/goldilocks_agent/tools/__init__.py)
-      # -- off on this shared VM at the deployment layer too, so flipping
-      # that flag alone can't start real MACE compute here. To bring it
-      # back on this deployment, uncomment this line plus both
-      # mlip_cli_venv lines below.
+      # MLIP Playground is offered by the local version only (2026-11-09,
+      # mlip_playground_offered() in src/goldilocks_agent/tools/__init__.py):
+      # with GOLDILOCKS_AGENT_SHARED_DEPLOYMENT set, its routes 404 and the
+      # chat model never sees its tools, whatever this opt-in says. Keep it
+      # (and both mlip_cli_venv lines below) commented out here.
       # GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
     ports:

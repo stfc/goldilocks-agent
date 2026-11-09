@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -326,17 +326,27 @@ const EXPERIENCE_OPTIONS = [
   },
 ];
 
-// `comingSoon: true` parks a Tool: hidden from the side-panel picker,
-// listed only in the full-page overview's "Coming soon" section, never
-// activatable (getToolById resolves it to null, so a chat saved with it
-// open just falls back to the picker). Its panel code, i18n strings and
-// per-chat modeState stay in place -- re-enabling is deleting that one
-// line (MLIP Playground also needs
-// `MLIP_PLAYGROUND_RELEASED` flipped in tools/__init__.py, which keeps its
-// LLM tools and /api/mlip/* off while parked, plus its MLIP lines
-// uncommented in deploy/stfc-cloud/docker-compose.yml for the web
-// deployment). 2026-10-09: MLIP Playground and Beyond DFT parked for this
-// release.
+// STFC Cloud shared deployment only (design doc §19) -- baked in at build
+// time via `.env.stfc-cloud-public`/`.env.stfc-cloud-internal` (`npm run
+// build:stfc-cloud-public`/`build:stfc-cloud-internal`), never set for the
+// default local/desktop build. No account system there: every persisted
+// bit of state should die with the tab, not survive across visits the way
+// a single local user's own state should.
+const SHARED_DEPLOYMENT = import.meta.env.VITE_SHARED_DEPLOYMENT === "1";
+
+// `comingSoon: true` parks a Tool everywhere: hidden from the side-panel
+// picker, listed only in the full-page overview's "Coming soon" section,
+// never activatable (getToolById resolves it to null, so a chat saved with
+// it open just falls back to the picker). Its panel code, i18n strings and
+// per-chat modeState stay in place -- re-enabling is deleting that one line.
+// 2026-10-09: Beyond DFT parked.
+//
+// `localOnly: true` is a Tool the local version offers and the web app
+// (SHARED_DEPLOYMENT) doesn't: there it is listed as coming soon, in its own
+// "available in the local version" group (Junwen, 2026-11-09). MLIP
+// Playground runs MACE on the user's own machine (the server side is gated
+// the same way: goldilocks_agent.tools.mlip_playground_offered());
+// AiiDAlab-QE works against the user's own AiiDA profile.
 const TOOLS = [
   {
     id: "structure-search",
@@ -357,7 +367,7 @@ const TOOLS = [
     launcherDesc: "Explore materials research with machine learning interatomic potentials",
     placeholder: "Upload structures or results to explore machine learning interatomic potential behaviour and compare predictions.",
     defaultPanel: "analysis",
-    comingSoon: true,
+    localOnly: true,
   },
   {
     id: "dft-workbench",
@@ -391,18 +401,27 @@ const TOOLS = [
     defaultPanel: "setup",
   },
   {
+    // AiiDAlab-QE (https://aiidalab-qe.readthedocs.io/), AiiDAlab's Quantum
+    // ESPRESSO app; renamed from a generic "AiiDA" entry on 2026-11-09. The id
+    // stays "aiida" so chats saved with this Tool open keep resolving.
     id: "aiida",
     icon: "⚙️",
-    label: "AiiDA",
+    label: "AiiDAlab-QE",
     color: "#14b8a6",
-    desc: "Browse and monitor your AiiDA workflows — submissions, status, and provenance across your profile.",
-    launcherDesc: "Monitor AiiDA processes, diagnose failures, and browse provenance",
-    placeholder: "Ask about a running or past AiiDA process, or check on a submitted calculation.",
+    desc: "Run Quantum ESPRESSO calculations with AiiDAlab-QE, AiiDAlab's graphical app for AiiDA's Quantum ESPRESSO workflows.",
+    launcherDesc: "Run Quantum ESPRESSO workflows with AiiDA through AiiDAlab's QE app",
+    placeholder: "Ask about setting up or following a Quantum ESPRESSO workflow in AiiDAlab-QE.",
     defaultPanel: "setup",
+    localOnly: true,
   },
 ];
 
-const AVAILABLE_TOOLS = TOOLS.filter((tool) => !tool.comingSoon);
+const AVAILABLE_TOOLS = TOOLS.filter(
+  (tool) => !tool.comingSoon && !(SHARED_DEPLOYMENT && tool.localOnly),
+);
+const LOCAL_VERSION_TOOLS = SHARED_DEPLOYMENT
+  ? TOOLS.filter((tool) => tool.localOnly && !tool.comingSoon)
+  : [];
 const COMING_SOON_TOOLS = TOOLS.filter((tool) => tool.comingSoon);
 
 const TOOL_ICON_SOURCES = {
@@ -602,8 +621,9 @@ const TRANSLATIONS = {
     tool_dft_workbench_launcher: "Guidance for DFT workflows, inputs, convergence, and results",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
     tool_post_analysis_launcher: "Parse and interpret DFT/MLIP outputs, plots, and convergence data",
-    tool_aiida_launcher: "Monitor AiiDA processes, diagnose failures, and browse provenance",
+    tool_aiida_launcher: "Run Quantum ESPRESSO workflows with AiiDA through AiiDAlab's QE app",
     tools_coming_soon: "Coming soon",
+    tools_coming_soon_local: "Coming soon (available in the local version)",
     settings_model_heading: "Model",
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
@@ -693,8 +713,9 @@ const TRANSLATIONS = {
     tool_dft_workbench_launcher: "Aide pour les workflows DFT, entrées, convergence et résultats",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM et au-delà",
     tool_post_analysis_launcher: "Analyser et interpréter les sorties DFT/MLIP, les graphiques et les données de convergence",
-    tool_aiida_launcher: "Surveiller les processus AiiDA, diagnostiquer les échecs et parcourir la provenance",
+    tool_aiida_launcher: "Lancer des workflows Quantum ESPRESSO avec AiiDA via l'app QE d'AiiDAlab",
     tools_coming_soon: "Bientôt disponible",
+    tools_coming_soon_local: "Bientôt disponible (déjà dans la version locale)",
     settings_model_heading: "Modèle",
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
@@ -784,8 +805,9 @@ const TRANSLATIONS = {
     tool_dft_workbench_launcher: "Anleitung für DFT-Workflows, Eingaben, Konvergenz und Ergebnisse",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM und darüber hinaus",
     tool_post_analysis_launcher: "DFT/MLIP-Ausgaben, Diagramme und Konvergenzdaten analysieren und interpretieren",
-    tool_aiida_launcher: "AiiDA-Prozesse überwachen, Fehler diagnostizieren und Herkunft durchsuchen",
+    tool_aiida_launcher: "Quantum-ESPRESSO-Workflows mit AiiDA über die QE-App von AiiDAlab ausführen",
     tools_coming_soon: "Demnächst verfügbar",
+    tools_coming_soon_local: "Demnächst verfügbar (in der lokalen Version bereits enthalten)",
     settings_model_heading: "Modell",
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
@@ -875,8 +897,9 @@ const TRANSLATIONS = {
     tool_dft_workbench_launcher: "DFT 工作流、输入、收敛和结果指导",
     tool_beyond_dft_launcher: "GW、BSE、QMC、TDDFT、Wannier、DMFT、QM/MM 及更多",
     tool_post_analysis_launcher: "解析并解读 DFT/MLIP 输出、图表和收敛数据",
-    tool_aiida_launcher: "监控 AiiDA 流程，诊断失败，浏览溯源信息",
+    tool_aiida_launcher: "通过 AiiDAlab 的 QE 应用，用 AiiDA 运行 Quantum ESPRESSO 工作流",
     tools_coming_soon: "即将推出",
+    tools_coming_soon_local: "即将推出（本地版已提供）",
     settings_model_heading: "模型",
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
@@ -966,8 +989,9 @@ const TRANSLATIONS = {
     tool_dft_workbench_launcher: "Guida per workflow DFT, input, convergenza e risultati",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM e oltre",
     tool_post_analysis_launcher: "Analizza e interpreta output DFT/MLIP, grafici e dati di convergenza",
-    tool_aiida_launcher: "Monitora i processi AiiDA, diagnostica gli errori ed esplora la provenienza",
+    tool_aiida_launcher: "Esegui workflow Quantum ESPRESSO con AiiDA tramite l'app QE di AiiDAlab",
     tools_coming_soon: "Prossimamente",
+    tools_coming_soon_local: "Prossimamente (già disponibile nella versione locale)",
     settings_model_heading: "Modello",
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
@@ -989,13 +1013,6 @@ const TRANSLATIONS = {
 const EMPTY_MESSAGES = [];
 const EMPTY_ARRAY = [];
 
-// STFC Cloud shared deployment only (design doc §19) -- baked in at build
-// time via `.env.stfc-cloud-public`/`.env.stfc-cloud-internal` (`npm run
-// build:stfc-cloud-public`/`build:stfc-cloud-internal`), never set for the
-// default local/desktop build. No account system there: every persisted
-// bit of state should die with the tab, not survive across visits the way
-// a single local user's own state should.
-const SHARED_DEPLOYMENT = import.meta.env.VITE_SHARED_DEPLOYMENT === "1";
 
 function browserStorage() {
   return SHARED_DEPLOYMENT ? window.sessionStorage : window.localStorage;
@@ -4801,10 +4818,13 @@ export default function App() {
             </span>
           </button>
         ))}
-        {COMING_SOON_TOOLS.length > 0 && (
-          <>
-            <div className="tools-overview-section-label">{t("tools_coming_soon")}</div>
-            {COMING_SOON_TOOLS.map((tool) => (
+        {[
+          { label: t("tools_coming_soon_local"), tools: LOCAL_VERSION_TOOLS },
+          { label: t("tools_coming_soon"), tools: COMING_SOON_TOOLS },
+        ].map(({ label, tools }) => tools.length > 0 && (
+          <Fragment key={label}>
+            <div className="tools-overview-section-label">{label}</div>
+            {tools.map((tool) => (
               <div
                 key={tool.id}
                 className="tools-overview-card coming-soon"
@@ -4820,8 +4840,8 @@ export default function App() {
                 </div>
               </div>
             ))}
-          </>
-        )}
+          </Fragment>
+        ))}
       </div>
     );
   }
