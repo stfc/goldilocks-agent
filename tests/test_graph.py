@@ -672,22 +672,28 @@ def test_resolve_model_wires_vllm_api_base_for_hosted_vllm_override(
     monkeypatch,
 ) -> None:
     """The STFC Cloud shared deployment points at vLLM via
-    `GOLDILOCKS_AGENT_MODEL=hosted_vllm/<model>` -- litellm's `hosted_vllm/`
-    provider (unlike `ollama_chat/`) needs an explicit `api_base` kwarg, not
-    an env var it reads on its own."""
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/Qwen/Qwen3.8-27B")
+    `GOLDILOCKS_AGENT_MODEL=hosted_vllm/<model>` (#68's cutover, with the
+    served model name from deploy/stfc-cloud/docker-compose.yml) -- litellm's
+    `hosted_vllm/` provider (unlike `ollama_chat/`) needs an explicit
+    `api_base` kwarg, not an env var it reads on its own. qwen3.8 keeps its
+    non-thinking sampling there; thinking itself is off server-side."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/qwen3.8-27b")
     monkeypatch.setenv("VLLM_API_BASE", "http://vllm:8000/v1")
     model, extra = resolve_model()
-    assert model == "hosted_vllm/Qwen/Qwen3.8-27B"
-    assert extra == {"api_base": "http://vllm:8000/v1"}
+    assert model == "hosted_vllm/qwen3.8-27b"
+    assert extra == {
+        "api_base": "http://vllm:8000/v1",
+        "temperature": 0.7,
+        "top_p": 0.8,
+    }
 
 
 def test_resolve_model_override_without_vllm_api_base_omits_it(monkeypatch) -> None:
-    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/Qwen/Qwen3.8-27B")
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "hosted_vllm/qwen3.8-27b")
     monkeypatch.delenv("VLLM_API_BASE", raising=False)
     model, extra = resolve_model()
-    assert model == "hosted_vllm/Qwen/Qwen3.8-27B"
-    assert extra == {}
+    assert model == "hosted_vllm/qwen3.8-27b"
+    assert "api_base" not in extra
 
 
 def test_resolve_model_non_vllm_override_ignores_vllm_api_base(monkeypatch) -> None:

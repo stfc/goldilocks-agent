@@ -1,0 +1,12 @@
+# Install to /etc/systemd/system/goaccess-report.service -- regenerates the
+# static HTML report from the config file. Oneshot: the timer drives it, the
+# unit is not long-running (goaccess' own `--real-time-html` websocket mode
+# is deliberately not used -- it needs an extra open port and a daemon to
+# keep alive, for a number nobody watches by the second).
+[Unit]
+Description=Regenerate GoAccess HTML report from nginx logs
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/goaccess --config-file=/etc/goaccess/goaccess.conf
