@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
+from typing import Literal, get_args
 
 import tomli_w
 
@@ -62,7 +63,8 @@ def configured_providers() -> dict[str, bool]:
 # (only affects explanation depth, never a scientific value), so it belongs
 # here, not in ~/.goldilocks/goldilocks.db -- it was never actually moved out
 # of the frontend's localStorage until now.
-_EXPERIENCE_LEVELS = {"new", "familiar", "advanced"}
+ExperienceLevel = Literal["new", "familiar", "advanced"]
+_EXPERIENCE_LEVELS = set(get_args(ExperienceLevel))
 
 
 def read_experience_level() -> str | None:

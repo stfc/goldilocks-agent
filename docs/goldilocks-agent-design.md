@@ -1204,6 +1204,51 @@ goldilocks 的形状正好是它：
 它和 v2 完全兼容：**`experience_level` 只改变解释深度，不改变任何科学值**。
 ⚠️ 反过来说也成立 —— **它绝不能影响推荐的参数，否则就成了"新手拿到不同的物理"**。
 
+#### ★★ 2026-11-09 补：每次调用都发 system prompt，experience level 并进同一条（stfc/goldilocks-agent#72）
+
+**先前**：`call_llm` 不发 system prompt。只有设了 experience level 才有一条 system 消息，而默认是空的，
+所以大多数请求一条都没有，模型只能从五个工具的 schema 猜自己是干什么的。#68 的模型 A/B 实测：
+
+- Ministral 3 8B 不调 `dft_review`，直接说 "Goldilocks would recommend…" 然后编参数；
+  8B 和 3B 用 `get_structure` 取到结构后把它打印出来，而不是打开它。
+- 3B 自称通用 LLM 助手。原因查到了：**Ollama 的 Ministral 模板在请求里没有 system 消息时，会自己塞进
+  一段默认 prompt**（"You power an AI assistant called Le Chat…"）。
+- 14B 三次里有两次在转述 core 的推荐值之后，又给出自己的建议（"ecutwfc 加到 60 Ry、ecutrho 240 Ry"、
+  "k 网格加密到 12×12×12"），和 core 的推荐相矛盾。
+
+**决定（Junwen 2026-11-09）**：
+
+- **所有模型都发同一份 `graph.SYSTEM_PROMPT`**：身份（参数由 goldilocks-core 决定）、两条工具调用链、
+  规矩（只转述工具返回的值和来源；不编值，也不提自己的值，用户想改就指出在 DFT Workbench 里改哪个设置；
+  生成被挡住时解释并问用户；用用户的语言回答）。
+- **experience level 拼在它后面，合成一条 system 消息**（`graph.system_message`），不是两条：
+  vLLM 用的是 HF chat template，有的模板只认第一条 system 消息，遇到第二条直接报错。
+  和原来一样，**每次调用现拼，不进 checkpointer**：设置一改下一轮就生效，改了措辞旧会话也用新的。
+- **回答长度只由 experience level 那段决定**；没设时是 "Answer briefly."。
+  先前草稿把 "briefly" 写进公共部分，和 "new" 的"多解释"正好相反。
+- **护栏句改成 "This changes only how much you explain, never the values you report."**。
+  旧句 "never change which values… you would otherwise recommend" 暗示模型本来会自己推荐值，
+  和"不许提自己的值"矛盾。
+- **线上也生效**（推翻 19.2 / 2026-09-25 "共享部署下忽略 experience level" 那一半）：
+  当时只关掉了服务器读取，弹窗照样问、照样 POST 写那个全局配置文件，聊天却不用，
+  **用户选了等于没选**。改为共享部署下每个标签页把自己的等级随每次 `/api/chat` 请求发送
+  （`ChatRequest.experience_level`，只接受 `new`/`familiar`/`advanced`），服务器用它；
+  `/api/preferences` 在共享部署下 404。本地版不变，仍读 `~/.config/goldilocks/config.toml`。
+
+**已知限制**：prompt 挡不住所有自创值。`tests/eval/tool_choice.py` 的 M2/M4 用 `expect_values_from`
+统计：回答里带能量 / 长度单位的数和 k 网格，必须出自工具结果或用户消息。真正让用户读到 core 原值的是
+#74 的 review 卡片。
+
+**验收（2026-11-09，`tests/eval/tool_choice.py`，本地 Ollama，19 例、每例 3 遍，发的就是上面这条 system 消息）**：
+
+| 模型 | 全部 | M2（总结里没有自己的值） | 备注 |
+|---|---|---|---|
+| qwen3.8 27B（关思考，temperature 0.7、top_p 0.8） | 57/57 | 3/3 | M4 也 3/3 |
+| qwen3.8 27B，experience level 选 "new" | 56/57 | 2/3 | 失败那次自己加了换算"1.6×10⁻⁹ Ry ≈ 2.2 meV"（错了约 10⁶ 倍），还把 8 原子常规晶胞说成"2×2×2 超胞"：要多解释，模型就会自己加数，#74 的卡片兜这一层 |
+| Ministral 3 14B（只跑 M2、M4，每例 5 遍） | 10/10 | 5/5 | 收紧写法之前 3 次里有 2 次自己给值 |
+| Ministral 3 3B | 55/57 | 1/3 | 自己给了 4×4×4、60 Ry |
+| Ministral 3 3B，experience level 选 "new" | 49/57 | 0/3 | D3 先去搜数据库，M6 不调工具：较长的"多解释"会把小模型带偏 |
+
 ### 12.3 ★★ 已定（2026-09-15）：聊天区与右侧面板怎么分工
 
 ⚠️ 这条填的是 12.2 那张表里"聊天 + 右侧面板双栏"一行留下的空——先前那行写着
@@ -3342,7 +3387,9 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
       `.env.stfc-cloud` 顺带把 §19.1/19.2 的共享部署 UI 标记（`VITE_SHARED_DEPLOYMENT=1`）也
       一起带上，见下一条。Dockerfile 新增 `FRONTEND_BUILD_SCRIPT` build arg 让
       `deploy/stfc-cloud/docker-compose.yml` 选这个脚本，不用维护第二份 Dockerfile。
-- [x] ~~**`experience_level` 全局配置文件在共享部署下怎么处理**~~ → **已定并实现（2026-09-25）**：
+- [x] ~~**`experience_level` 全局配置文件在共享部署下怎么处理**~~ → **已定并实现（2026-09-25）**
+      **；"忽略"这一半 2026-11-09 改了**：共享部署下改为每个标签页随请求发送自己的等级，
+      `/api/preferences` 404（见 12.2 补，stfc/goldilocks-agent#72）。原记录：
       选了 19.2 提到的更简单那个选项——共享部署下直接忽略这个文件（`server.py` 的
       `_stream_reply` 在 `read_shared_deployment_enabled()` 时永远传 `None`，走 graph 自己的
       默认值），不是按标签页接一套单独的偏好设置。同一次实现顺带把 19.2 那条"真正的坑"也堵上了：

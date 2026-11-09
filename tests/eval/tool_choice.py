@@ -2,11 +2,12 @@
 
 Not collected by pytest, and needs the models it names. Each case is a chat
 history; the eval asks a model for the next assistant step the way
-`graph.call_llm` does (the agent's own TOOL_SCHEMAS, OpenAI-style messages,
-streamed through litellm, no system prompt unless `--system-prompt` is given)
-and checks whether that step is the expected one: which tool, with valid
-arguments, or no tool. Free-form answers are not judged, except that a
-Chinese question gets a Chinese answer and the image case names a number.
+`graph.call_llm` does (the agent's own system message and TOOL_SCHEMAS,
+OpenAI-style messages, streamed through litellm) and checks whether that step
+is the expected one: which tool, with valid arguments, or no tool. Free-form
+answers are not judged, except that a Chinese question gets a Chinese answer,
+the image case names a number, and a summary of tool results states no
+parameter values of its own.
 
 Tool results in the multi-step cases are built from goldilocks-core 0.3.0's
 recorded responses in app/src/__fixtures__/core, trimmed the way
@@ -17,7 +18,10 @@ app/src/dftWorkbench.ts trims them for the model.
         "ollama_chat/ministral-3:8b,temperature=0.05" --runs 3
 
 Each model argument is a litellm model string followed by comma-separated
-key=value completion kwargs. Raw results go to --out as JSON lines.
+key=value completion kwargs. The system message is graph.system_message for
+--experience-level (default: none set), or nothing with --no-system-prompt.
+Raw results go to --out as JSON lines, labelled with the model and, unless it
+is the default, the system message variant.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import litellm
 import openai
 from PIL import Image, ImageDraw
 
+from goldilocks_agent.graph import system_message
 from goldilocks_agent.tools import TOOL_SCHEMAS
 
 FIXTURES = Path(__file__).resolve().parents[2] / "app" / "src" / "__fixtures__" / "core"
@@ -370,6 +375,82 @@ def expect_answer(lang: str | None = None, contains: str | None = None) -> Check
     return check
 
 
+# Parameter values an answer states: a number with an energy or length unit,
+# and a k-mesh written as 6x6x6 or (6, 6, 6).
+_NUMBER = r"\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+_STANDALONE_NUMBER = re.compile(rf"(?<![\w.]){_NUMBER}(?!\w)")  # not in a hash
+_UNIT_VALUE = re.compile(rf"(?<![\w.])({_NUMBER})\s*(?:Ry|Rydberg|eV|meV|Å|Angstrom)\b")
+_MESH = re.compile(
+    r"(?<![\w.])(\d+)\s*[x\u00d7]\s*(\d+)\s*[x\u00d7]\s*(\d+)(?![\w.])"
+    r"|[\[(]\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*[\])]"
+)
+
+
+def _numbers(value: Any) -> list[float]:
+    """Every number in a JSON value, strings included."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, int | float):
+        return [float(value)]
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        return [n for item in value for n in _numbers(item)]
+    return [float(n) for n in _STANDALONE_NUMBER.findall(str(value))]
+
+
+def _meshes(value: Any) -> set[tuple[int, int, int]]:
+    """Every list of three integers in a JSON value."""
+    if isinstance(value, dict):
+        value = list(value.values())
+    if not isinstance(value, list):
+        return set()
+    own = (
+        {tuple(value)}
+        if len(value) == 3
+        and all(isinstance(i, int) and not isinstance(i, bool) for i in value)
+        else set()
+    )
+    return own.union(*(_meshes(item) for item in value))
+
+
+def _shown_as(text: str, known: float) -> bool:
+    """Whether ``text`` is ``known`` written to the precision ``text`` shows."""
+    mantissa, _, exponent = text.lower().partition("e")
+    step = 10.0 ** (int(exponent or 0) - len(mantissa.partition(".")[2]))
+    return abs(float(text) - known) <= step / 2 + 1e-12 * abs(known)
+
+
+def expect_values_from(messages: list[dict]) -> Check:
+    """#72: every parameter value the answer states comes from the tool
+    results or the user's messages in ``messages``: none of the model's own."""
+    tool_outputs = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+    user_text = [m["content"] for m in messages if m["role"] == "user"]
+    known = _numbers(tool_outputs) + _numbers(user_text)
+    meshes = _meshes(tool_outputs)
+
+    def check(step: Step) -> str | None:
+        own = [
+            v
+            for v in _UNIT_VALUE.findall(step.content)
+            if not any(_shown_as(v, k) for k in known)
+        ]
+        for match in _MESH.finditer(step.content):
+            mesh = tuple(int(g) for g in match.groups() if g is not None)
+            if mesh not in meshes:
+                own.append("x".join(map(str, mesh)))
+        return f"values of its own: {', '.join(own)}" if own else None
+
+    return check
+
+
+def expect_all(*checks: Check) -> Check:
+    def check(step: Step) -> str | None:
+        return next((f for c in checks if (f := c(step)) is not None), None)
+
+    return check
+
+
 def _names(expected: str) -> Callable[[dict], bool]:
     """Whether dft_open_structure names the chat's file ``expected`` (#73:
     it takes the file's name; the browser reads the file)."""
@@ -404,6 +485,19 @@ def cases() -> list[Case]:
         *open_turn,
         call("dft_review", {}, "c2"),
         result("c2", _review_result("explain")),
+    ]
+    blocked_turn = [
+        *open_turn,
+        call("dft_review", {}, "c2"),
+        result("c2", _review_result("explain-blocked")),
+        assistant(
+            "One setting needs a decision before input files can be "
+            "generated: isolation=slab doesn't suit "
+            "this cell."
+        ),
+        user("Just generate the input files."),
+        call("dft_download_bundle", {}, "c3"),
+        result("c3", {"error": _blocked_bundle_error()}),
     ]
     gaas_search = [
         user(
@@ -566,7 +660,12 @@ def cases() -> list[Case]:
         ),
         # multi-step
         Case("M1", "multi", open_turn, expect_tool("dft_review")),
-        Case("M2", "multi", review_turn, expect_answer()),
+        Case(
+            "M2",
+            "multi",
+            review_turn,
+            expect_all(expect_answer(), expect_values_from(review_turn)),
+        ),
         Case(
             "M3",
             "multi",
@@ -584,24 +683,8 @@ def cases() -> list[Case]:
         Case(
             "M4",
             "multi",
-            [
-                *open_turn,
-                call("dft_review", {}, "c2"),
-                result("c2", _review_result("explain-blocked")),
-                assistant(
-                    "One setting needs a decision before input files can be "
-                    "generated: isolation=slab doesn't suit "
-                    "this cell."
-                ),
-                user("Just generate the input files."),
-                call("dft_download_bundle", {}, "c3"),
-                {
-                    "role": "tool",
-                    "tool_call_id": "c3",
-                    "content": json.dumps({"error": _blocked_bundle_error()}),
-                },
-            ],
-            expect_answer(),
+            blocked_turn,
+            expect_all(expect_answer(), expect_values_from(blocked_turn)),
         ),
         Case(
             "M5",
@@ -712,7 +795,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
 
 
 async def evaluate(
-    spec: str, case_list: list[Case], runs: int, system_prompt: str | None, out
+    spec: str, case_list: list[Case], runs: int, system: dict | None, label: str, out
 ) -> dict:
     model, kwargs = parse_model(spec)
     await next_step(
@@ -720,14 +803,12 @@ async def evaluate(
     )  # load the model, so latency excludes it
     rows = []
     for case in case_list:
-        messages = (
-            [{"role": "system", "content": system_prompt}] if system_prompt else []
-        ) + case.messages
+        messages = ([system] if system else []) + case.messages
         for run in range(runs):
             step = await next_step(model, kwargs, messages)
             failure = step.error or case.check(step)
             row = {
-                "model": spec,
+                "model": label,
                 "case": case.id,
                 "category": case.category,
                 "run": run,
@@ -748,11 +829,11 @@ async def evaluate(
             out.flush()
             mark = "ok " if failure is None else "FAIL"
             print(
-                f"  {spec[:44]:44s} {case.id} run{run} {mark} "
+                f"  {label[:44]:44s} {case.id} run{run} {mark} "
                 f"{row['seconds']:6.1f}s {failure or ''}",
                 flush=True,
             )
-    return {"spec": spec, "rows": rows}
+    return {"spec": label, "rows": rows}
 
 
 def report(results: list[dict], case_list: list[Case]) -> None:
@@ -810,8 +891,16 @@ async def main() -> None:
     )
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--cases", help="comma-separated case ids (default: all)")
-    parser.add_argument(
-        "--system-prompt", help="file whose text is sent as a system message"
+    prompt = parser.add_mutually_exclusive_group()
+    prompt.add_argument(
+        "--experience-level",
+        choices=("new", "familiar", "advanced"),
+        help="the user's Settings level the system message is pitched at",
+    )
+    prompt.add_argument(
+        "--no-system-prompt",
+        action="store_true",
+        help="send no system message, as before #72",
     )
     parser.add_argument("--out", type=Path, default=Path("tool_choice_results.jsonl"))
     parser.add_argument(
@@ -835,12 +924,14 @@ async def main() -> None:
             [c for c in case_list if c.id in seen],
         )
         return
-    system_prompt = Path(args.system_prompt).read_text() if args.system_prompt else None
+    system = None if args.no_system_prompt else system_message(args.experience_level)
+    variant = "no-system-prompt" if args.no_system_prompt else args.experience_level
     results = []
     with args.out.open("a") as out:
         for spec in args.models:
+            label = f"{spec} [{variant}]" if variant else spec
             results.append(
-                await evaluate(spec, case_list, args.runs, system_prompt, out)
+                await evaluate(spec, case_list, args.runs, system, label, out)
             )
     report(results, case_list)
 
