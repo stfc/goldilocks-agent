@@ -177,6 +177,13 @@ describe("dispatchDftTool", () => {
     expect(records.cutoffs).toEqual({
       value: explanation.records.cutoffs.value, source: explanation.records.cutoffs.source,
     });
+    // The advisor's note travels where there is one: it is how the model can
+    // say why, e.g., mMACE wasn't run (goldilocks-core#259).
+    expect(records.vdw).toEqual({
+      value: explanation.records.vdw.value,
+      source: explanation.records.vdw.source,
+      source_note: explanation.records.vdw.source_note,
+    });
     expect(warnings).toHaveLength(explanation.warnings.length);
     expect(blocking).toEqual([]);
     expect(calculation.task).toBe(capabilities.tasks[0].id);

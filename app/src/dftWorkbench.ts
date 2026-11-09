@@ -158,11 +158,12 @@ function structureSummary(inspection: StructureInspection) {
   };
 }
 
-// A review for the model: each record's value and the tier that decided
-// it -- or, unresolved, why not -- with the warnings and the findings that
-// block generating input files. Leaves out the provenance the Workbench's
-// cards show (model evidence, citations, per-field sources, layout), several
-// kB per review the model's context doesn't need.
+// A review for the model: each record's value, the tier that decided it and
+// the advisor's note on it where there is one (e.g. why mMACE wasn't run,
+// goldilocks-core#259) -- or, unresolved, why not -- with the warnings and
+// the findings that block generating input files. Leaves out the provenance
+// the Workbench's cards show (model evidence, citations, per-field sources,
+// layout), several kB per review the model's context doesn't need.
 function reviewForModel(snapshot: WorkspaceSnapshot, explain: ExplainResult) {
   return {
     calculation: calculationOf(snapshot),
@@ -170,7 +171,11 @@ function reviewForModel(snapshot: WorkspaceSnapshot, explain: ExplainResult) {
       Object.entries(explain.records).map(([name, record]) => [
         name,
         record.status === "resolved"
-          ? { value: record.value, source: record.source }
+          ? {
+              value: record.value,
+              source: record.source,
+              ...(record.source_note ? { source_note: record.source_note } : {}),
+            }
           : {
               status: record.status,
               ...(record.reason ? { reason: record.reason } : {}),
