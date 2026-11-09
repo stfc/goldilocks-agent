@@ -54,6 +54,17 @@ def test_review_and_download_bundle_take_no_parameters() -> None:
     assert by_name["dft_download_bundle"]["function"]["parameters"]["properties"] == {}
 
 
+def test_open_structure_takes_a_file_name_not_file_content() -> None:
+    # #73: the model names a structure file in the chat and the browser
+    # reads it -- re-typing the file into the call was slow and smaller
+    # models silently truncated or altered it.
+    by_name = {entry["function"]["name"]: entry for entry in TOOL_SCHEMA}
+    parameters = by_name["dft_open_structure"]["function"]["parameters"]
+    assert set(parameters["properties"]) == {"file_name"}
+    assert parameters["required"] == ["file_name"]
+    assert parameters["additionalProperties"] is False
+
+
 @pytest.mark.parametrize(
     "stub",
     [dft_open_structure, dft_review, dft_download_bundle],

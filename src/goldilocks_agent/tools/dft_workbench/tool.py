@@ -24,21 +24,18 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import NoReturn
 
-_STRUCTURE_CONTENT_PARAM = {
+# A name, never the file's text: re-typing a structure into a tool call is
+# slow, and smaller models silently truncate or alter it (#73). The browser
+# looks the name up among this chat's structure files (see
+# `app/src/dftWorkbench.ts`'s `dispatchDftTool`).
+_FILE_NAME_PARAM = {
     "type": "string",
     "description": (
-        "The structure's file content (CIF or POSCAR text), e.g. from a "
-        "prior get_structure call or a file attached to this chat."
+        "The exact name of a structure file in this chat: a file the user "
+        "attached (the NAME in '[Attached file: NAME]') or the filename a "
+        "get_structure call returned. DFT Workbench reads the file itself, "
+        "so never pass the file's content."
     ),
-}
-_STRUCTURE_NAME_PARAM = {
-    "type": "string",
-    "description": "A short filename for this structure, e.g. 'NaCl.cif'.",
-}
-_STRUCTURE_FORMAT_PARAM = {
-    "type": "string",
-    "enum": ["cif", "poscar"],
-    "description": "Omit to infer from structure_name's extension.",
 }
 
 
@@ -69,8 +66,9 @@ TOOL_SCHEMA: list[dict] = [
         "function": {
             "name": "dft_open_structure",
             "description": (
-                "Open a structure in DFT Workbench, the embedded goldilocks-"
-                "core panel -- required before dft_review or "
+                "Open a structure file from this chat, by its name, in DFT "
+                "Workbench, the embedded goldilocks-core panel -- required "
+                "before dft_review or "
                 "dft_download_bundle can be called. Parses and validates the "
                 "structure; no DFT parameters are chosen yet. Returns a "
                 "summary of the structure (partially occupied sites must be "
@@ -82,12 +80,8 @@ TOOL_SCHEMA: list[dict] = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "structure_content": _STRUCTURE_CONTENT_PARAM,
-                    "structure_name": _STRUCTURE_NAME_PARAM,
-                    "structure_format": _STRUCTURE_FORMAT_PARAM,
-                },
-                "required": ["structure_content", "structure_name"],
+                "properties": {"file_name": _FILE_NAME_PARAM},
+                "required": ["file_name"],
                 "additionalProperties": False,
             },
         },

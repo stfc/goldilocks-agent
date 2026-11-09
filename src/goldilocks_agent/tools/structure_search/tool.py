@@ -120,7 +120,10 @@ TOOL_SCHEMA: list[dict] = [
                 "Fetch the full atomic structure (as CIF) for one specific "
                 "candidate previously returned by find_in_databases. Only "
                 "call this once the user has settled on which candidate to "
-                "use, not for every candidate in a search result."
+                "use, not for every candidate in a search result. The "
+                "structure becomes a file in this chat under the returned "
+                "filename: open it in DFT Workbench with "
+                "dft_open_structure(file_name=<that filename>)."
             ),
             "parameters": {
                 "type": "object",

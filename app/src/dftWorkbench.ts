@@ -21,6 +21,7 @@ import type {
   WorkspaceFailure,
   WorkspaceSnapshot,
 } from "goldilocks-workbench";
+import type { ChatStructure } from "./utils/structureFiles";
 
 // The goldilocks-workbench types its public surface uses without exporting.
 type CoreFailure = WorkspaceFailure["failure"];
@@ -110,6 +111,28 @@ const NO_STRUCTURE =
   "No structure has been opened in DFT Workbench yet -- call dft_open_structure first.";
 const UNSETTLED =
   "DFT Workbench's settings kept changing while this ran -- call the tool again.";
+
+// The structure input core's /inspect takes for one of the chat's structure
+// files. Core reads CIF and POSCAR; any other format goes as POSCAR and
+// core's own inspect failure says what is wrong with it.
+export function structureInputFor(file: Pick<ChatStructure, "name" | "content" | "ext">) {
+  return {
+    structure_content: file.content,
+    structure_name: file.name,
+    structure_format: file.ext === ".cif" ? "cif" : "poscar",
+  };
+}
+
+// Why dft_open_structure found no file of that name, for the model: the
+// names it can use instead, or that the chat has none yet.
+function missingStructureText(name: unknown, structures: readonly ChatStructure[]): string {
+  const asked = `No structure file named ${JSON.stringify(name)} in this chat`;
+  if (structures.length === 0) {
+    return `${asked}, and the chat has no structure files yet. Ask the user to attach one, or find one with find_in_databases and get_structure.`;
+  }
+  const names = structures.map((s) => JSON.stringify(s.name)).join(", ");
+  return `${asked}. Structure files in this chat: ${names}. Call dft_open_structure again with one of these names, or ask the user to attach the file.`;
+}
 
 function calculationOf(snapshot: WorkspaceSnapshot) {
   const draft = snapshot.draft;
@@ -208,12 +231,14 @@ async function explainCurrentDraft(workspace: Workspace, signal?: AbortSignal) {
 // silently no-op on an unmet precondition rather than throwing, which would
 // otherwise be indistinguishable from "nothing to report."
 // `ensureCoreServerReady` resolves to null once goldilocks-core is up, or to
-// why it isn't.
+// why it isn't. `structures` are the structure files of the chat the call
+// belongs to, which dft_open_structure picks from by name.
 export async function dispatchDftTool(
   workspace: Workspace,
   ensureCoreServerReady: (signal?: AbortSignal) => Promise<string | null>,
   tool: string,
   args: Record<string, any>,
+  structures: readonly ChatStructure[],
   signal?: AbortSignal,
 ): Promise<DftToolOutcome> {
   const readyError = await ensureCoreServerReady(signal);
@@ -230,12 +255,10 @@ export async function dispatchDftTool(
   }
 
   if (tool === "dft_open_structure") {
-    const input = {
-      structure_content: args.structure_content,
-      structure_name: args.structure_name,
-      structure_format: args.structure_format
-        ?? (args.structure_name?.toLowerCase().endsWith(".cif") ? "cif" : "poscar"),
-    };
+    // The model names a file; the text comes from the chat itself (#73).
+    const file = structures.find((structure) => structure.name === args.file_name);
+    if (!file) return { error: missingStructureText(args.file_name, structures) };
+    const input = structureInputFor(file);
     await untilAborted(workspace.dispatch({ type: "source.open", input }), signal);
     const snapshot = workspace.getSnapshot();
     if (snapshot.structureInput !== input || snapshot.inspection === null) {
