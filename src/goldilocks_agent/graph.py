@@ -96,6 +96,24 @@ CLOUD_MODELS = {
 }
 
 
+def _ollama_options(model: str) -> dict:
+    """litellm kwargs for a local Ollama model: answer without thinking first.
+
+    Junwen, 2026-11-09. The agent never shows reasoning -- `call_llm` reads
+    only `delta.content` -- so qwen3.8's default thinking was pure wait: 85%
+    of generation time on the STFC VM (p95 reply 64 s), with nothing on
+    screen. litellm turns a `reasoning_effort` outside low/medium/high into
+    Ollama's `think: false`; models that can't think accept it too (checked
+    with ministral-3:3b). qwen3.8 also needs its non-thinking sampling, from
+    its model card: Ollama's built-in temperature 1.0 / top_p 0.95 are its
+    thinking-mode values (top_k 20 is the same in both).
+    """
+    options: dict = {"reasoning_effort": "none"}
+    if model.startswith("ollama_chat/qwen3.8"):
+        options |= {"temperature": 0.7, "top_p": 0.8}
+    return options
+
+
 def resolve_model(model_id: str | None = None) -> tuple[str, dict]:
     """Pick the conversation engine model and any extra litellm kwargs (e.g. api_key).
 
@@ -115,12 +133,14 @@ def resolve_model(model_id: str | None = None) -> tuple[str, dict]:
             api_base = os.environ.get("VLLM_API_BASE")
             if api_base:
                 extra["api_base"] = api_base
+        if override.startswith("ollama_chat/"):
+            extra |= _ollama_options(override)
         return override, extra
     if model_id in CLOUD_MODELS:
         provider, litellm_model = CLOUD_MODELS[model_id]
         api_key = get_api_key(provider)
         return litellm_model, ({"api_key": api_key} if api_key else {})
-    return LOCAL_MODEL, {}
+    return LOCAL_MODEL, _ollama_options(LOCAL_MODEL)
 
 
 # Modeled on ChatGPT/Claude's "custom instructions" -- a short, fixed blurb
