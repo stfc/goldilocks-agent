@@ -119,8 +119,73 @@ services:
         ollama pull qwen3.8:27b
     restart: "no"
 
+  # Side-by-side vLLM trial for stfc/goldilocks-agent#68 (phase 3): serves the
+  # same chat model as `ollama` for a load test while Ollama keeps serving
+  # production. Behind the `vllm` profile, so a plain `docker compose up -d`
+  # never starts it. The agent doesn't use it until the cutover (phase 5:
+  # GOLDILOCKS_AGENT_MODEL=hosted_vllm/qwen3.8-27b, VLLM_API_BASE). See
+  # README.md "vLLM side by side".
+  vllm:
+    image: vllm/vllm-openai:v0.32.0
+    profiles: ["vllm"]
+    depends_on:
+      vllm-download:
+        condition: service_completed_successfully
+    entrypoint: ["vllm", "serve"]
+    command:
+      # INT4 (W4A16, Marlin kernels on the A100) with the vision tower left
+      # unquantized: the same 4-bit class as Ollama's Q4_K_M, and ~19.5 GB, so
+      # it fits beside Ollama. The FP8 checkpoint (~31 GB) would leave ~5 GB
+      # of the budget below for the KV cache.
+      - RedHatAI/Qwen3.8-27B-INT4
+      # Contains "qwen3.8", so resolve_model() gives it qwen's sampling.
+      - --served-model-name=qwen3.8-27b
+      # Ollama holds ~36 GB of the 80 GB card (2026-11-09); 0.45 is ~37 GB.
+      - --gpu-memory-utilization=0.45
+      # Longest prompt seen in production: 19.9k tokens.
+      - --max-model-len=32768
+      - --enable-prefix-caching
+      # From vLLM's Qwen3.8-27B recipe.
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+      - --reasoning-parser=qwen3
+      # Thinking off for every request, matching #76 on Ollama (vLLM ignores
+      # Ollama's `think`; Qwen3.8's chat template reads `enable_thinking`).
+      - '--default-chat-template-kwargs={"enable_thinking": false}'
+    environment:
+      HF_HUB_OFFLINE: "1"  # weights come from `vllm-download`
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    ports:
+      # VM loopback only: for the load test, and an SSH tunnel for the eval.
+      - "127.0.0.1:8001:8000"
+    restart: "no"
+
+  # One-shot: downloads the vLLM weights into `hf_cache`. Host networking,
+  # because this VM's 1450 MTU against the compose bridge's 1500 resets long
+  # downloads (the same problem as the Dockerfile's git clone, README.md).
+  vllm-download:
+    image: vllm/vllm-openai:v0.32.0
+    profiles: ["vllm"]
+    network_mode: host
+    entrypoint: ["python3", "-c"]
+    command:
+      - from huggingface_hub import snapshot_download; snapshot_download("RedHatAI/Qwen3.8-27B-INT4")
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    restart: "no"
+
 volumes:
   goldilocks_home:
   # mlip_cli_venv:   # MLIP Playground, see the agent service's environment
   goldilocks_core_venv:
   ollama_data:
+  hf_cache:

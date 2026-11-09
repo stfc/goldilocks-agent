@@ -94,6 +94,95 @@ domain-wide nginx config lived in the portal repo's own deploy folder.
    (`docker-compose.yml`'s commented-out
    `GOLDILOCKS_AGENT_MLIP_ENABLED`/`mlip_cli_venv`).
 
+## vLLM side by side (stfc/goldilocks-agent#68)
+
+The `vllm` service serves the same chat model as Ollama (qwen3.8 27B, thinking
+off) for a load test, while Ollama keeps serving production. It sits behind the
+`vllm` compose profile, so `docker compose up -d` never starts it, and the agent
+doesn't use it until the cutover.
+
+**Choices, 2026-11-09:**
+- Checkpoint `RedHatAI/Qwen3.8-27B-INT4`: W4A16, which runs on Marlin kernels on
+  the A100, with the vision tower left unquantized. It is the same 4-bit class
+  as Ollama's Q4_K_M, and its ~19.5 GB of weights fit beside Ollama's ~36 GB.
+  The FP8 checkpoint (~31 GB) would leave only ~5 GB for the KV cache.
+- KV cache: only 16 of the model's 64 layers use full attention; the rest are
+  linear attention with a fixed-size state. That makes about 64 KB per token,
+  so a typical 5k-token chat holds about 330 MB.
+- `vllm/vllm-openai:v0.32.0`, the CUDA 13.0 build. The VM's driver (595)
+  supports CUDA 13.2.
+- Flags from vLLM's Qwen3.8-27B recipe, plus thinking off for every request
+  (`--default-chat-template-kwargs`).
+- A100 is not among the recipe's verified hardware, so step 2 below is the
+  first real check that it loads and answers.
+
+**1. Start it** (the first run downloads ~20 GB of weights):
+
+```bash
+cd ~/goldilocks-agent && git pull
+cd deploy/stfc-cloud
+docker compose --profile vllm up -d vllm   # runs vllm-download first, then vLLM
+docker compose logs -f vllm                # wait for "Application startup complete"
+nvidia-smi --query-gpu=memory.used,memory.total --format=csv
+# expect Ollama ~36 GB + vLLM ~38 GB, under 80 GB
+```
+
+**2. Smoke test:** a plain answer with no reasoning, then a tool call.
+
+```bash
+curl -s http://127.0.0.1:8001/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model": "qwen3.8-27b", "temperature": 0.7, "top_p": 0.8,
+  "messages": [{"role": "user", "content": "In one sentence, what is DFT?"}]
+}' | python3 -m json.tool
+# choices[0].message.content is filled; reasoning_content is empty or absent
+
+curl -s http://127.0.0.1:8001/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model": "qwen3.8-27b", "temperature": 0.7, "top_p": 0.8,
+  "messages": [{"role": "user", "content": "Find GaAs in the materials databases."}],
+  "tools": [{"type": "function", "function": {"name": "find_in_databases",
+    "description": "Search materials databases by formula.",
+    "parameters": {"type": "object", "properties": {"formula": {"type": "string"}},
+                   "required": ["formula"]}}}]
+}' | python3 -m json.tool
+# choices[0].message.tool_calls[0].function: find_in_databases, {"formula": "GaAs"}
+```
+
+**3. Load test** with 1, 2, 4 and 8 concurrent chats. Prompts are 4096 tokens,
+the production median, and outputs are 512 tokens. This shares the GPU with
+production Ollama, so run it when nobody is chatting.
+
+```bash
+for c in 1 2 4 8; do
+  docker compose exec vllm vllm bench serve \
+    --backend openai-chat --endpoint /v1/chat/completions \
+    --base-url http://127.0.0.1:8000 --model qwen3.8-27b \
+    --tokenizer RedHatAI/Qwen3.8-27B-INT4 \
+    --dataset-name random --random-input-len 4096 --random-output-len 512 --ignore-eos \
+    --num-prompts $((c * 8)) --max-concurrency $c \
+    --percentile-metrics ttft,tpot,e2el --metric-percentiles 50,95 \
+    | tee ~/vllm-bench-c$c.txt
+done
+```
+
+The gate from #68:
+- **One user is at least as fast as Ollama today**: 61 tok/s, so TPOT p50 at
+  `c=1` is 16.4 ms or less.
+- **4 users don't queue**: TTFT p95 at `c=4` stays within twice that at `c=1`.
+
+Tool-call correctness and image attach run separately, through
+`tests/eval/tool_choice.py` over an SSH tunnel to `127.0.0.1:8001`.
+
+**4. Stop it** to free the GPU. The weights stay in the `hf_cache` volume.
+
+```bash
+docker compose --profile vllm stop vllm
+```
+
+The cutover is not part of this trial. When it happens, the agent gets
+`GOLDILOCKS_AGENT_MODEL=hosted_vllm/qwen3.8-27b` and
+`VLLM_API_BASE=http://vllm:8000/v1`. `resolve_model()` already gives that model
+qwen's non-thinking sampling.
+
 ## Redeploying
 
 ```bash

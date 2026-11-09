@@ -1,0 +1,12 @@
+# Install to /etc/systemd/system/goaccess-report.timer, then:
+#   sudo systemctl enable --now goaccess-report.timer
+[Unit]
+Description=Regenerate the GoAccess report every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+# Catches up after a reboot instead of silently waiting for the next slot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
