@@ -3616,3 +3616,26 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
       再补
 - [ ] **STFC 内网/VPN 的具体 CIDR 段**——`nginx-agent.conf` 的 `allow` 那行需要从 STFC IT
       那边拿到真实值，占位符不能上线
+
+#### ★★ 2026-11-10 补：线上实际拓扑（stfc/goldilocks-agent#16）
+
+前面 19.3/19.4/19.8 记的是当初的计划：挂在 `goldilocks.stfc.ac.uk/agent/` 子路径下，nginx 由共享域名的管理员负责，访问控制用 nginx 的 `allow`/`deny`。**实际跑起来的不是这样**，下面几条推翻对应的旧条目（旧条目保留作记录）。
+
+- **拓扑**：独立实例 `goldilocks-workbench`（A100 80 GB，浮动 IP 130.246.214.189）。
+  - 域名是 `workbench.goldilocks.ac.uk`，CNAME 到 `host-130-246-214-189.nubes.stfc.ac.uk`。
+  - nginx 和 Let's Encrypt 都在 VM 本机上（Ubuntu 打包的 nginx，宿主机服务），把整个站点转发到 `127.0.0.1:8080`，**应用就挂在 `/`**。
+  - 推翻 19.3 的子路径方案，也推翻 2026-09-29 "这个项目没有浮动 IP 配额"的推理。
+- **访问控制在 OpenStack 安全组，不在 nginx**（2026-10-09 起）：
+  - `HTTP`：80 端口对外开放，只做跳转和 certbot 续期；
+  - `goldilocks-stfc-internal`：22 和 443 端口，只放行 130.246.0.0/16、10/8、172.16/12、192.168/16。
+  - 推翻 19.4 的 nginx allow-list 方案。nginx 只负责按 IP 限速：`/api/chat` 每分钟 10 次，`/api/mlip/` 和 `/run` 每分钟 6 次。
+- **VM 上实际在用的站点配置**：已经原样提交为 `deploy/stfc-cloud/nginx-workbench.conf`，和 VM 上的文件 sha256 一致。占位用的 `nginx-agent.conf` 删除。
+- **前端只保留一种线上构建**：`build:stfc-cloud`（`.env.stfc-cloud`）。删掉 `/agent/` 前缀的 public 变体和 `VITE_BASE_PATH`。
+  - 原因：它本来就跑不通。打包出来的路径指向 `/agent/...`，但 `/api/...`、图标路径、Workbench 的 `HttpCoreClient` 都用的是根路径。
+  - 以后真要挂到子路径下，需要让这些请求都认 base URL，后端也要处理前缀，不是改一个 `base` 就行。
+- **agent 容器的端口只绑定 `127.0.0.1:8080`**，nginx 是唯一入口。原来的 `8080:8080` 会绕过 nginx，而且 Docker 发布的端口不受 ufw 管。VM 上一直用的就是这个本地修改，现在提交进仓库。
+- **部署和升级 core 的步骤写进了 `deploy/stfc-cloud/README.md`**，脚本在 `deploy/stfc-cloud/core-upgrade/`，取代 v0.3.0、v0.3.1 两次升级时各自写的本地 runbook。
+- **Ollama 4 个槽位在 VM 上没有生效**（2026-11-10 实测）：
+  - VM 上的 Ollama 0.34.4 对这个模型仍然只开 1 个槽位，并发时还是排队；
+  - 唯一的变化是每个对话的上下文降到 65536，显存从 35.9 GB 降到 23.4 GB；
+  - 本机的 Ollama 0.40.15 能开多槽。下一步是在 VM 上换新版 Ollama 再测（#86）。

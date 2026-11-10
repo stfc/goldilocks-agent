@@ -1,30 +1,20 @@
-# STFC Cloud shared deployment (design doc §19) -- distinct from the
-# repo-root docker-compose.yml, which is the single-local-user build.
+# STFC Cloud shared deployment (design doc §19): workbench.goldilocks.ac.uk.
+# Distinct from the repo-root docker-compose.yml, which is the single-user
+# local build.
 #
-# Scope of this file: the agent app itself + Ollama (serving qwen3.8:27b
-# on this VM's own GPU), nothing else. It does NOT run nginx or handle TLS
-# -- this deployment is one path
-# segment (`/agent/`) under a domain shared with two other repos' own
-# content (`/` the portal, `/workbench` goldilocks-core/web), so the actual
-# internet-facing nginx + certbot setup is a domain-wide concern owned by
-# whoever administers that shared entry point, not this repo (v1's own STFC
-# deployment used exactly this split -- see old-goldilcoks-webapp's
-# docs/stfc-deployment.md: the backend only ever bound to 127.0.0.1, system
-# nginx for the whole domain lived in goldilocks-web's own deploy folder).
-# See nginx-agent.conf in this directory for the snippet to hand to
-# whoever owns that config, and README.md for the full bring-up sequence.
+# This file runs the agent and Ollama, which serves qwen3.8:27b on the VM's
+# GPU. nginx and Let's Encrypt run on the VM itself, outside Docker, and
+# proxy https://workbench.goldilocks.ac.uk/ to the agent on 127.0.0.1:8080;
+# the site config is nginx-workbench.conf. README.md has the topology,
+# access policy and redeploy steps.
 services:
   agent:
     build:
       context: ../..
       args:
-        # This VM is reached directly at its own address (see the `ports`
-        # comment below), not via a shared domain's /agent/ subpath -- so
-        # the frontend must be built with root-relative asset paths, not
-        # /agent/-prefixed ones. Switch to `build:stfc-cloud-public` (see
-        # app/.env.stfc-cloud-public) once this sits behind the shared-domain
-        # nginx instead (design doc §19.3).
-        FRONTEND_BUILD_SCRIPT: build:stfc-cloud-internal
+        # The web build (app/.env.stfc-cloud): shared-deployment UI, served
+        # at `/`.
+        FRONTEND_BUILD_SCRIPT: build:stfc-cloud
     image: goldilocks-agent-stfc-cloud:latest
     environment:
       GOLDILOCKS_AGENT_SHARED_DEPLOYMENT: "1"
@@ -52,15 +42,10 @@ services:
       # GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
       GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
     ports:
-      # Direct STFC-internal access (2026-09-29, same pattern as
-      # goldilocks-core-DFTworkbench-stable's :8000) -- interim mode while
-      # the shared-domain nginx/TLS setup (design doc §19.4/§19.8) is still
-      # blocked on the pending STFC floating-IP/subdomain allocation.
-      # Reachable from anyone on the STFC internal network/VPN once the
-      # OpenStack Security Group and this VM's own ufw both allow 8080/tcp
-      # (see README.md). Revert to "127.0.0.1:8080:8080" once nginx/TLS is
-      # ready and path-based access control at /agent/ takes over instead.
-      - "8080:8080"
+      # Loopback only: nginx on the VM is the one way in. A port published
+      # on all interfaces would bypass nginx, and Docker's port publishing
+      # bypasses ufw too.
+      - "127.0.0.1:8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
       # - mlip_cli_venv:/app/mlip-cli/.venv   # MLIP Playground, see above

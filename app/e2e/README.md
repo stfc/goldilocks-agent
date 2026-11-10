@@ -16,7 +16,7 @@ terminal), run the tests directly:
 
 `scripts/e2e_web.py` does three things:
 
-1. **Builds** the shared-deployment frontend (`npm run build:stfc-cloud-internal`).
+1. **Builds** the shared-deployment frontend (`npm run build:stfc-cloud`).
 2. **Starts the agent** on port 8096 with:
    - `GOLDILOCKS_AGENT_SHARED_DEPLOYMENT=1`;
    - the chat model pinned to local Ollama's qwen3.8 (`E2E_MODEL` overrides it);
