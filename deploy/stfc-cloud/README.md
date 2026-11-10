@@ -109,19 +109,22 @@ chats at once but gave no more total throughput than one; the A100's numbers
 decide whether four is right. If bursts outgrow four, 8 x 65536 costs about
 16 GB more GPU memory.
 
-**Measure, then switch** (from `deploy/stfc-cloud`):
+**Measure, then switch** (from `deploy/stfc-cloud`). The script imports the
+agent's system prompt, so the `agent` container must already run this
+version; the image's system `python` has none of the agent's packages, hence
+`uv run --no-sync`.
 
 ```bash
 cd ~/goldilocks-agent && git pull && cd deploy/stfc-cloud
 # Before: the running Ollama still has one slot.
-docker compose exec -T agent python - < ollama_concurrency_bench.py | tee ~/ollama-slots-before.txt
+docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-slots-before.txt
 # Recreate only Ollama with the new settings. Chat is down while the model
 # reloads (10-55 s).
 docker compose up -d ollama
 docker compose logs ollama | grep -E "n_slots|n_ctx_slot"    # n_slots = 4, n_ctx_slot = 65536
 nvidia-smi --query-gpu=memory.used --format=csv              # about the same as before (~36 GB)
 # After:
-docker compose exec -T agent python - < ollama_concurrency_bench.py | tee ~/ollama-slots-after.txt
+docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-slots-after.txt
 ```
 
 The script sends 1, 2, 4 and 8 chats at once, each with the agent's system
