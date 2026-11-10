@@ -1,7 +1,8 @@
 // The web build's main path: a structure attached in chat is opened,
 // reviewed and turned into input files by the model's DFT Workbench tools.
-// Checks what the tools leave behind -- the review card's core values (#74),
-// the bundle under Generated Files (#94) -- not what the model says.
+// Checks what the tools leave behind -- the review card's core values (#74)
+// and its button, the bundle under Generated Files (#94) -- not what the
+// model says.
 import { expect, test } from "@playwright/test";
 import { fixture, openApp, openGeneratedFiles, send } from "./helpers";
 
@@ -27,6 +28,11 @@ test("open, review and generate from chat, all kept on reload", async ({ page })
   await expect(card).toContainText("48 / 192 Ry");
   await expect(card).toContainText("6 × 6 × 6");
   await expect(card).toContainText("Goldilocks-ML prediction");
+  // Its button opens the full-page Workbench, every card side by side.
+  await card.getByRole("button", { name: "Open in DFT Workbench" }).click();
+  await expect(page.locator(".tools-fullpage")).toBeVisible();
+  await expect(page.locator(".tools-fullpage #advisors-panel")).toBeVisible();
+  await page.getByRole("button", { name: "← Chat" }).click();
   await expect(bundleCard.first()).toBeVisible();
 
   await openGeneratedFiles(page);

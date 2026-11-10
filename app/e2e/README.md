@@ -42,7 +42,7 @@ HOME is a temporary directory, so:
 | `tools.e2e.ts` | no | All Tools: the web build's tools, the local version's (MLIP Playground, AiiDAlab-QE), and Beyond DFT |
 | `experience.e2e.ts` | request only | the onboarding level travels with each chat request; `/api/preferences` is never called |
 | `ranking.e2e.ts` | no | Run mMACE in the embedded Workbench shows the job queued or running, then a recommended ordering |
-| `chat-dft.e2e.ts` | yes | attach → open → review → generate: core's values in the review card, the bundle under Generated Files and its download, all kept on reload |
+| `chat-dft.e2e.ts` | yes | attach → open → review → generate: core's values in the review card, its button opening the full-page Workbench, the bundle under Generated Files and its download, all kept on reload |
 | `database.e2e.ts` | yes, network | `get_structure` → `dft_open_structure` by the fetched file's name |
 | `language.e2e.ts` | yes | an English question gets English, a Chinese one Chinese |
 
