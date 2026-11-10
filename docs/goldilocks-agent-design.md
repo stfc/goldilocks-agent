@@ -1400,6 +1400,16 @@ SSE 事件（如 `"Calculating k-points…"`），`goldilocks-web/src/App.jsx`
 
 所以模型的文字保持原样，和卡片有重复，但卡片是权威的显示。eval 的报告会列出 M2 每次回答提到几个参数值（现在是 5），只记录、不判失败。
 
+**★★ 2026-11-10 改：prompt 改了，回答不再重复卡片。**
+
+- **起因**：Junwen 在线上看到 qwen 在卡片下面又写了一张同样的表（Na 的 SCF：泛函、赝势、截断能、k 网格……）。原因是 prompt 里的 "Report the values and sources the tools return."，它明确要求模型复述。
+- **改法**：这句换成 "The user sees dft_review's values and sources in a card above your reply, so don't list them again or put them in a table: say what needs the user's attention (warnings, anything blocking generation) and the next step. When you name a value, give it and its source as the tools return them."
+- **判定标准改了**：11-09 要求"一个数都不提"，太严。core 的警告本身带着数值（"ecutrho 192 Ry 由 4×48 推导"、"6×6×6 网格来自 ML 模型"），解释警告就会提到。现在的标准是 `expect_no_card_repeat`：没有 Markdown 表格，且最多 3 个参数值。M2、M4 按这个判定。
+- **qwen 实测**（本机 qwen3.8，think 关）：
+  - 改之前，M2 5/5 用列表把整张卡复述一遍，每次 4–5 个数值；
+  - 改之后，回答是"完整推荐见上方卡片，需要注意的是……"，只列警告和下一步，每次 2–3 个数值，回答变短（M2 中位长度约 1400 → 1000 字符）；
+  - 全量 eval 24 个用例 3/3，G4 没有退步。
+
 ### 12.4 ★★ 已定（2026-09-15）：四个 MODE 不是并列的四块，是一条管线
 
 先前 12.1 那张表已经隐约看得出四个 MODE 风险不均，但没说清楚**它们彼此是
