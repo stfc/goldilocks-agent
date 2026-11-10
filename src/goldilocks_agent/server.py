@@ -43,7 +43,7 @@ from goldilocks_agent.config import (
     write_credential,
     write_experience_level,
 )
-from goldilocks_agent.graph import build_graph, open_checkpointer
+from goldilocks_agent.graph import build_graph, open_checkpointer, tool_status
 from goldilocks_agent.tools import (
     mlip_playground,
     mlip_playground_offered,
@@ -275,7 +275,7 @@ async def _stream_reply(
             graph_input, config=config, stream_mode="custom"
         ):
             # Plain text deltas (the common case) are un-typed strings from
-            # `writer(delta.content)`; `call_llm`/`call_tool` also emit typed
+            # `writer(delta.content)`; `call_tool` also emits typed
             # dict chunks (`tool_status`/`tool_result`) for the frontend's
             # SSE `event:` handlers -- design doc 12.3's "one status line,
             # never the raw args/results, in chat" plus panel-sync both ride
@@ -292,6 +292,12 @@ async def _stream_reply(
         if snapshot.next:
             pending = snapshot.tasks[0].interrupts[0].value
             event = _pending_interrupt_event(pending)
+            if event == "client_tool_call":
+                # A client-executed call runs in the browser from here on:
+                # its status line goes out now, outside any graph node, so
+                # a resume's replay of `call_tool` can't repeat it (#19).
+                status = tool_status(pending["tool"])
+                yield f"event: tool_status\ndata: {json.dumps(status)}\n\n"
             yield f"event: {event}\ndata: {json.dumps(pending)}\n\n"
     except openai.OpenAIError as exc:
         # litellm normalizes every provider's errors onto the openai-sdk hierarchy,
