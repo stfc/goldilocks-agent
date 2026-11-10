@@ -1302,6 +1302,19 @@ goldilocks 的形状正好是它：
 
 **同一批改动的另一项**：`reviewForModel` 现在会带上记录的 `source_note`（core 给出的推荐理由）。这样 goldilocks-core#259 跳过 mMACE 时，模型能告诉用户原因。
 
+#### ★★ 2026-11-10 补：语言那句改为 "Reply in the language of the user's latest message."
+
+- **问题**：本地版默认选 Claude（`anthropic/claude-sonnet-5`）。原来的 "Answer in the user's language." 会让它用**德语**回答英文提问。
+  - 用一段打开 Fe 结构的真实对话重复 5 次，5 次都是德语。
+  - 消息和工具结果里没有任何德语。
+  - qwen 不受影响，直接调用 10 次全是英文。
+- **对照**（同一段对话，每种 5 次）：删掉这句、"Answer in the language the user writes in."、"Reply in the language of the user's latest message." 都是英文 5/5。
+- **决定（Junwen）**：改为最后一种。
+- **效果**：
+  - Claude：英文提问 5/5 用英文回答，中文提问 3/3 用中文回答；
+  - qwen：24 个 eval 用例 × 3 遍，72/72。
+- **另外一条更正**：同一天的几次本地浏览器实测（研究 NaCl、算能带、review 卡片）用的是本地默认的 Claude，不是线上的 qwen。要代表线上，得用 `GOLDILOCKS_AGENT_MODEL=ollama_chat/qwen3.8:latest` 固定模型。`tests/eval/tool_choice.py` 直接调用指定模型，结论不受影响。
+
 ### 12.3 ★★ 已定（2026-09-15）：聊天区与右侧面板怎么分工
 
 ⚠️ 这条填的是 12.2 那张表里"聊天 + 右侧面板双栏"一行留下的空——先前那行写着
