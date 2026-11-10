@@ -34,3 +34,6 @@ plan-*.md
 # Claude Code local tooling (personal skills library + scratch state) --
 # not part of this project's own source, not shared between contributors.
 .claude/
+
+# Playwright e2e output (app/e2e)
+app/test-results/

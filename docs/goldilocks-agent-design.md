@@ -607,6 +607,26 @@ goldilocks-agent  上面两套它都要用
 
 ---
 
+#### ★★ 2026-11-10 补：线上版的端到端测试（`app/e2e`，`uv run poe e2e-web`）
+
+上面"一次端到端冒烟"落地为一套 Playwright 测试，对象是线上版：
+- 环境：本地起一个和 STFC VM 一致的测试 agent（共享部署模式的前端、固定 qwen、core 按 `core_pin.json` 的版本自动启动）；
+- 时机：每次部署 VM 前手动跑；
+- 不进 CI：需要本地 Ollama 和 core。
+
+**覆盖**：7 个文件、12 个测试。
+- **接口边界**：core 版本，单用户接口和 MLIP 被拒，排序走后台任务；
+- **All Tools 分组**；
+- **experience level 随请求发送**；
+- **排序任务**：排队或进度，最后出推荐结果；
+- **聊天主流程**：打开 → review 卡片 → 生成 → Generated Files 下载 → 刷新后都还在；
+- **数据库取结构后按文件名打开**；
+- **回答语言**。
+
+断言只看工具留下的结果（卡片里 core 的数值、发给 core 的请求、下载到的文件），不看模型的措辞；唯一的例外是语言测试，只检查回答用的语言。
+
+**第一次运行就发现一个 core 前端库的 bug**：Workbench 拿到 `/capabilities` 之前，"Browse files" 已经可以点，但 `openSource` 在能力信息为空时直接返回，用户上传的文件会被悄悄丢掉。core 冷启动（部署后的前几分钟）时最容易遇到。排序测试先等 Workbench 就绪再上传。
+
 ## 八、交付层的来历：旧 webapp 与为什么改主意
 
 `old-goldilcoks-webapp` 是一次**线上版**的尝试，包含：
