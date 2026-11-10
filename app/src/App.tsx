@@ -2078,7 +2078,12 @@ export default function App() {
   const [viewerIdx, setViewerIdx] = useState(0);
   const [structureMatchLoading, setStructureMatchLoading] = useState(false);
   const [dbGroupOpen, setDbGroupOpen] = useState({});
-  const [importingEntries, setImportingEntries] = useState(new Set());
+  // Find in Databases imports still fetching, by `${source}:${entry_id}`,
+  // each with the chat it attaches to (the one active when Import was
+  // clicked): that chat's composer can't send until they land (#15).
+  const [importingEntries, setImportingEntries] = useState(
+    () => new Map<string, { sessionId: string; label: string }>(),
+  );
   const [pickerElements, setPickerElements] = useState<Record<string, number>>({});
 
   const bottomRef = useRef(null);
@@ -2234,7 +2239,11 @@ export default function App() {
   const hasPendingConfirmation = messages.some(
     (m) => m.role === "confirmation" && m.resolved === null
   );
-  const canSend = Boolean(input.trim() || attachedFiles.length > 0 || attachedImages.length > 0) && !hasPendingConfirmation;
+  const pendingImports = [...importingEntries.values()].filter((entry) => entry.sessionId === session?.id);
+  const canSend =
+    Boolean(input.trim() || attachedFiles.length > 0 || attachedImages.length > 0) &&
+    !hasPendingConfirmation &&
+    pendingImports.length === 0;
   const currentExperience = EXPERIENCE_OPTIONS.find((option) => option.id === experienceLevel);
   // The chat's structure files (utils/structureFiles' collectChatStructures):
   // uploads, attachments of sent messages, and structures the chat's
@@ -2683,7 +2692,8 @@ export default function App() {
 
   async function handleImportStructure(source, entry_id, formula) {
     const key = `${source}:${entry_id}`;
-    setImportingEntries(prev => new Set(prev).add(key));
+    const target = ensureSession();
+    setImportingEntries(prev => new Map(prev).set(key, { sessionId: target.id, label: entry_id }));
     try {
       const resp = await fetch(
         `/api/fetch-structure?source=${encodeURIComponent(source)}&entry_id=${encodeURIComponent(entry_id)}`
@@ -2718,7 +2728,7 @@ export default function App() {
       console.error("Import failed:", err);
       window.alert(`Could not import structure from ${source}: ${err.message}`);
     } finally {
-      setImportingEntries(prev => { const next = new Set(prev); next.delete(key); return next; });
+      setImportingEntries(prev => { const next = new Map(prev); next.delete(key); return next; });
     }
   }
 
@@ -3261,6 +3271,9 @@ export default function App() {
     const images = fromComposer ? attachedImages : EMPTY_ARRAY;
     const rawText = (text ?? input).trim();
     if ((!rawText && files.length === 0 && images.length === 0) || loading || hasPendingConfirmation) return;
+    // A structure still importing into this chat would miss this message and
+    // ride the next one instead (#15). ✦ prompts carry no attachments.
+    if (fromComposer && pendingImports.length > 0) return;
 
     // Images render as thumbnails in the bubble (via `images` below), not as
     // a text label -- only structure-file attachments need a text stand-in.
@@ -6313,6 +6326,11 @@ export default function App() {
 
         .attachment-pill {
           margin-bottom: 0;
+        }
+
+        .attachment-pill.pending {
+          color: var(--muted);
+          font-style: italic;
         }
 
         .attachment-thumb {
@@ -9567,8 +9585,14 @@ export default function App() {
                 <div className="composer-wrap">
                   <div className="composer-outer">
 
-                    {attachedFiles.length > 0 && (
+                    {(attachedFiles.length > 0 || pendingImports.length > 0) && (
                       <div className="attachment-pills">
+                        {pendingImports.map((entry) => (
+                          <div key={`importing-${entry.label}`} className="attachment-pill pending" role="status">
+                            <CrystalIcon />
+                            <span>Importing {entry.label}…</span>
+                          </div>
+                        ))}
                         {attachedFiles.map(af => (
                           <div key={af.name} className="attachment-pill">
                             <CrystalIcon />

@@ -56,7 +56,11 @@ function parseStructurePayload(source: StructureSource, helpers: WeasHelpers): S
   throw new Error(`Unsupported file extension: ${normalizedExt}`);
 }
 
+
+const VIEW_ONLY_KEYS = new Set(["1", "2", "3", "4", "5", "6", "m", "Escape", "Tab"]);
+
 export default function WeasStructureViewport({ source, height = 320 }: { source: StructureSource | null; height?: number }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<WEAS | null>(null);
   const helpersRef = useRef<WeasHelpers | null>(null);
@@ -64,6 +68,24 @@ export default function WeasStructureViewport({ source, height = 320 }: { source
   const [isReady, setIsReady] = useState(false);
   const [viewerError, setViewerError] = useState("");
   const [legendEntries, setLegendEntries] = useState<LegendEntry[]>([]);
+
+  // weas 0.2.10 binds its editing keys (Delete/x, g/r/s, d, c, Ctrl+Z/Y and
+  // Ctrl+F's operation search) on its own host with no off switch. Dropped
+  // here, in the capture phase, before they reach it (#15); the camera
+  // presets (1-6), measuring (m), Escape and Tab still work.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+      if (plain && VIEW_ONLY_KEYS.has(event.key)) return;
+      if (!hostRef.current?.contains(event.target as Node)) return;
+      event.stopPropagation();
+      event.preventDefault();
+    };
+    wrap.addEventListener("keydown", onKeyDown, true);
+    return () => wrap.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +109,15 @@ export default function WeasStructureViewport({ source, height = 320 }: { source
         viewerRef.current = new mod.WEAS({
           domElement: hostElement,
           viewerConfig: { atomScale: 0.8 },
-          guiConfig: { atomLegend: { enabled: false } },
+          // Read-only (#15): the viewer previews the file that gets sent,
+          // and nothing writes an edit back, so WEAS's import/undo/redo
+          // buttons and its Atoms folder (Replace/Add Atom) are off. weas
+          // merges each key over its defaults.
+          guiConfig: {
+            atomLegend: { enabled: false },
+            buttons: { import: false, undo: false, redo: false },
+            controls: { atomsControl: false },
+          },
         });
         viewerRef.current.avr.modelStyle = 1;
         setIsReady(true);
@@ -189,7 +219,7 @@ export default function WeasStructureViewport({ source, height = 320 }: { source
   const overlayHint = showEmptyState ? "Supported here: .cif · .xyz · .xsf · .cube · .poscar · .vasp" : "";
 
   return (
-    <div style={viewportWrapStyle(height)}>
+    <div ref={wrapRef} style={viewportWrapStyle(height)}>
       <div ref={hostRef} style={hostStyle} />
       {legendEntries.length > 0 && !showOverlay && (
         <div style={legendStyle}>
