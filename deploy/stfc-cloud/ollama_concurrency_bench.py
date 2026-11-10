@@ -3,7 +3,7 @@
 Run inside the agent container, which reaches Ollama on the compose network
 and has the model name in its environment (README.md "Concurrency"):
 
-    docker compose exec -T agent python - < ollama_concurrency_bench.py
+    docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py
 
 Each request carries the agent's real system prompt and an attached CIF, about
 4k tokens in all (production prompts: median 4.1k tokens), answers with
