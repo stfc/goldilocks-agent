@@ -1668,9 +1668,9 @@ function CoreWorkbenchTree({ workspace }: { workspace: any }) {
 // composer already has its own "Structure Viewer" widget showing the same
 // structure, so a second embedded 3D view in a narrow side panel is pure
 // duplication; (2) uploading a structure here should behave like every
-// other Tool's own structure picker (MLIP Playground's `StructureUploadControl`
-// and its Files/Structure Viewer sync via `readFile`), not like a second,
-// disconnected upload path core's own component owns. `CalculationContextControls`
+// other Tool's own structure picker (the Files/Structure Viewer sync via
+// `readFile`, as MLIP Playground's `StructureUploadControl` does), not like a
+// second, disconnected upload path core's own component owns. `CalculationContextControls`
 // (Code/Task/HPC) is core's real, unmodified component -- reused verbatim,
 // not reimplemented, and re-exported from goldilocks-workbench specifically
 // for this (2026-09-25).
@@ -1681,12 +1681,19 @@ function CoreWorkbenchTree({ workspace }: { workspace: any }) {
 // structure_content/structure_name/structure_format) -- so Analysis/
 // Advisors/Bundle (still core's real, unmodified cards) see a real
 // structure exactly as if it had come through core's own upload UI.
+//
+// It sits in the same card shell as core's other cards (`.workbench-card`,
+// kicker and title read from core's own hidden card), styled in the
+// `.dft-structure-card` rules: core's Mantine components aren't exported, so
+// the shell copies their look with Mantine's CSS variables.
 function DftWorkbenchStructureTab({
   workspace,
+  card,
   chatStructures,
   onFileUpload,
 }: {
   workspace: any;
+  card: { kicker: string; title: string };
   chatStructures: { name: string; content: string; ext: string }[];
   onFileUpload: (file: File) => void;
 }) {
@@ -1697,10 +1704,19 @@ function DftWorkbenchStructureTab({
       defaultColorScheme="light"
     >
       <CoreWorkspaceProvider workspace={workspace}>
-        <div className="workspace-content">
-          <DftWorkbenchStructurePicker chatStructures={chatStructures} onFileUpload={onFileUpload} />
-          <CalculationContextControls />
-        </div>
+        <section
+          className="workbench-card card-structure workbench-card--active dft-structure-card"
+          aria-label="Structure workspace"
+        >
+          <header className="card-header">
+            <p className="card-kicker">{card.kicker}</p>
+            <h2>{card.title}</h2>
+          </header>
+          <div className="card-body">
+            <DftWorkbenchStructurePicker chatStructures={chatStructures} onFileUpload={onFileUpload} />
+            <CalculationContextControls />
+          </div>
+        </section>
       </CoreWorkspaceProvider>
     </MantineProvider>
   );
@@ -1720,17 +1736,17 @@ function DftWorkbenchStructurePicker({
 }) {
   const workspace = useCoreWorkspace();
   const { structureInput } = useCoreWorkspaceSnapshot();
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   // The entry holding exactly the open structure, if any. What's open need
   // not be one of this chat's files (a restore, or content the model passed
-  // to dft_open_structure), so the label doesn't depend on a match.
+  // to dft_open_structure), so it then gets an option of its own.
   const openIdx = structureInput === null
     ? -1
     : chatStructures.findIndex(
       (s) => s.name === structureInput.structure_name && s.content === structureInput.structure_content,
     );
-  const valueLabel = structureInput?.structure_name
-    ?? (chatStructures.length === 0 ? "No structures loaded" : "—");
+  const value = openIdx >= 0 ? String(openIdx) : structureInput ? "open" : "";
 
   function openStructureInCore(file: { name: string; content: string; ext: string }) {
     void workspace.dispatch({ type: "source.open", input: structureInputFor(file) });
@@ -1746,23 +1762,53 @@ function DftWorkbenchStructurePicker({
   }
 
   return (
-    <div className="workspace-section">
-      <div className="workspace-title">Structure</div>
-      <SimpleSelect
-        label="Structure"
-        value={openIdx}
-        valueLabel={valueLabel}
-        items={chatStructures.map((s, i) => ({ id: i, label: s.name }))}
-        isOpen={pickerOpen}
-        onToggle={() => setPickerOpen((open) => !open)}
-        onSelect={(id) => {
-          setPickerOpen(false);
-          const s = chatStructures[id];
-          if (s) openStructureInCore(s);
-        }}
-        disabled={chatStructures.length === 0}
-      />
-      <StructureUploadControl onFile={handleUpload} />
+    <div
+      className={`dft-structure-field${isDragOver ? " drag-over" : ""}`}
+      onDragOver={(event) => { event.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setIsDragOver(false);
+        const file = event.dataTransfer.files?.[0];
+        if (file) handleUpload(file);
+      }}
+    >
+      <label className="dft-field-label" htmlFor="dft-structure-select">Structure</label>
+      <div className="dft-select">
+        <select
+          id="dft-structure-select"
+          value={value}
+          disabled={chatStructures.length === 0 && structureInput === null}
+          onChange={(event) => {
+            const s = chatStructures[Number(event.target.value)];
+            if (s) openStructureInCore(s);
+          }}
+        >
+          {value === "" && <option value="">{chatStructures.length === 0 ? "No structures in this chat yet" : "Choose a structure"}</option>}
+          {openIdx < 0 && structureInput && <option value="open">{structureInput.structure_name}</option>}
+          {chatStructures.map((s, i) => <option key={i} value={String(i)}>{s.name}</option>)}
+        </select>
+        <svg className="dft-select-chevron" viewBox="0 0 15 15" aria-hidden="true">
+          <path d="M4.5 6 7.5 3l3 3M4.5 9l3 3 3-3" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+      <div className="dft-structure-upload">
+        <span className="dft-dimmed" title="CIF, XYZ, POSCAR, VASP, XSF, CUBE">Or drop a structure file here.</span>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={[...WEAS_SUPPORTED_EXTS].join(",")}
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) handleUpload(file);
+            event.target.value = "";
+          }}
+        />
+        <button type="button" className="dft-subtle-btn" onClick={() => inputRef.current?.click()}>
+          Upload file
+        </button>
+      </div>
     </div>
   );
 }
@@ -1876,6 +1922,7 @@ function CoreWorkbenchTabs({
       {activeCardId === STRUCTURE_CARD_ID && (
         <DftWorkbenchStructureTab
           workspace={workspace}
+          card={cards.find((card) => card.id === STRUCTURE_CARD_ID)!}
           chatStructures={chatStructures}
           onFileUpload={onFileUpload}
         />
@@ -5854,17 +5901,19 @@ export default function App() {
            that sets spacing for its own components (Accordion rows, form
            field gaps, etc.), flattening them all to 0 and making Calculation's
            list rows look cramped compared to Structure/Generation, which
-           don't lean on that spacing as much. revert (not unset -- margin/
-           padding aren't inherited properties, so unset would just reapply
-           the initial 0 value) hands the property back to the normal
-           cascade, i.e. Mantine's own layered rules or the UA default.
+           don't lean on that spacing as much. revert-layer hands the
+           property back to Mantine's own layered rules, else the UA default.
+           Not unset (margin/padding aren't inherited, so it reapplies 0), and
+           not revert, which skips every author layer, Mantine's included,
+           for the UA default: it left core's selects with no inline padding,
+           their text against the border (2026-11-10).
            .workbench-embed-tabs (the inline side-panel's tabbed embed,
            see CoreWorkbenchTabs) is the exact same goldilocks-workbench DOM
            and needs the identical fix. */
         .workbench-embed *,
         .workbench-embed-tabs * {
-          margin: revert;
-          padding: revert;
+          margin: revert-layer;
+          padding: revert-layer;
         }
 
         /* goldilocks-workbench ships all of its CSS inside @layer mantine
@@ -5972,6 +6021,110 @@ export default function App() {
         .workbench-embed-tabs .structure-stage {
           height: 22rem;
           flex: none;
+        }
+
+        /* The inline Structure Setup tab (DftWorkbenchStructureTab): the
+           shell and field look of core's cards, from Mantine's variables --
+           Paper withBorder p="md", a Group header, an order-2 Title, and a
+           size-md NativeSelect like the Code/Task fields below it. */
+        .dft-structure-card {
+          background: var(--mantine-color-body);
+          border: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-gray-3);
+          border-top: 4px solid var(--card-accent);
+          border-radius: var(--mantine-radius-default);
+          padding: var(--mantine-spacing-md);
+        }
+        .dft-structure-card .card-header {
+          display: flex;
+          align-items: center;
+          gap: var(--mantine-spacing-md);
+          margin: 0 0 var(--mantine-spacing-md);
+        }
+        .dft-structure-card .card-kicker {
+          margin: 0;
+          font-size: var(--mantine-font-size-md);
+          line-height: var(--mantine-line-height-md);
+        }
+        .dft-structure-card .card-header h2 {
+          margin: 0;
+          font-family: var(--mantine-font-family-headings);
+          font-size: var(--mantine-h2-font-size);
+          font-weight: var(--mantine-h2-font-weight);
+          line-height: var(--mantine-h2-line-height);
+        }
+        .dft-structure-field {
+          display: flex;
+          flex-direction: column;
+          border-radius: var(--mantine-radius-default);
+          outline: 2px dashed transparent;
+          outline-offset: 4px;
+        }
+        .dft-structure-field.drag-over {
+          outline-color: var(--mantine-color-blue-5);
+        }
+        .dft-field-label {
+          font-size: var(--mantine-font-size-md);
+          font-weight: 600;
+          line-height: var(--mantine-line-height);
+        }
+        .dft-select {
+          position: relative;
+        }
+        .dft-select select {
+          appearance: none;
+          width: 100%;
+          /* NativeSelect size md: --input-height-md (2.625rem), padded by a
+             third of it; 44px is the theme's touch-target minimum. Mantine
+             only defines --input-height-* inside its Input, so not here. */
+          height: 44px;
+          padding: 0 40px 0 calc(2.625rem * var(--mantine-scale) / 3);
+          border: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border);
+          border-radius: var(--mantine-radius-default);
+          background: var(--mantine-color-body);
+          color: var(--mantine-color-text);
+          font: inherit;
+          font-size: var(--mantine-font-size-md);
+          cursor: pointer;
+        }
+        .dft-select select:disabled {
+          background: var(--mantine-color-disabled);
+          color: var(--mantine-color-disabled-color);
+          cursor: not-allowed;
+        }
+        .dft-select-chevron {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          width: 16px;
+          height: 16px;
+          transform: translateY(-50%);
+          color: var(--mantine-color-dimmed);
+          pointer-events: none;
+        }
+        .dft-structure-upload {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--mantine-spacing-xs);
+        }
+        .dft-dimmed {
+          color: var(--mantine-color-dimmed);
+          font-size: var(--mantine-font-size-sm);
+        }
+        .dft-subtle-btn {
+          flex: none;
+          min-height: 44px;
+          padding: 0 var(--mantine-spacing-xs);
+          border: none;
+          border-radius: var(--mantine-radius-xl);
+          background: transparent;
+          color: var(--mantine-color-blue-light-color);
+          font-size: var(--mantine-font-size-sm);
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .dft-subtle-btn:hover {
+          background: var(--mantine-color-blue-light-hover);
         }
 
         .chat-area {
