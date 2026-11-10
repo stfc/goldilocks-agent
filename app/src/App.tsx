@@ -2526,6 +2526,11 @@ export default function App() {
     setShowStructureViewer(false);
     setShowFilesPanel(false);
     setPlusOpen(false);
+    // One DFT Workbench serves every chat in a tab (#13). On the web build a
+    // left chat can't be reopened, so a new chat starts with an empty
+    // Workbench: its DFT tools can't act on the last chat's structure. The
+    // local build keeps it until each chat gets its own workspace.
+    if (SHARED_DEPLOYMENT) coreWorkspace.dispatch({ type: "workspace.reset" });
   }
 
   async function createProject() {
