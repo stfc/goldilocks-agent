@@ -1,7 +1,7 @@
 """Run the web build's end-to-end tests (app/e2e) against a local staging agent.
 
 The staging agent is set up like the STFC VM's:
-- the shared-deployment frontend (`npm run build:stfc-cloud-internal`);
+- the shared-deployment frontend (`npm run build:stfc-cloud`);
 - GOLDILOCKS_AGENT_SHARED_DEPLOYMENT=1;
 - the chat model pinned to local Ollama's qwen3.8;
 - goldilocks-core auto-started from PyPI at core_pin.json's version (the VM
@@ -94,7 +94,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="goldilocks-e2e-") as tmp:
         dist = Path(tmp) / "dist"
         subprocess.run(
-            ["npm", "run", "build:stfc-cloud-internal", "--", "--outDir", str(dist)],
+            ["npm", "run", "build:stfc-cloud", "--", "--outDir", str(dist)],
             cwd=APP_DIR,
             check=True,
         )

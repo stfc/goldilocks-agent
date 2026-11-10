@@ -1,140 +1,256 @@
-# STFC Cloud deployment
+# STFC Cloud deployment: workbench.goldilocks.ac.uk
 
-Shared, multi-user, anonymous (no account system) deployment of goldilocks-agent,
-eventually reachable under `goldilocks.stfc.ac.uk/agent/` -- see
-`docs/goldilocks-agent-design.md` §19 for the full design rationale. This is a
-different deployment from the repo-root `docker-compose.yml`, which is the
-single-local-user build.
+The shared, anonymous (no account system) deployment of goldilocks-agent, for
+people on the STFC network. Design rationale: `docs/goldilocks-agent-design.md`
+§19. The repo-root `docker-compose.yml` is the single-user local build, a
+different thing.
 
-The frontend has two build variants for this deployment (`app/package.json`):
-`build:stfc-cloud-public` (root-relative asset paths swapped for `/agent/`,
-`.env.stfc-cloud-public`) for once this sits behind the shared-domain nginx,
-and `build:stfc-cloud-internal` (`.env.stfc-cloud-internal`, root-relative
-paths kept) for direct access to this VM's own address in the meantime --
-`docker-compose.yml`'s `FRONTEND_BUILD_SCRIPT` picks one explicitly; they are
-not interchangeable without also changing the `ports` binding below.
+## Topology (checked 2026-11-10)
 
-## Scope of this directory
+| What | Where |
+|---|---|
+| Instance | `goldilocks-workbench` in OpenStack project "Goldilocks" (openstack.stfc.ac.uk); flavor `g-a100-80gb.x1` (one A100 80 GB); image `goldilocks-agent-gpu-20261002` |
+| Addresses | private 192.168.100.226, floating 130.246.214.189 |
+| DNS | `workbench.goldilocks.ac.uk` is a CNAME to `host-130-246-214-189.nubes.stfc.ac.uk` |
+| Web server | nginx 1.18 (Ubuntu package, a host service, not in Docker) terminates TLS with a Let's Encrypt certificate for both names and proxies everything to `127.0.0.1:8080`. The app is served at `/`. |
+| Containers | this directory's `docker-compose.yml`: `agent` (the web build plus goldilocks-core in checkout mode at `core_pin.json`'s commit, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
+| Checkout | `/home/ubuntu/goldilocks-agent`, `origin` = https://github.com/stfc/goldilocks-agent.git, on `main` |
 
-The agent app + Ollama (serving `qwen3.8:27b` on this VM's own GPU). It does
-**not** include nginx or TLS -- `/agent/` is one path segment under a domain
-shared with two other repos' own content (`/` the portal, `/workbench`
-goldilocks-core/web), so the actual internet-facing nginx + certbot setup is
-a domain-wide concern owned by whoever administers that shared entry point,
-not this repo. v1's own STFC deployment (`old-goldilcoks-webapp`) used
-exactly this split: the backend only ever bound to `127.0.0.1`, and the
-domain-wide nginx config lived in the portal repo's own deploy folder.
+## Access policy
 
-- `docker-compose.yml` -- the agent container + `ollama` (GPU-backed) + a
-  one-shot `ollama-pull` service. Currently binds `agent` to `8080:8080`
-  (reachable from anyone on the STFC internal network/VPN, once the
-  OpenStack Security Group and this VM's own `ufw` both allow 8080/tcp) --
-  an interim direct-access setup, not the eventual `127.0.0.1:8080:8080` +
-  shared-domain-nginx design (see the `ports` comment in that file).
-- `nginx-agent.conf` -- the `location /agent/ { ... }` snippet to hand to
-  whoever owns the shared nginx config. Not a standalone site file.
+OpenStack security groups enforce it (since 2026-10-09), not nginx:
 
-## Known external blockers (as of 2026-09-29)
+| Security group | Rule |
+|---|---|
+| `HTTP` | 80/tcp from 0.0.0.0/0. nginx answers with a redirect to HTTPS, and certbot renews through it. |
+| `goldilocks-stfc-internal` | 22/tcp and 443/tcp from 130.246.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 |
 
-- **STFC floating IP/subdomain**: not allocated yet. Nothing below can be
-  verified against the real domain until it lands.
-- **STFC intranet/VPN CIDR range**: needed from STFC IT for
-  `nginx-agent.conf`'s `allow` line -- not guessable.
-- **Real concurrency capacity for Ollama serving `qwen3.8:27b`**: needs
-  hands-on load testing once GPU access exists (design doc §19.7 -- Ollama's
-  throughput, not the session architecture, is the expected bottleneck).
-  Don't assume a safe `GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT` without
-  measuring on the real hardware.
-- Requires `nvidia-container-toolkit` configured as the Docker runtime on
-  the host before `docker compose up` -- the `ollama` service's GPU
-  reservation will fail to start without it.
+So the site and SSH work from the STFC network or VPN only; from off-site,
+443 and 22 time out. Nothing else is open: the agent listens on loopback.
 
-## Bring-up
+To let another range in (a new STFC Wi-Fi range, say): in the OpenStack
+dashboard, Network → Security Groups → `goldilocks-stfc-internal` → Manage
+Rules → Add Rule, Custom TCP Rule, port 443 (and 22 for SSH), with the CIDR.
+Delete the rule to undo it. The team OneDrive has the step-by-step version
+with screenshots: `stfc cloud deployment/STFC_Cloud_Internal_Access_Goldilocks.docx`.
 
-1. Build and start the agent + Ollama:
-   ```bash
-   cd deploy/stfc-cloud
-   docker compose up -d --build
-   curl -fsS http://127.0.0.1:8080/api/credentials   # sanity check
-   ```
-2. Fill in `nginx-agent.conf`'s `<STFC_INTRANET_CIDR>` placeholder and hand
-   it to whoever administers the shared `goldilocks.stfc.ac.uk` nginx config
-   -- it needs `include`ing inside the `server {}` block that already
-   terminates TLS for the whole domain (design doc §19.8: certbot + Let's
-   Encrypt, HTTP-01 challenge -- already decided, implemented at that
-   domain-wide level, not here).
-3. Once DNS/TLS land end-to-end, verify streaming actually works through the
-   full chain (nginx's `proxy_buffering off` is required for this, already
-   set in `nginx-agent.conf`):
-   ```bash
-   curl -N -X POST https://goldilocks.stfc.ac.uk/agent/api/chat \
-     -H 'content-type: application/json' \
-     -d '{"thread_id":"smoke-test","message":{"role":"user","content":"Hello"}}'
-   ```
-4. Confirm the shared-deployment gating actually took effect: no sidebar
-   projects/history panel in the UI, and the backend's own refusal on the
-   VM itself -- match the `detail` text, not just a 404 status: the backend
-   serves no `/agent/`-prefixed routes, so a bare `/agent/api/...` request
-   lands on the static frontend's own 404/405 whatever the gating.
-   ```bash
-   curl -s http://127.0.0.1:8080/api/projects
-   # {"detail":"Not available in the shared deployment (no account system)."}
-   ```
-   MLIP Playground and Beyond DFT are *Coming soon* this release: they
-   appear only in the full-page All Tools view, unopenable, and the MLIP
-   routes refuse even a well-formed request (a malformed one gets FastAPI's
-   own 422 first):
-   ```bash
-   curl -s -X POST http://127.0.0.1:8080/api/mlip/singlepoint \
-     -H 'content-type: application/json' \
-     -d '{"structure_content":"x","structure_name":"x.cif"}'
-   # {"detail":"MLIP Playground is not available in this release."}
-   ```
-   MLIP Playground is also off at this deployment's own layer
-   (`docker-compose.yml`'s commented-out
-   `GOLDILOCKS_AGENT_MLIP_ENABLED`/`mlip_cli_venv`).
+## Reaching the VM
 
-## Concurrency: four Ollama slots
-
-Ollama serves four chats at once: `OLLAMA_NUM_PARALLEL: "4"` and
-`OLLAMA_CONTEXT_LENGTH: "65536"` on the `ollama` service (2026-11-09). Before
-that it had one slot (`n_slots = 1`, 262144 tokens), so concurrent chats
-queued, and a tool-using turn makes 2-4 model calls. The KV cache is allocated
-when the model loads, at slots x context per slot: 4 x 65536 is the same
-~16 GB as the single slot it replaces.
-
-Usage is low (9 client IPs in 30 days, at most 48 model calls in a day), so
-this was chosen over switching to vLLM (#68). On a Mac the four slots ran four
-chats at once but gave no more total throughput than one; the A100's numbers
-decide whether four is right. If bursts outgrow four, 8 x 65536 costs about
-16 GB more GPU memory.
-
-**Measure, then switch** (from `deploy/stfc-cloud`). The script imports the
-agent's system prompt, so the `agent` container must already run this
-version; the image's system `python` has none of the agent's packages, hence
-`uv run --no-sync`.
+From the STFC network or VPN:
 
 ```bash
-cd ~/goldilocks-agent && git pull && cd deploy/stfc-cloud
-# Before: the running Ollama still has one slot.
-docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-slots-before.txt
-# Recreate only Ollama with the new settings. Chat is down while the model
-# reloads (10-55 s).
-docker compose up -d ollama
-docker compose logs ollama | grep -E "n_slots|n_ctx_slot"    # n_slots = 4, n_ctx_slot = 65536
-nvidia-smi --query-gpu=memory.used --format=csv              # about the same as before (~36 GB)
-# After:
-docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-slots-after.txt
+ssh -i ~/.ssh/stfc_goldilocks_core_ed25519 ubuntu@130.246.214.189
 ```
 
-The script sends 1, 2, 4 and 8 chats at once, each with the agent's system
-prompt and about 4k tokens of attached structure. It prints when the last one
-finished, the aggregate token rate, and each chat's rate while decoding. Expect:
-- one chat about as fast as before;
-- "last finished" for 2 and 4 chats well below the one-slot times;
-- 8 chats queueing for the extra four.
+The key pair is `goldilocks-core` in OpenStack; password login is off.
 
-**Roll back:** delete the two lines and run `docker compose up -d ollama` again.
+## nginx
+
+`nginx-workbench.conf` is the enabled site, copied byte for byte from
+`/etc/nginx/sites-available/workbench` (linked from `sites-enabled`) on
+2026-11-10. It:
+
+- proxies `/` to `127.0.0.1:8080`;
+- limits `/api/chat` to 10 requests a minute per client IP (burst 5), without
+  buffering so replies stream, with a 600 s timeout;
+- limits `/api/mlip/` and `/run` to 6 a minute per client IP (burst 3), with
+  600 s timeouts;
+- carries certbot's TLS lines and its port-80 redirect.
+
+The limits are per client IP. Everyone behind one NAT or VPN exit shares
+them, and one chat turn that uses DFT Workbench makes several `/api/chat`
+requests: the message, plus one per tool call it hands to the browser. Raise
+`rate` and `burst` before a workshop where many people share an address.
+
+To change it, edit the file here, then on the VM:
+
+```bash
+sudo cp ~/goldilocks-agent/deploy/stfc-cloud/nginx-workbench.conf /etc/nginx/sites-available/workbench
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+## TLS
+
+certbot's nginx plugin renews the Let's Encrypt certificate over HTTP-01 on
+port 80, from the `certbot.timer` systemd timer, about 30 days before it
+expires. The current certificate runs to 2027-01-05. To check:
+
+```bash
+systemctl list-timers | grep certbot
+sudo certbot certificates
+sudo certbot renew --dry-run
+```
+
+## Prerequisites on the VM
+
+- `nvidia-container-toolkit` as Docker's runtime: the `ollama` service's GPU
+  reservation fails without it.
+- **Docker MTU.** The VM's interface has MTU 1450 and Docker's bridges 1500,
+  so long downloads from inside a container get reset. Examples are the
+  Dockerfile's `git clone`s and core's `uv sync`. Build with
+  `--network host`, and give `--network host` to any one-off container that
+  downloads, as the core upgrade below does.
+
+## Redeploying
+
+For a merge that doesn't change `src/goldilocks_agent/core_pin.json`. Run the
+web build's end-to-end tests first, locally (`uv run poe e2e-web`,
+`app/e2e/README.md`).
+
+```bash
+cd ~/goldilocks-agent && git pull --ff-only
+cd deploy/stfc-cloud
+IMG=goldilocks-agent-stfc-cloud
+docker tag $IMG:latest $IMG:previous
+docker build --network host --build-arg FRONTEND_BUILD_SCRIPT=build:stfc-cloud -t $IMG:latest ../..
+docker compose up -d --no-deps agent
+```
+
+- **Why `--no-deps`.** It keeps Ollama running. Without it, compose also
+  recreates `ollama` whenever its settings changed, and chat is down while
+  the model reloads. When Ollama's settings do change, recreate it on its own
+  with `docker compose up -d --no-deps ollama`.
+- **Rollback.** `docker tag $IMG:previous $IMG:latest && docker compose up -d --no-deps agent`.
+- **A refused `git pull`.** Checkouts from before 2026-11-10 carry a local
+  `127.0.0.1:8080:8080` edit to `docker-compose.yml`, which is now committed.
+  If `git pull` refuses, run `git checkout -- docker-compose.yml` first.
+
+## Upgrading goldilocks-core
+
+When a merge changes `core_pin.json`, the agent's core environment and assets
+need the new release:
+
+- the environment is in the volume `stfc-cloud_goldilocks_core_venv`;
+- the assets are in `~/.local/share/goldilocks/assets`, inside the volume
+  `stfc-cloud_goldilocks_home`.
+
+Prepare them next to the live ones, then switch, so the site keeps serving
+until the switch. The scripts are in `core-upgrade/`; this is how v0.3.0 and
+v0.3.1 went in. Pick a suffix for the old version's backups, such as `v031`.
+
+**Phase A: no downtime.**
+
+```bash
+cd ~/goldilocks-agent && git pull --ff-only && cd deploy/stfc-cloud
+IMG=goldilocks-agent-stfc-cloud; HOME_VOL=stfc-cloud_goldilocks_home
+VENV_VOL=stfc-cloud_goldilocks_core_venv; OLD=v031
+docker tag $IMG:latest $IMG:$OLD
+docker build --network host --build-arg FRONTEND_BUILD_SCRIPT=build:stfc-cloud -t $IMG:latest ../..
+docker volume create ${VENV_VOL}_$OLD
+docker run --rm --user root -v $VENV_VOL:/from:ro -v ${VENV_VOL}_$OLD:/to $IMG:latest sh -c 'cp -a /from/. /to/'
+docker run --rm --network host -v $HOME_VOL:/home/goldilocks \
+  -v $PWD/core-upgrade/prewarm.sh:/prewarm.sh:ro -v $PWD/core-upgrade/smoke.py:/smoke.py:ro \
+  -e GOLDILOCKS_ASSET_ROOT=/home/goldilocks/.local/share/goldilocks/assets-next \
+  -e UV_PROJECT_ENVIRONMENT=/tmp/prewarm-venv \
+  $IMG:latest sh /prewarm.sh
+```
+
+The prewarm does four things:
+
+- copies the assets to `assets-next`;
+- fills the uv cache from a throwaway venv;
+- installs the release's assets into `assets-next`;
+- smoke-tests a throwaway core on :18000.
+
+Stop if it doesn't end with `== PREWARM OK`. Nothing live has changed.
+
+**Phase B: DFT Workbench is down 2–5 minutes, chat a few seconds.**
+
+```bash
+docker compose stop agent
+docker run --rm --user root -v $HOME_VOL:/h $IMG:latest sh -euc \
+  "cd /h/.local/share/goldilocks && mv assets assets-$OLD && mv assets-next assets"
+docker compose up -d --no-deps agent
+while :; do s=$(curl -s -X POST http://127.0.0.1:8080/api/core-server/ensure); echo "$s"; case "$s" in *'"ready"'*|*'"error"'*) break;; esac; sleep 5; done
+python3 core-upgrade/smoke.py http://127.0.0.1:8080 <new version>
+python3 core-upgrade/rank_smoke.py http://127.0.0.1:8080
+```
+
+**Rollback.**
+
+```bash
+docker compose stop agent
+docker run --rm --user root -v $HOME_VOL:/h $IMG:$OLD sh -euc \
+  "cd /h/.local/share/goldilocks && mv assets assets-failed && mv assets-$OLD assets"
+docker run --rm --user root -v ${VENV_VOL}_$OLD:/from:ro -v $VENV_VOL:/to $IMG:$OLD \
+  sh -euc 'find /to -mindepth 1 -delete; cp -a /from/. /to/'
+docker tag $IMG:$OLD $IMG:latest
+docker compose up -d --no-deps agent
+```
+
+**Cleanup**, once the new version has run for a few days:
+`docker volume rm ${VENV_VOL}_$OLD`, remove `assets-$OLD`, and
+`docker image rm $IMG:$OLD`.
+
+## Verifying
+
+From the STFC network:
+
+```bash
+curl -sI https://workbench.goldilocks.ac.uk/ | head -1     # HTTP/1.1 200 OK
+curl -s https://workbench.goldilocks.ac.uk/capabilities | python3 -c 'import json,sys; print(json.load(sys.stdin)["core_version"])'
+curl -s https://workbench.goldilocks.ac.uk/api/projects
+# {"detail":"Not available in the shared deployment (no account system)."}
+curl -s -X POST https://workbench.goldilocks.ac.uk/api/mlip/singlepoint \
+  -H 'content-type: application/json' -d '{"structure_content":"x","structure_name":"x.cif"}'
+# {"detail":"MLIP Playground is available in the local version only."}
+python3 deploy/stfc-cloud/core-upgrade/smoke.py https://workbench.goldilocks.ac.uk <core version>
+```
+
+## Concurrency: Ollama slots
+
+The `ollama` service sets `OLLAMA_NUM_PARALLEL: "4"` and
+`OLLAMA_CONTEXT_LENGTH: "65536"` (2026-11-09, #86). The aim is to serve four
+chats at once instead of queuing them. The trade-off, a choice made instead
+of moving to vLLM (#68), is that 4 x 65536 tokens of KV cache cost what the
+old single 262144-token slot did, about 16 GB.
+
+**Measured on the VM on 2026-11-10: it has no effect yet.** Ollama
+`ollama/ollama:latest` as pulled there reports 0.34.4.
+
+| Chats at once | Last finished, 1 slot | Last finished, after the switch | Each chat while decoding |
+|---|---|---|---|
+| 1 | 10.1 s | 9.5 s | about 51 tok/s |
+| 2 | 19.2 s | 19.1 s | about 51 tok/s |
+| 4 | 39.2 s | 38.6 s | about 51 tok/s |
+| 8 | 80.7 s | 77.0 s | about 51 tok/s |
+
+What the numbers mean:
+
+- **Chats still run one after another.** Time grows linearly with the number
+  of chats, and each decodes at single-chat speed.
+- **Every request used one slot.** The log shows `slot id 0` for every
+  request.
+- **Only the context shrank.** GPU memory fell from 35.9 GB to 23.4 GB: one
+  slot with a 65536-token context.
+
+On a Mac, Ollama 0.40.15 did open four slots for this model. The next step is
+a newer Ollama image on the VM, measured again with the commands below.
+
+**Measuring.** `ollama_concurrency_bench.py` sends 1, 2, 4 and 8 chats at once,
+each with the agent's system prompt and about 4k tokens of attached
+structure. It prints when the last one finished, the aggregate token rate,
+and each chat's rate while decoding. It imports the agent's system prompt, so
+run it in the current `agent` container. The image's system `python` has none
+of the agent's packages, hence `uv run --no-sync`.
+
+```bash
+cd ~/goldilocks-agent/deploy/stfc-cloud
+docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-bench-before.txt
+# change the ollama service (settings, or `docker compose pull ollama` for a newer image), then
+# recreate only Ollama; chat is down while the model reloads (10-55 s)
+docker compose up -d --no-deps ollama
+docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-bench-after.txt
+docker compose logs ollama | grep -E "n_slots|slot id" | tail -4    # slot ids 0-3 when parallel works
+nvidia-smi --query-gpu=memory.used --format=csv
+```
+
+Parallel slots are working when the 2- and 4-chat "last finished" times drop
+well below the 1-chat time times the number of chats.
+
+**Roll back.** Delete the two `OLLAMA_*` lines and run
+`docker compose up -d --no-deps ollama`. That restores one slot with the
+model's full context.
 
 ## vLLM side by side (stfc/goldilocks-agent#68)
 
@@ -228,14 +344,6 @@ The cutover is not part of this trial. When it happens, the agent gets
 `GOLDILOCKS_AGENT_MODEL=hosted_vllm/qwen3.8-27b` and
 `VLLM_API_BASE=http://vllm:8000/v1`. `resolve_model()` already gives that model
 qwen's non-thinking sampling.
-
-## Redeploying
-
-```bash
-cd deploy/stfc-cloud
-git -C ../.. pull
-docker compose up -d --build
-```
 
 ## Memory limit
 
