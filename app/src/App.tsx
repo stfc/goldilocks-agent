@@ -9517,7 +9517,10 @@ export default function App() {
                             <div className="message-content">
                               <DftReviewCard
                                 review={message.review}
-                                onOpen={() => activateTool(getToolById("dft-workbench"))}
+                                // The full page: every card side by side. The side
+                                // panel is usually open already (dft_open_structure
+                                // opened it), so only opening that changed nothing.
+                                onOpen={() => openToolFullPage(getToolById("dft-workbench"))}
                               />
                             </div>
                           </div>

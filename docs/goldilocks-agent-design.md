@@ -1387,7 +1387,7 @@ SSE 事件（如 `"Calculating k-points…"`），`goldilocks-web/src/App.jsx`
 - 每次 `dft_review` 之后，在聊天记录里插一张紧凑卡片：
   - 6–8 个关键值（泛函、赝势、截断能、k 网格、占据方式、自旋；有 DFT+U 或 vdW 时也列出）；
   - 每项的来源，用 Workbench 自己的叫法；
-  - 阻塞项、警告数，以及一个 "Open in DFT Workbench" 按钮。
+  - 阻塞项、警告数，以及一个 "Open in DFT Workbench" 按钮：打开全页的 DFT Workbench，所有卡片并排显示。按钮原来只打开侧边面板，而面板通常已经被 `dft_open_structure` 打开，点了没反应（2026-11-10，Junwen 定为跳全页）。
 - 数值取自 `dft_review` 的结果（`reviewForModel`），不经模型。卡片随对话保存，刷新后从历史重建。
 - 代码在 `app/src/dftReview.ts` 和 `app/src/components/DftReviewCard.tsx`。
 - 起初的计划是让 core 导出完整的记录组件（goldilocks-core#262）嵌进聊天，后来放弃了。那套组件是给宽面板设计的：25 条以上的记录，每条带来源、引用和模型证据。放进聊天又长又重，还和旁边的面板重复。core#262 已关闭。
