@@ -227,6 +227,18 @@ def system_message(experience_level: str | None) -> dict:
     return {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{pitch}"}
 
 
+def tool_status(name: str) -> dict:
+    """The chat's one status line for a tool call (design doc 12.3), sent
+    while that call runs, never its args or result. A typed dict: `server.py`
+    turns it into an SSE `event: tool_status` frame, and it never enters
+    `content`, so never the checkpointer. `tool` is for the frontend to map to
+    a UI Tool; `label` is only for display. Sent per call, when it starts
+    (#19): `call_tool` before a server-dispatched call runs (after any
+    confirmation), `server._stream_reply` before a client-executed hand-off.
+    """
+    return {"type": "tool_status", "tool": name, "label": f"Calling {name}..."}
+
+
 def _repair_orphaned_tool_calls(messages: list[dict]) -> list[dict]:
     """Patch over a real gap in `call_tool`'s confirmation interrupt (2026-09-16
     incident): an assistant message with `tool_calls` only reaches the
@@ -347,18 +359,6 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
         }
         for slot in tool_calls_acc.values()
     ]
-    # design doc 12.3: chat only narrates that a tool is running, one line,
-    # never the raw args/results -- same shape as the old webapp's
-    # `tool_status` SSE event ("Calculating k-points..."). A typed dict, not
-    # plain text -- `server.py` turns this into a real SSE `event:
-    # tool_status` frame for the frontend's existing (until now unwired)
-    # status-line handler, and it never lands in `content` below, so it
-    # never enters the checkpointer's persisted history either.
-    for call in tool_calls:
-        name = call["function"]["name"]
-        # `tool` (the raw name) is for the frontend to map to a UI Tool id --
-        # `label` is just for display, parsing it back out would be fragile.
-        writer({"type": "tool_status", "tool": name, "label": f"Calling {name}..."})
     return {
         "messages": [
             {"role": "assistant", "content": content, "tool_calls": tool_calls}
@@ -479,6 +479,9 @@ async def call_tool(state: MessagesState) -> dict:
     if fn is None:
         output = {"error": f"Unknown tool: {name!r}"}
     else:
+        # Past any confirmation interrupt, so this runs once per call even
+        # though LangGraph replays the node on resume.
+        writer(tool_status(name))
         try:
             output = await fn(**call["args"])
         except Exception as exc:  # noqa: BLE001

@@ -8,6 +8,7 @@ about getting a real model reply (that's test_graph.py's job).
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -23,12 +24,17 @@ def _make_client(tmp_path, monkeypatch):
 
 
 def _stub_litellm(
-    monkeypatch, tool: str = "dft_review", arguments: str = "{}"
+    monkeypatch,
+    tool: str = "dft_review",
+    arguments: str = "{}",
+    batch: list[tuple[str, str]] | None = None,
 ) -> list[dict]:
-    """Replaces `litellm.acompletion` with a stream that calls `tool` on the
-    first call and replies "Reviewed." after that. Returns the list of calls
-    it gets, each as its `model`, `messages` and `tools` arguments."""
+    """Replaces `litellm.acompletion` with a stream that calls `tool` (or
+    every `(name, arguments)` in `batch`, in one turn) on the first call and
+    replies "Reviewed." after that. Returns the list of calls it gets, each
+    as its `model`, `messages` and `tools` arguments."""
     calls: list[dict] = []
+    first_turn = batch or [(tool, arguments)]
 
     def chunk(content=None, tool_calls=None):
         delta = SimpleNamespace(content=content, tool_calls=tool_calls)
@@ -37,12 +43,18 @@ def _stub_litellm(
     async def acompletion(*, model, messages, tools, **_):
         calls.append({"model": model, "messages": messages, "tools": tools})
         if len(calls) == 1:
-            call = SimpleNamespace(
-                index=0,
-                id="call-1",
-                function=SimpleNamespace(name=tool, arguments=arguments),
-            )
-            chunks = [chunk(tool_calls=[call])]
+            chunks = [
+                chunk(
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=i,
+                            id=f"call-{i + 1}",
+                            function=SimpleNamespace(name=name, arguments=args),
+                        )
+                    ]
+                )
+                for i, (name, args) in enumerate(first_turn)
+            ]
         else:
             chunks = [chunk(content="Reviewed.")]
 
@@ -89,6 +101,76 @@ def _system_prompts(calls: list[dict]) -> list[str]:
         assert call["messages"][0]["role"] == "system"
         assert all(m["role"] != "system" for m in call["messages"][1:])
     return [call["messages"][0]["content"] for call in calls]
+
+
+def _events(stream: str) -> list[tuple[str, dict | str]]:
+    """The SSE frames of one /api/chat response, as (event, data) pairs;
+    untyped text deltas come back as ("text", ...)."""
+    frames = []
+    for block in stream.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        if lines.get("data") in (None, "[DONE]"):
+            continue
+        frames.append((lines.get("event", "text"), json.loads(lines["data"])))
+    return frames
+
+
+def test_each_tool_call_gets_its_status_when_it_starts(tmp_path, monkeypatch) -> None:
+    """#19: one turn calling a server-dispatched tool and two client-executed
+    ones shows one status line per call, each right before that call runs
+    (not the whole batch up front, which left "Calling dft_review..." on
+    screen while the structure was still opening). Each server tool runs
+    once across the resumes (c7bfc57's duplicate-execution fix)."""
+    runs = []
+
+    async def find_in_databases(**kwargs):
+        runs.append(kwargs)
+        return {"groups": []}
+
+    from goldilocks_agent.tools import TOOL_DISPATCH
+
+    monkeypatch.setitem(TOOL_DISPATCH, "find_in_databases", find_in_databases)
+    with _make_client(tmp_path, monkeypatch) as client:
+        _stub_litellm(
+            monkeypatch,
+            batch=[
+                ("find_in_databases", '{"formula": "Si"}'),
+                ("dft_open_structure", '{"file_name": "Si.cif"}'),
+                ("dft_review", "{}"),
+            ],
+        )
+        message = {"role": "user", "content": "Find Si, open it and review it."}
+        first = _events(
+            client.post("/api/chat", json={"thread_id": "t", "message": message}).text
+        )
+        second = _events(
+            client.post(
+                "/api/chat", json={"thread_id": "t", "resume": {"result": {}}}
+            ).text
+        )
+        third = _events(
+            client.post(
+                "/api/chat", json={"thread_id": "t", "resume": {"result": {}}}
+            ).text
+        )
+
+    def shape(frames):
+        return [(event, data.get("tool")) for event, data in frames if event != "text"]
+
+    assert shape(first) == [
+        ("tool_status", "find_in_databases"),
+        ("tool_result", "find_in_databases"),
+        ("tool_status", "dft_open_structure"),
+        ("client_tool_call", "dft_open_structure"),
+    ]
+    assert shape(second) == [
+        ("tool_result", "dft_open_structure"),
+        ("tool_status", "dft_review"),
+        ("client_tool_call", "dft_review"),
+    ]
+    assert shape(third) == [("tool_result", "dft_review")]
+    assert ("text", "Reviewed.") in third
+    assert runs == [{"formula": "Si"}]
 
 
 def test_local_build_resume_runs_on_the_selected_model(tmp_path, monkeypatch) -> None:
