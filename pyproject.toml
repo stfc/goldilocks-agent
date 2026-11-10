@@ -74,6 +74,10 @@ sequence = [
 help = "Lint, type-check, test and build the agent frontend"
 shell = "cd app && npm run lint && npm run typecheck && npm run test && npm run build"
 
+[tool.poe.tasks.e2e-web]
+help = "Run app/e2e against a local staging agent set up like the STFC VM's (web build, qwen on local Ollama, core from PyPI); needs Ollama and ports 8096/8000"
+cmd = "python scripts/e2e_web.py"
+
 [tool.poe.tasks.bump-core]
 help = "Pin a goldilocks-core release tag everywhere: rebuild the vendored Workbench, rewrite core_pin.json (needs Node >= 24)"
 cmd = "python scripts/bump_core.py"
