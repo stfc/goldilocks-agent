@@ -7,8 +7,8 @@ OpenAI-style messages, streamed through litellm) and checks whether that step
 is the expected one: which tool, with valid arguments, or no tool. Free-form
 answers are not judged, except that an answer comes in the question's language,
 the image case names a number, a summary of tool results states no parameter
-values of its own, and the open-goal cases (G) name the task to switch or the
-task the review actually ran.
+values of its own and doesn't repeat the review card, and the open-goal cases
+(G) name the task to switch or the task the review actually ran.
 
 Tool results in the multi-step cases are built from goldilocks-core 0.3.0's
 recorded responses in app/src/__fixtures__/core, trimmed the way
@@ -477,12 +477,31 @@ def expect_values_from(messages: list[dict]) -> Check:
     return check
 
 
+# A Markdown table's header separator row, e.g. "|---|:---:|".
+_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", re.M)
+
+
+def expect_no_card_repeat(max_values: int = 3) -> Check:
+    """The answer to a review doesn't repeat the review card above it (#74):
+    no Markdown table, and at most ``max_values`` parameter values, enough to
+    explain core's warnings, which name values themselves. On 2026-11-10
+    qwen restated the card as a table on the web, and as a list naming 4-5
+    values in this eval; asked not to, it named 2-3, in its warnings."""
+
+    def check(step: Step) -> str | None:
+        if _TABLE_RULE.search(step.content):
+            return "repeats the card as a table"
+        named = values_mentioned(step.content)
+        return f"repeats the card ({named} values)" if named > max_values else None
+
+    return check
+
+
 def values_mentioned(content: str) -> int:
     """How many parameter values (numbers with units, k-meshes) an answer
     names. #74 shows a review's values in a card; the report prints this for
-    M2 to show how much of the card the answer repeats (not a pass/fail
-    check: on 2026-11-09 asking the model not to repeat them made answers
-    longer and still named them)."""
+    M2 to show how much of the card the answer repeats;
+    ``expect_no_card_repeat`` fails an answer that names more than three."""
     return len(
         set(_UNIT_VALUE.findall(content))
         | {m.group(0) for m in _MESH.finditer(content)}
@@ -721,7 +740,11 @@ def cases() -> list[Case]:
             "M2",
             "multi",
             review_turn,
-            expect_all(expect_answer(), expect_values_from(review_turn)),
+            expect_all(
+                expect_answer(),
+                expect_values_from(review_turn),
+                expect_no_card_repeat(),
+            ),
         ),
         Case(
             "M3",
@@ -741,7 +764,11 @@ def cases() -> list[Case]:
             "M4",
             "multi",
             blocked_turn,
-            expect_all(expect_answer(), expect_values_from(blocked_turn)),
+            expect_all(
+                expect_answer(),
+                expect_values_from(blocked_turn),
+                expect_no_card_repeat(),
+            ),
         ),
         Case(
             "M5",
