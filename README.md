@@ -227,8 +227,9 @@ HTTP 500, goes to goldilocks-agent's own log prefixed `[goldilocks-core]`
 **Magnetism ML tier (mMACE)** -- goldilocks-core's ML `is_magnetic`
 classification and magnetic-ordering ranking. Since goldilocks-core v0.3.0
 it needs no setup of its own, in either mode: `mace-torch` is an ordinary
-core dependency, and `goldilocks assets install workbench`, which the
-auto-start runs before serving, installs the model's backbone with core's
+core dependency, and `goldilocks assets install all` (the profile was
+`workbench` before core v0.3.1), which the auto-start runs before serving,
+installs the model's backbone with core's
 other models. Open DFT Workbench and load a magnetic structure (e.g.
 goldilocks-core's own `src/goldilocks_core/examples/structures/Fe_bcc.cif`)
 -- the Analysis card's "is magnetic" caption reads "Goldilocks-ML

@@ -118,12 +118,19 @@ CORE_SERVER_BASE_URL = "http://127.0.0.1:8000"
 # at runtime anyway (`coreClient.ts`'s own comment: it's a codegen input
 # for generating the TS client's types, a dev-time step against core's own
 # dev server, not something the running app calls).
+#
+# The `/magnetic-orderings/rank` pair is goldilocks-core 0.3.1's ranking job
+# (goldilocks-core#261): POST submits one (202 with its queue position), GET
+# polls it, DELETE cancels it. `POST /magnetic-orderings` only lists from
+# 0.3.1 on, so these must ship with that core.
 CORE_PROXIED_PATHS = (
     "/capabilities",
     "/explain",
     "/run",
     "/inspect",
     "/magnetic-orderings",
+    "/magnetic-orderings/rank",
+    "/magnetic-orderings/rank/{job_id}",
     "/health",
     "/ready",
 )
@@ -132,7 +139,7 @@ CORE_PROXIED_PATHS = (
 # checkout): `{"status": "ok"}` the instant the FastAPI app itself is
 # serving -- unlike `/ready`, it doesn't wait on ML asset installs, and by
 # construction of both spawn commands (`goldilocks assets install
-# workbench` runs to completion *before* `goldilocks serve http` starts
+# all` runs to completion *before* `goldilocks serve http` starts
 # listening at all, see `_spawn_command()`), assets are always already
 # installed by the time this answers. Cheap enough to use both to detect an
 # already-running instance before spawning, and to poll a freshly spawned
@@ -141,7 +148,7 @@ _HEALTH_PATH = "/health"
 _HEALTH_TIMEOUT = 2.0
 # A start with core's environment and assets in place answers in seconds.
 # The first start -- ever, or after a core upgrade -- first syncs core's
-# environment and runs `goldilocks assets install workbench`, which fetches
+# environment and runs `goldilocks assets install all`, which fetches
 # whatever models and pseudopotential tables are missing or changed from
 # PSDI: at goldilocks-core v0.3.0 the PseudoDojo tables (~60 MB) took 13
 # minutes and the mMACE backbone (84 MB) up to about 7 on slow links. The
@@ -209,7 +216,7 @@ def _spawn_command(core_path: str | None) -> list[str]:
     PyPI mode (`core_path` is ``None``): `uvx --from <CORE_PYPI_REQUIREMENT>
     goldilocks serve http --host 127.0.0.1 --port 8000` -- verified live
     2026-09-24 against the real published package, no checkout anywhere on
-    disk -- preceded by the same `goldilocks assets install workbench` that
+    disk -- preceded by the same `goldilocks assets install all` that
     `poe serve` runs: the Workbench sends `fetch_missing: false`, so without
     it a machine that never installed core's assets gets HTTP 424
     (`asset_not_installed`) from every `/explain`. `exec` hands the shell's
@@ -237,7 +244,10 @@ def _spawn_command(core_path: str | None) -> list[str]:
     return [
         "sh",
         "-c",
-        f"{uvx} assets install workbench && "
+        # The profile is `all` from core 0.3.1 on (core#277 renamed it from
+        # `workbench`, no alias); it prints `id@version: installed` per asset,
+        # which `ensure_running`'s status line picks up during a first start.
+        f"{uvx} assets install all && "
         f"exec {uvx} serve http --host 127.0.0.1 --port 8000",
     ]
 

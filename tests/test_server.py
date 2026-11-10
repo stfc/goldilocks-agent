@@ -483,16 +483,25 @@ def test_core_proxy_forwards_every_registered_path(tmp_path, monkeypatch) -> Non
 
     monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
 
+    job = "0123456789abcdef0123456789abcdef"
     with _make_client(tmp_path, monkeypatch) as client:
         for path in core_server.CORE_PROXIED_PATHS:
-            response = client.get(path)
+            response = client.get(path.replace("{job_id}", job))
             assert response.status_code == 200
             assert response.json() == {"ok": True}
 
         response = client.post("/inspect", content=b'{"a": 1}')
         assert response.status_code == 200
+        # Cancelling a ranking job (goldilocks-core 0.3.1).
+        response = client.delete(f"/magnetic-orderings/rank/{job}")
+        assert response.status_code == 200
 
     assert ("GET", f"{core_server.CORE_SERVER_BASE_URL}/capabilities", b"") in calls
+    assert (
+        "DELETE",
+        f"{core_server.CORE_SERVER_BASE_URL}/magnetic-orderings/rank/{job}",
+        b"",
+    ) in calls
     assert (
         "POST",
         f"{core_server.CORE_SERVER_BASE_URL}/inspect",

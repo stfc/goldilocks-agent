@@ -707,7 +707,8 @@ for _core_path in core_server.CORE_PROXIED_PATHS:
     app.add_api_route(
         _core_path,
         _proxy_to_core,
-        methods=["GET", "POST"],
+        # DELETE cancels a ranking job (/magnetic-orderings/rank/{job_id}).
+        methods=["GET", "POST", "DELETE"],
         name=f"proxy_to_core{_core_path.replace('/', '_').replace('-', '_')}",
     )
 

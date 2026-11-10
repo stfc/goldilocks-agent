@@ -12,8 +12,10 @@ import {
   currentExplain,
   currentPreview,
   findingsOf,
+  saveArchiveToBrowser,
 } from "goldilocks-workbench";
 import type {
+  ArchiveDownload,
   BlockingFinding,
   CalculationDraft,
   PipelineOutcome,
@@ -26,7 +28,6 @@ import type { ChatStructure } from "./utils/structureFiles";
 // The goldilocks-workbench types its public surface uses without exporting.
 type CoreFailure = WorkspaceFailure["failure"];
 type ExplainResult = NonNullable<WorkspaceSnapshot["reviewed"]>;
-type ArchiveDownload = NonNullable<ReturnType<typeof currentArchive>>;
 type StructureInspection = NonNullable<WorkspaceSnapshot["inspection"]>;
 
 // `{result}` or `{error}` -- the exact shape graph.py's second `interrupt()`
@@ -343,25 +344,11 @@ export function keepBundle(workspace: Workspace): string | null {
   return id;
 }
 
-// The browser's own save of `archive` -- goldilocks-workbench's
-// `saveArchiveToBrowser`, which it doesn't export.
-function saveToBrowser(archive: ArchiveDownload): void {
-  const url = URL.createObjectURL(archive.blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = archive.filename;
-  anchor.hidden = true;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
 // A Download card's click: saves the archive kept under `id`, or returns
 // why there's none for the card to show.
 export function saveBundle(
   id: string | undefined,
-  save: (archive: ArchiveDownload) => void = saveToBrowser,
+  save: (archive: ArchiveDownload) => void = saveArchiveToBrowser,
 ): string | null {
   const archive = id === undefined ? undefined : bundles.get(id);
   if (archive === undefined) {

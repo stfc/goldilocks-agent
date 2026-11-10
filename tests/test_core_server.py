@@ -41,7 +41,7 @@ def test_pypi_mode_installs_assets_then_serves() -> None:
     assert core_server._spawn_command(None) == [
         "sh",
         "-c",
-        f"{uvx} assets install workbench && "
+        f"{uvx} assets install all && "
         f"exec {uvx} serve http --host 127.0.0.1 --port 8000",
     ]
 

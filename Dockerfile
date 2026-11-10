@@ -60,7 +60,12 @@ RUN apt-get update \
 # whose pymatgen actually shells out to it -- the path doesn't exist yet
 # at build time (that venv is synced lazily at container runtime, see
 # `git clone` below), only needs to by the time this script actually runs.
-RUN git clone --recursive --depth 1 https://github.com/msg-byu/enumlib.git /tmp/enumlib \
+# Pinned to the commit goldilocks-core's own image and CI build (core 0.3.1,
+# its ENUMLIB_COMMIT), so both images list orderings with the same code.
+ARG ENUMLIB_COMMIT=67217859c1cfe6e1d8cfe25b76a1d14a28c6030e
+RUN git clone --quiet https://github.com/msg-byu/enumlib.git /tmp/enumlib \
+    && git -C /tmp/enumlib checkout --quiet "$ENUMLIB_COMMIT" \
+    && git -C /tmp/enumlib submodule update --quiet --init --recursive \
     && make -C /tmp/enumlib/symlib/src F90=gfortran \
     && make -C /tmp/enumlib/src F90=gfortran \
     && make -C /tmp/enumlib/src F90=gfortran enum.x \
