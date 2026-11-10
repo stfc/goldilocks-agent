@@ -1620,6 +1620,30 @@ function DftBundleCard({ filename, onDownload }: { filename: string; onDownload:
   );
 }
 
+// One DFT input bundle in the Files panel's Generated Files tab: the same
+// save as the chat's Download card (`saveBundle`), including its note when
+// the archive is no longer held after a reload.
+function GeneratedBundleRow({ filename, onDownload }: { filename: string; onDownload: () => string | null }) {
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="files-row">
+      <span className="files-row-icon" aria-hidden>📦</span>
+      <div className="files-row-copy">
+        <div className="files-row-title">
+          <span className="files-row-name">{filename}</span>
+          <span className="files-row-format">DFT INPUTS</span>
+        </div>
+        {note && <div className="confirmation-card-note" role="status">{note}</div>}
+      </div>
+      <div className="files-row-actions">
+        <button className="secondary-btn compact" onClick={() => setNote(onDownload())}>
+          Download
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // The real embedded goldilocks-core Workbench tree -- shared verbatim by
 // both DFT Workbench's full-page detail view (unmodified) and its inline
 // side panel (wrapped in CoreWorkbenchTabs below). Always the same
@@ -2226,6 +2250,13 @@ export default function App() {
 
   // Files > Uploaded: every file/image ever uploaded this session, structure
   // or not -- unlike chatStructures, this doesn't filter by WEAS support.
+  // The DFT input bundles this chat generated, newest first: its Download
+  // cards, live or rebuilt from history after a reload.
+  const generatedFiles = useMemo(
+    () => messages.filter((message) => message.role === "dft-bundle-ready").reverse(),
+    [messages],
+  );
+
   const uploadedFiles = useMemo(() => {
     const files = sessionFiles.map((f) => ({
       ...f,
@@ -6848,6 +6879,15 @@ export default function App() {
           flex-shrink: 0;
         }
 
+        .files-row-icon {
+          width: 28px;
+          height: 28px;
+          display: grid;
+          place-items: center;
+          font-size: 18px;
+          flex-shrink: 0;
+        }
+
         .files-row-copy {
           min-width: 0;
           flex: 1;
@@ -9600,9 +9640,9 @@ export default function App() {
                             }}
                           >
                             Files
-                            {(sessionFiles.length + sessionImages.length) > 0 && (
+                            {(sessionFiles.length + sessionImages.length + generatedFiles.length) > 0 && (
                               <span style={{ background: "var(--accent)", color: "#fff", borderRadius: 8, padding: "1px 6px", fontSize: 10 }}>
-                                {sessionFiles.length + sessionImages.length}
+                                {sessionFiles.length + sessionImages.length + generatedFiles.length}
                               </span>
                             )}
                           </button>
@@ -9877,12 +9917,22 @@ export default function App() {
                                     </div>
                                   </div>
                                 )
+                              ) : generatedFiles.length > 0 ? (
+                                <div className="files-list">
+                                  {generatedFiles.map((file, index) => (
+                                    <GeneratedBundleRow
+                                      key={`${file.filename}-${index}`}
+                                      filename={file.filename}
+                                      onDownload={() => saveBundle(file.bundleId ?? undefined)}
+                                    />
+                                  ))}
+                                </div>
                               ) : (
                                 <div className="viewer-empty-state" style={{ marginBottom: 0 }}>
                                   <div className="viewer-empty-icon">⚙️</div>
                                   <div className="viewer-empty-label">No generated files yet</div>
                                   <div className="viewer-empty-hint">
-                                    Once Goldilocks can generate files for you — like DFT input decks — they will show up here.
+                                    DFT input bundles Goldilocks generates in this chat show up here.
                                   </div>
                                 </div>
                               )}
