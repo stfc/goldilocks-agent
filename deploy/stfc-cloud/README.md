@@ -205,27 +205,33 @@ chats at once instead of queuing them. The trade-off, a choice made instead
 of moving to vLLM (#68), is that 4 x 65536 tokens of KV cache cost what the
 old single 262144-token slot did, about 16 GB.
 
-**Measured on the VM on 2026-11-10: it has no effect yet.** Ollama
-`ollama/ollama:latest` as pulled there reports 0.34.4.
+**Measured on the VM on 2026-11-10.** Ollama 0.34.4 ignored the setting:
+every request used slot 0, and chats queued as before. After
+`docker compose pull ollama` brought 0.40.16, four slots serve four chats at
+once.
 
-| Chats at once | Last finished, 1 slot | Last finished, after the switch | Each chat while decoding |
-|---|---|---|---|
-| 1 | 10.1 s | 9.5 s | about 51 tok/s |
-| 2 | 19.2 s | 19.1 s | about 51 tok/s |
-| 4 | 39.2 s | 38.6 s | about 51 tok/s |
-| 8 | 80.7 s | 77.0 s | about 51 tok/s |
+| Chats at once | Last finished, 0.34.4 | Last finished, 0.40.16 | Aggregate, 0.34.4 → 0.40.16 | Each chat while decoding, 0.40.16 |
+|---|---|---|---|---|
+| 1 | 9.3 s | 9.1 s | 32 → 33 tok/s | 54 tok/s |
+| 2 | 18.9 s | 13.5 s | 32 → 45 tok/s | 36-50 tok/s |
+| 4 | 38.5 s | 23.7 s | 31 → 51 tok/s | 17-38 tok/s |
+| 8 | 76.5 s | 49.0 s | 31 → 49 tok/s | 15-37 tok/s |
 
 What the numbers mean:
 
-- **Chats still run one after another.** Time grows linearly with the number
-  of chats, and each decodes at single-chat speed.
-- **Every request used one slot.** The log shows `slot id 0` for every
-  request.
-- **Only the context shrank.** GPU memory fell from 35.9 GB to 23.4 GB: one
-  slot with a 65536-token context.
+- **One chat is as fast as before.** With 0.34.4 every chat decoded at about
+  54 tok/s, but one at a time.
+- **Concurrent chats share the GPU instead of queuing.** The last of four
+  finishes in 24 s instead of 39 s. Each one streams more slowly while the
+  others decode.
+- **Four slots are about what the GPU gives.** The aggregate rate levels off
+  at about 50 tok/s for four and for eight chats. More slots would slow each
+  chat further without finishing a burst sooner.
+- **GPU memory is about what one 262144-token slot took.** 37.8 of 80 GB, the
+  model 100% on the GPU (`ollama ps`).
 
-On a Mac, Ollama 0.40.15 did open four slots for this model. The next step is
-a newer Ollama image on the VM, measured again with the commands below.
+The image is still `ollama/ollama:latest`, so a later `docker compose pull
+ollama` can bring a different version. Measure again after each pull.
 
 **Measuring.** `ollama_concurrency_bench.py` sends 1, 2, 4 and 8 chats at once,
 each with the agent's system prompt and about 4k tokens of attached
@@ -241,7 +247,8 @@ docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_benc
 # recreate only Ollama; chat is down while the model reloads (10-55 s)
 docker compose up -d --no-deps ollama
 docker compose exec -T agent uv run --no-sync python - < ollama_concurrency_bench.py | tee ~/ollama-bench-after.txt
-docker compose logs ollama | grep -E "n_slots|slot id" | tail -4    # slot ids 0-3 when parallel works
+docker compose exec ollama ollama --version
+docker compose logs ollama | grep -oE "slot +release: id +[0-9]+" | sed -E "s/ +/ /g" | sort | uniq -c    # requests per slot; ids 0-3 when parallel works
 nvidia-smi --query-gpu=memory.used --format=csv
 ```
 
