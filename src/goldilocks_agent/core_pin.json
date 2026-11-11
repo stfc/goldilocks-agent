@@ -1,11 +1,11 @@
 {
   "repository": "https://github.com/stfc/goldilocks-core",
-  "tag": "v0.3.1",
-  "commit": "e66ee63bdff107cc29721d244e4322a550edac7f",
-  "version": "0.3.1",
+  "tag": "v0.3.2",
+  "commit": "35c385d1f2747d7ea8a3a50d8cfa506ba3b569aa",
+  "version": "0.3.2",
   "vocabulary_version": "5",
   "workbench": {
-    "tarball": "goldilocks-workbench-0.3.1.tgz",
-    "sha256": "4d67bf1ab31f9f9e4bb6d20060b420d8294e777a61bbd6a6f1c0964a814a78f4"
+    "tarball": "goldilocks-workbench-0.3.2.tgz",
+    "sha256": "c9732a5e79429106cf6ed8ee9cd5c4f354dde3de634629b927b42bebb7a6e514"
   }
 }
