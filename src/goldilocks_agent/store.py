@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TEXT NOT NULL,
     last_viewed_at TEXT
 );
+
+-- Shared deployment only: when each thread last had a chat request, so
+-- chat_retention.py can delete the ones left idle (design doc §19.2).
+CREATE TABLE IF NOT EXISTS chat_activity (
+    thread_id TEXT PRIMARY KEY,
+    last_seen TEXT NOT NULL
+);
 """
 
 
@@ -151,4 +158,38 @@ async def set_conversation_project(
 
 async def delete_conversation(db: aiosqlite.Connection, conversation_id: str) -> None:
     await db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    await db.commit()
+
+
+async def touch_chat_activity(db: aiosqlite.Connection, thread_id: str) -> None:
+    """Marks `thread_id` as used now."""
+    await db.execute(
+        "INSERT INTO chat_activity (thread_id, last_seen) VALUES (?, ?) "
+        "ON CONFLICT(thread_id) DO UPDATE SET last_seen = excluded.last_seen",
+        (thread_id, _now()),
+    )
+    await db.commit()
+
+
+async def record_chat_activity(
+    db: aiosqlite.Connection, last_seen: dict[str, str]
+) -> None:
+    """Adds a row per thread in `last_seen` (thread id -> ISO time) that has
+    none yet; threads already recorded keep theirs."""
+    await db.executemany(
+        "INSERT OR IGNORE INTO chat_activity (thread_id, last_seen) VALUES (?, ?)",
+        list(last_seen.items()),
+    )
+    await db.commit()
+
+
+async def chat_last_seen(db: aiosqlite.Connection) -> dict[str, datetime]:
+    """Every recorded thread's last use."""
+    cursor = await db.execute("SELECT thread_id, last_seen FROM chat_activity")
+    rows = await cursor.fetchall()
+    return {row[0]: datetime.fromisoformat(row[1]) for row in rows}
+
+
+async def forget_chat_activity(db: aiosqlite.Connection, thread_id: str) -> None:
+    await db.execute("DELETE FROM chat_activity WHERE thread_id = ?", (thread_id,))
     await db.commit()

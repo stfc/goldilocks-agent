@@ -29,6 +29,9 @@ services:
       # under real load, not guessing -- leave unset (no limit) until that
       # measurement happens, then set it here.
       # GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT: ""
+      # Chats idle this long are deleted, checkpoints and all
+      # (src/goldilocks_agent/chat_retention.py); 24 when unset.
+      # GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS: "24"
       # Optional -- uncomment/set to enable the matching feature:
       # ANTHROPIC_API_KEY:
       # OPENAI_API_KEY:

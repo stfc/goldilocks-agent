@@ -34,10 +34,11 @@ from langchain_core.messages import convert_to_openai_messages
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from goldilocks_agent import core_server, store
+from goldilocks_agent import chat_retention, core_server, store
 from goldilocks_agent.config import (
     ExperienceLevel,
     configured_providers,
+    read_chat_retention,
     read_experience_level,
     read_shared_deployment_enabled,
     write_credential,
@@ -76,7 +77,16 @@ async def lifespan(app: FastAPI):
     async with open_checkpointer() as checkpointer, store.open_store() as db:
         app.state.graph = build_graph(checkpointer)
         app.state.store = db
+        # The shared deployment keeps no chat longer than it's used
+        # (chat_retention.py); a local build keeps its user's chats.
+        retention = None
+        if read_shared_deployment_enabled():
+            retention = asyncio.create_task(
+                chat_retention.run(checkpointer, db, read_chat_retention())
+            )
         yield
+        if retention is not None:
+            retention.cancel()
     # Belt and suspenders alongside `core_server`'s own `atexit` hook (see
     # its docstring) -- covers the graceful-shutdown path explicitly too.
     core_server.shutdown()
@@ -312,6 +322,9 @@ async def _stream_reply(
 @app.post("/api/chat")
 async def chat(request: ChatRequest) -> StreamingResponse:
     _reject_if_over_chat_concurrency_limit()
+    if read_shared_deployment_enabled():
+        # Keeps the thread from being deleted as idle (chat_retention.py).
+        await store.touch_chat_activity(app.state.store, request.thread_id)
     if request.resume is not None:
         # Answering a pending confirmation card isn't a new conversation
         # turn from the sidebar's point of view -- nothing to (re)index.
