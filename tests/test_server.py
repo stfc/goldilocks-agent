@@ -421,8 +421,9 @@ def test_conversation_search_matches_titles_and_written_text_only(
     tmp_path, monkeypatch
 ) -> None:
     """The local sidebar search finds a chat by its title or by what the user
-    or the assistant wrote, ignoring case, but not by a tool result: those
-    hold structure files and JSON that would match nearly any query."""
+    or the assistant wrote, ignoring case, but not by a tool result or an
+    attached file's contents: those hold structure files and JSON that would
+    match nearly any query. A message's bubble text names its attachment."""
 
     async def find_in_databases(**kwargs):
         return {"groups": [{"formula": "Perovskite-in-a-tool-result"}]}
@@ -445,7 +446,12 @@ def test_conversation_search_matches_titles_and_written_text_only(
             "/api/chat",
             json={
                 "thread_id": "iron",
-                "message": {"role": "user", "content": "Find bcc iron"},
+                "message": {
+                    "role": "user",
+                    "content": "Find bcc iron\n\n[Attached file: frame.cif]\n"
+                    "```cif\ndata_zeolite\n```",
+                    "display": "Find bcc iron · 📎 frame.cif",
+                },
                 "title": "Magnetic Fe",
             },
         )
@@ -459,7 +465,48 @@ def test_conversation_search_matches_titles_and_written_text_only(
         assert search("magnetic fe") == ["iron"]
         assert search("reviewed") == ["iron", "silicon"]
         assert search("perovskite") == []
+        assert search("frame.cif") == ["iron"]
+        assert search("zeolite") == []
         assert search("   ") == []
+
+
+def test_a_messages_display_comes_back_on_reload_but_never_reaches_the_model(
+    tmp_path, monkeypatch
+) -> None:
+    """The bubble text a message is sent with (an attached file's name, not
+    its contents) is kept with it, so a reloaded chat shows it; the model
+    only ever gets the content."""
+
+    async def find_in_databases(**kwargs):
+        return {"groups": []}
+
+    from goldilocks_agent.tools import TOOL_DISPATCH
+
+    monkeypatch.setitem(TOOL_DISPATCH, "find_in_databases", find_in_databases)
+    content = "Find this.\n\n[Attached file: Si.cif]\n```cif\ndata_Si\n```"
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_litellm(monkeypatch, tool="find_in_databases")
+        client.post(
+            "/api/chat",
+            json={
+                "thread_id": "t",
+                "message": {
+                    "role": "user",
+                    "content": content,
+                    "display": "Find this. · 📎 Si.cif",
+                },
+            },
+        )
+        history = client.get("/api/chat/t").json()["messages"]
+
+    assert history[0] == {
+        "role": "user",
+        "content": content,
+        "display": "Find this. · 📎 Si.cif",
+    }
+    assert all("display" not in entry for entry in history[1:])
+    sent = [m for call in calls for m in call["messages"] if m["role"] == "user"]
+    assert sent == [{"role": "user", "content": content}] * len(calls)
 
 
 def test_conversation_search_404s_in_the_shared_deployment(

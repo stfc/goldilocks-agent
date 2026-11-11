@@ -215,16 +215,20 @@ function chatStructureOf(name: string, content: string, fenceLang = ""): ChatStr
   return { name, rawExt, ext: inferredExt || fencedExt || rawExt, content };
 }
 
+/** The text of a message's content: the string itself, or the text part of a
+ * multimodal parts array (which carries the attachments); empty otherwise. */
+export function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.find((part) => part?.type === "text")?.text ?? "";
+  return "";
+}
+
 /** The structure attachments of one user message's content (a string or a
  * multimodal parts array, whose text part carries the attachments), in
  * order. Recognized structure formats only; truncated attachments are left
  * out. */
 export function extractStructuresFromMessageContent(content: unknown): ChatStructure[] {
-  const text = typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.find((part) => part?.type === "text")?.text ?? ""
-      : "";
+  const text = contentText(content);
   const found: ChatStructure[] = [];
   for (const match of text.matchAll(ATTACHMENT_FENCE)) {
     const end = (match.index ?? 0) + match[0].length;
