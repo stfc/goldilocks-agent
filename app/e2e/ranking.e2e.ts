@@ -13,9 +13,8 @@ test("Run mMACE shows the job's progress, then a recommended ordering", async ({
   await openApp(page);
   await page.getByTitle("Expand all tools").click();
   await page.locator(".tools-overview-card", { hasText: "DFT Workbench" }).click();
-  // Wait until the Workbench has core's capabilities: before that, core's
-  // library drops an opened file without a word (openSource returns early).
-  await expect(page.getByText("No structure selected")).toBeVisible();
+  // No wait for core's capabilities: since core 0.3.2 a file opened before
+  // they arrive opens once they do (core#281).
   // The Workbench's own file button (its accessible name since core 0.3.1).
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
