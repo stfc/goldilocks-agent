@@ -1,0 +1,21 @@
+// What the web build's Settings and sidebar offer a visitor: where their chat
+// goes and how long it stays, and nothing they can't use -- no API key
+// fields, no AiiDA placeholder toggle, no history search. No model involved.
+import { expect, test } from "@playwright/test";
+import { openApp } from "./helpers";
+
+test("Settings says where a visitor's chat goes, with no keys, AiiDA toggle or search", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator(".sidebar .nav-row", { hasText: "Search" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByText("runs on STFC's server", { exact: false })).toBeVisible();
+  await expect(page.getByText("deleted 24 hours after your last message", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Get the local version" })).toHaveAttribute(
+    "href",
+    /github\.com\/stfc\/goldilocks-agent/,
+  );
+  await expect(page.getByText("never leave this machine", { exact: false })).toHaveCount(0);
+  await expect(page.locator(".credential-input")).toHaveCount(0);
+  await expect(page.getByText("AiiDA / HPC connection")).toHaveCount(0);
+});
