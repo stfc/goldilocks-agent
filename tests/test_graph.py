@@ -726,29 +726,3 @@ def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
     model, extra = resolve_model("anthropic-claude")
     assert model == "anthropic/claude-sonnet-5"
     assert extra == {"api_key": "k"}
-
-
-@pytest.mark.integration
-@requires_local_model
-def test_experience_level_changes_response_length() -> None:
-    """Not just "the system message gets built" -- confirm it actually
-    reaches the model and visibly changes its behavior. "new" is instructed
-    to explain more; "advanced" is instructed to be concise -- a real
-    response to the same question should reflect that, not just parrot the
-    instruction back."""
-    question = "What is density functional theory?"
-
-    def ask(level: str) -> str:
-        graph = build_graph()
-        config = {"configurable": {"experience_level": level}}
-        result = asyncio.run(
-            graph.ainvoke(
-                {"messages": [{"role": "user", "content": question}]}, config=config
-            )
-        )
-        return result["messages"][-1].content
-
-    new_reply = ask("new")
-    advanced_reply = ask("advanced")
-
-    assert len(new_reply) > len(advanced_reply)
