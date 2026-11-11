@@ -46,8 +46,9 @@ The key pair is `goldilocks-core` in OpenStack; password login is off.
 
 ## nginx
 
-`nginx-workbench.conf` is the enabled site, copied byte for byte from
-`/etc/nginx/sites-available/workbench` (linked from `sites-enabled`) on
+`nginx-workbench.conf` is the enabled site,
+`/etc/nginx/sites-available/workbench` on the VM (linked from
+`sites-enabled`). It was first copied from the VM byte for byte on
 2026-11-10. It:
 
 - proxies `/` to `127.0.0.1:8080`;
@@ -55,6 +56,11 @@ The key pair is `goldilocks-core` in OpenStack; password login is off.
   buffering so replies stream, with a 600 s timeout;
 - limits `/api/mlip/` and `/run` to 6 a minute per client IP (burst 3), with
   600 s timeouts;
+- limits submitting an mMACE ranking (`POST /magnetic-orderings/rank`) to 6 a
+  minute per client IP (burst 3), since core queues ranking jobs without a cap;
+  polling or cancelling a job isn't limited;
+- limits goldilocks-core's `/explain`, `/inspect` and `/magnetic-orderings` to
+  30 a minute per client IP (burst 20);
 - carries certbot's TLS lines and its port-80 redirect.
 
 The limits are per client IP. Everyone behind one NAT or VPN exit shares
