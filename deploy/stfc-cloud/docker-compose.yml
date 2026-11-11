@@ -40,7 +40,19 @@ services:
       # chat model never sees its tools, whatever this opt-in says. Keep it
       # (and both mlip_cli_venv lines below) commented out here.
       # GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
-      GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
+      # DFT Workbench's backend: goldilocks-core from PyPI, the release in
+      # core_pin.json, installed by `uvx` into uv's cache in goldilocks_home
+      # (README.md "Upgrading goldilocks-core"). Not a checkout since core
+      # 0.3.2 (design doc §19.8), so no GOLDILOCKS_CORE_PATH.
+      GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
+      # Which torch build `uvx` installs for core. PyPI's own Linux torch is
+      # a CUDA build, and on the CPU it ran a bcc Fe ranking about 9x slower
+      # than the CPU build (185 s vs 21 s, 2026-11-11). `cu130` with
+      # GOLDILOCKS_MMACE_DEVICE=cuda and a GPU reservation is the GPU route.
+      # The prewarm (README.md) must use the same value, or the live
+      # container finds no environment for it in the cache. uv calls the
+      # option experimental.
+      UV_TORCH_BACKEND: cpu
     ports:
       # Loopback only: nginx on the VM is the one way in. A port published
       # on all interfaces would bypass nginx, and Docker's port publishing
@@ -49,7 +61,6 @@ services:
     volumes:
       - goldilocks_home:/home/goldilocks
       # - mlip_cli_venv:/app/mlip-cli/.venv   # MLIP Playground, see above
-      - goldilocks_core_venv:/opt/goldilocks-core/.venv
     depends_on:
       - ollama
     restart: unless-stopped
@@ -177,6 +188,5 @@ services:
 volumes:
   goldilocks_home:
   # mlip_cli_venv:   # MLIP Playground, see the agent service's environment
-  goldilocks_core_venv:
   ollama_data:
   hf_cache:

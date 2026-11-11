@@ -33,29 +33,26 @@ services:
       # GEMINI_API_KEY:
       # MP_API_KEY:
       GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
-      # This image bakes in goldilocks-core's own *source* (Dockerfile,
-      # /opt/goldilocks-core, at the release in core_pin.json) as the default
-      # DFT Workbench backend -- checkout mode, so it runs exactly the pinned
-      # commit. Its deps (CPU torch et al.) are a lazy, first-open-of-the-Tool
-      # download into the goldilocks_core_venv volume below, and its models and
-      # pseudopotentials (mMACE's backbone included) go into goldilocks_home,
-      # same shape as MLIP Playground's own mlip_cli_venv.
-      GOLDILOCKS_CORE_PATH: /opt/goldilocks-core
-      # Developing goldilocks-core itself instead of using the baked-in
-      # checkout above? Point at your own -- this overrides the default
-      # (not "opts into checkout mode": that's already the default now) --
-      # mount it and uncomment both lines to match:
+      # DFT Workbench's backend is goldilocks-core from PyPI, the release in
+      # core_pin.json: `uvx` installs it on the Tool's first open, into uv's
+      # cache in goldilocks_home, with its models and pseudopotentials
+      # (mMACE's backbone included).
+      GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
+      # CPU torch for core: PyPI's own Linux torch is a CUDA build, a few GB
+      # bigger and much slower on the CPU (deploy/stfc-cloud/docker-compose.yml).
+      UV_TORCH_BACKEND: cpu
+      # Developing goldilocks-core itself? Run your own checkout instead
+      # (checkout mode): mount it and uncomment both lines to match. Its
+      # environment then lives in the checkout's own .venv.
       # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/getting-started.md
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - goldilocks_home:/home/goldilocks
       - mlip_cli_venv:/app/mlip-cli/.venv
-      - goldilocks_core_venv:/opt/goldilocks-core/.venv
       # - /path/to/your/goldilocks-core:/goldilocks-core
     restart: unless-stopped
 
 volumes:
   goldilocks_home:
   mlip_cli_venv:
-  goldilocks_core_venv:
