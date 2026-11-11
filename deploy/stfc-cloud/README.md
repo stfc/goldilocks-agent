@@ -250,8 +250,11 @@ ranking) runs on the A100, next to Ollama (2026-11-11):
 
 - `GOLDILOCKS_MMACE_DEVICE: cuda` tells core to use the GPU. Without a usable
   GPU, core falls back to the CPU and logs one warning at startup.
-- `UV_TORCH_BACKEND: cu130` makes `uvx` install a CUDA build of torch for
-  core.
+- `UV_TORCH_BACKEND: cu129` makes `uvx` install a CUDA 12 build of torch
+  for core. Not `cu130`: sphericart-torch's CUDA extension, which mace
+  loads on the GPU, is built for CUDA 12 and needs `libnvrtc.so.12`. With
+  CUDA 13's torch, mMACE failed on the GPU and `/explain` answered 500
+  (2026-11-11). The driver runs both.
 - The `agent` service reserves the same GPU as `ollama`.
 
 **What was measured.** The first measurements were on the A100 on 2026-11-10,
@@ -270,10 +273,22 @@ while it runs; a job's worker exits when it ends, freeing its memory. So on
 the GPU a ranking skips that start. The cost is one more resident process,
 two while a job runs, each holding a CUDA context and the model.
 
+On the A100 with core 0.3.3 and cu129 (2026-11-11), a bcc Fe ranking took 18 s
+and recommended fm. is_magnetic ran there too, and the two mMACE processes
+held about 0.6 and 0.8 GB of GPU memory. For a cell this small the GPU isn't
+faster than the CPU; it takes the work off the CPU and pays off for large
+cells (a 128-atom relaxation took 33 s on the GPU).
+
+**Check before switching to a new torch build.** The prewarm's smoke test runs
+core on the CPU, so it doesn't load the GPU path. Start core on the GPU in a
+throwaway container first, as on 2026-11-11 (`--gpus all`, the backend and
+`GOLDILOCKS_MMACE_DEVICE=cuda` as above, `goldilocks serve http` on :18000),
+and run `smoke.py` and `rank_smoke.py` against it.
+
 **Switching, either way.** Change the three settings in
 `docker-compose.yml`:
 
-- `UV_TORCH_BACKEND`: `cu130` for the GPU, `cpu` for the CPU;
+- `UV_TORCH_BACKEND`: `cu129` for the GPU, `cpu` for the CPU;
 - `GOLDILOCKS_MMACE_DEVICE`: present for the GPU, removed for the CPU;
 - the `agent` service's GPU reservation: present for the GPU, removed for the
   CPU.

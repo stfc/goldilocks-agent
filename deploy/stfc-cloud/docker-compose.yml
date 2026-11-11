@@ -56,13 +56,16 @@ services:
       GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
       # mMACE (is_magnetic and ordering ranking) on the VM's GPU, next to
       # Ollama (README.md "mMACE on the GPU"). UV_TORCH_BACKEND picks the
-      # torch build `uvx` installs for core: cu130 here. Don't run cuda's
+      # torch build `uvx` installs for core: cu129, CUDA 12, because
+      # sphericart-torch's CUDA extension is built for CUDA 12 and needs
+      # libnvrtc.so.12. With cu130 (CUDA 13) mMACE failed to load on the GPU
+      # and /explain answered 500 (2026-11-11). Don't run cuda's
       # build on the CPU: it ranked bcc Fe about 9x slower than the CPU
       # build (185 s vs 21 s, 2026-11-11), so going back to the CPU means
       # `cpu` here, no GOLDILOCKS_MMACE_DEVICE and no GPU reservation. The
       # prewarm reads this value from this file, so the live container finds
       # its environment in the cache. uv calls the option experimental.
-      UV_TORCH_BACKEND: cu130
+      UV_TORCH_BACKEND: cu129
       GOLDILOCKS_MMACE_DEVICE: cuda
     ports:
       # Loopback only: nginx on the VM is the one way in. A port published
