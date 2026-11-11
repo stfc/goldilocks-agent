@@ -338,6 +338,8 @@ const EXPERIENCE_OPTIONS = [
 // bit of state should die with the tab, not survive across visits the way
 // a single local user's own state should.
 const SHARED_DEPLOYMENT = import.meta.env.VITE_SHARED_DEPLOYMENT === "1";
+// Where the web build sends visitors for the local version.
+const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#installation";
 
 // `comingSoon: true` parks a Tool everywhere: hidden from the side-panel
 // picker, listed only in the full-page overview's "Coming soon" section,
@@ -633,7 +635,8 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
     settings_model_key_hint: "Stored locally on this machine only — a key is only sent to the provider it belongs to, never anywhere else.",
-    settings_model_key_unavailable_shared: "Not available in the web app — download the local version to use your own API key.",
+    settings_model_desc_shared: "On this website the model (Qwen3.8-27B) runs on STFC's server. Your messages and attached structures are sent there and deleted 24 hours after your last message, so please don't upload confidential data. To keep everything on your own machine, use the local version.",
+    settings_local_version_link: "Get the local version",
     settings_databases_heading: "Databases",
     settings_databases_desc: "Materials Project needs a free API key to search. Get one at materialsproject.org/api.",
     settings_compute_heading: "Compute",
@@ -725,7 +728,8 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
     settings_model_key_hint: "Stockée uniquement en local sur cette machine — une clé n'est envoyée qu'au fournisseur auquel elle appartient, jamais ailleurs.",
-    settings_model_key_unavailable_shared: "Non disponible dans l'application web — téléchargez la version locale pour utiliser votre propre clé API.",
+    settings_model_desc_shared: "Sur ce site, le modèle (Qwen3.8-27B) tourne sur le serveur du STFC. Vos messages et les structures jointes y sont envoyés et supprimés 24 heures après votre dernier message : merci de ne pas téléverser de données confidentielles. Pour tout garder sur votre propre machine, utilisez la version locale.",
+    settings_local_version_link: "Obtenir la version locale",
     settings_databases_heading: "Bases de données",
     settings_databases_desc: "Materials Project nécessite une clé API gratuite pour la recherche. Obtenez-en une sur materialsproject.org/api.",
     settings_compute_heading: "Calcul",
@@ -817,7 +821,8 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
     settings_model_key_hint: "Wird nur lokal auf diesem Rechner gespeichert — ein Schlüssel wird ausschließlich an den zugehörigen Anbieter gesendet, niemals anderswohin.",
-    settings_model_key_unavailable_shared: "In der Web-App nicht verfügbar — laden Sie die lokale Version herunter, um Ihren eigenen API-Schlüssel zu verwenden.",
+    settings_model_desc_shared: "Auf dieser Website läuft das Modell (Qwen3.8-27B) auf dem Server des STFC. Ihre Nachrichten und angehängten Strukturen werden dorthin gesendet und 24 Stunden nach Ihrer letzten Nachricht gelöscht; laden Sie daher bitte keine vertraulichen Daten hoch. Wenn alles auf Ihrem eigenen Rechner bleiben soll, verwenden Sie die lokale Version.",
+    settings_local_version_link: "Lokale Version herunterladen",
     settings_databases_heading: "Datenbanken",
     settings_databases_desc: "Materials Project benötigt einen kostenlosen API-Schlüssel für die Suche. Holen Sie sich einen unter materialsproject.org/api.",
     settings_compute_heading: "Rechenressourcen",
@@ -909,7 +914,8 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
     settings_model_key_hint: "仅保存在本机——密钥只会发送给其所属的服务商，绝不会发往其他任何地方。",
-    settings_model_key_unavailable_shared: "网页版不支持——如需使用自己的 API 密钥，请下载本地版。",
+    settings_model_desc_shared: "在本网站上，模型（Qwen3.8-27B）运行在 STFC 的服务器上。你的消息和附加的结构文件会发送到服务器，并在你最后一条消息 24 小时后删除，所以请不要上传保密数据。如果希望所有内容都只留在自己的电脑上，请使用本地版。",
+    settings_local_version_link: "获取本地版",
     settings_databases_heading: "数据库",
     settings_databases_desc: "搜索 Materials Project 需要一个免费的 API key，可以在 materialsproject.org/api 申请。",
     settings_compute_heading: "计算",
@@ -1001,7 +1007,8 @@ const TRANSLATIONS = {
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
     settings_model_key_hint: "Salvata solo localmente su questa macchina — una chiave viene inviata solo al fornitore a cui appartiene, mai altrove.",
-    settings_model_key_unavailable_shared: "Non disponibile nell'app web — scarica la versione locale per usare la tua chiave API.",
+    settings_model_desc_shared: "Su questo sito il modello (Qwen3.8-27B) gira sul server dello STFC. I tuoi messaggi e le strutture allegate vengono inviati lì ed eliminati 24 ore dopo il tuo ultimo messaggio, quindi non caricare dati riservati. Per tenere tutto sul tuo computer, usa la versione locale.",
+    settings_local_version_link: "Scarica la versione locale",
     settings_databases_heading: "Banche dati",
     settings_databases_desc: "Materials Project richiede una chiave API gratuita per la ricerca. Ottienine una su materialsproject.org/api.",
     settings_compute_heading: "Calcolo",
@@ -3169,28 +3176,6 @@ export default function App() {
   // (to peek at it, to test something) used to commit whatever was typed the
   // moment focus left, silently overwriting a real saved key with no undo.
   function renderCredentialRow(id, label) {
-    if (SHARED_DEPLOYMENT) {
-      // Server-side, /api/credentials rejects writes here too (server.py) --
-      // this deployment is LLM-locked to the fixed local model regardless of
-      // what's typed here (resolve_model()'s env-var override always wins).
-      // Shown disabled rather than hidden so visitors can see cloud models
-      // exist and that the web app isn't where you'd use your own key.
-      return (
-        <div className="credential-row" key={id}>
-          <span className="credential-label">{label}</span>
-          <input
-            type="password"
-            className="credential-input"
-            value=""
-            placeholder={t("settings_model_key_unavailable_shared")}
-            disabled
-          />
-          <button type="button" className="secondary-btn compact" disabled>
-            {t("save")}
-          </button>
-        </div>
-      );
-    }
     const canSave = Boolean(cloudApiKeys[id]?.trim()) && credentialStatus[id] !== "saving";
     return (
       <div className="credential-row" key={id}>
@@ -4829,19 +4814,20 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div className="workspace-no-backing" title="Parsing/plotting general DFT and MLIP output files (pw.out, OUTCAR, ...) isn't built yet -- only the phonon visualizer below is real.">
+            <div className="workspace-no-backing" title="Reading general DFT and MLIP output files (pw.out, OUTCAR, ...) is coming; for now this Tool plots phonon band structures.">
               <WarningIcon />
-              <span>Only phonon visualization is real so far</span>
+              <span>Phonon band structures for now; more analyses coming</span>
             </div>
           </div>
           <div className="workspace-stack">
             <div className="workspace-section">
               <div className="workspace-title">Phonon visualizer</div>
               <div className="workspace-hint">
-                Opens the same band-structure viewer MLIP Playground's Phonons
-                calculation links to, pre-loaded with a phonopy{" "}
-                <code>band.yaml</code> -- from this chat, or from anywhere
-                else (it doesn't have to come from a calculation run here).
+                Plots a phonon band structure from a phonopy{" "}
+                <code>band.yaml</code>, from this chat or from your own
+                calculation
+                {/* MLIP Playground is the local version's only (mlip_playground_offered()). */}
+                {SHARED_DEPLOYMENT ? "." : ", in the same viewer MLIP Playground's Phonons calculation opens."}
               </div>
               {phononResultsInChat.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
@@ -9091,6 +9077,15 @@ export default function App() {
           color: var(--subtle);
         }
 
+        .settings-link {
+          color: var(--accent);
+          font-size: 12px;
+          font-weight: 600;
+          text-decoration: none;
+        }
+        .settings-link:hover {
+          text-decoration: underline;
+        }
         .settings-field-hint {
           display: block;
           color: var(--muted);
@@ -9458,10 +9453,13 @@ export default function App() {
               <PlusIcon />
               <span>{t("new_chat")}</span>
             </button>
-            <button className="nav-row">
-              <SearchIcon />
-              <span>{t("search")}</span>
-            </button>
+            {/* The web build keeps no chat history to search (§19.2). */}
+            {!SHARED_DEPLOYMENT && (
+              <button className="nav-row">
+                <SearchIcon />
+                <span>{t("search")}</span>
+              </button>
+            )}
           </div>
 
           <div className="sidebar-divider" />
@@ -10356,24 +10354,48 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="settings-section">
-                <h3>{t("settings_model_heading")}</h3>
-                <p>{t("settings_model_desc")}</p>
-                {renderCredentialRow("openai", "OpenAI")}
-                {renderCredentialRow("anthropic", "Claude")}
-                {renderCredentialRow("google", "Gemini")}
-                <span className="settings-field-hint">
-                  {t("settings_model_key_hint")}
-                </span>
-              </section>
+              {SHARED_DEPLOYMENT ? (
+                // The web build: a fixed model on STFC's server and no keys of
+                // the visitor's own (server.py rejects /api/credentials), so
+                // the section says where their chat goes and how long it
+                // stays -- 24 h is chat_retention.py's default
+                // (GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS in the STFC compose).
+                <section className="settings-section">
+                  <h3>{t("settings_model_heading")}</h3>
+                  <p>{t("settings_model_desc_shared")}</p>
+                  <a
+                    className="settings-link"
+                    href={LOCAL_VERSION_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t("settings_local_version_link")}
+                  </a>
+                </section>
+              ) : (
+                <>
+                  <section className="settings-section">
+                    <h3>{t("settings_model_heading")}</h3>
+                    <p>{t("settings_model_desc")}</p>
+                    {renderCredentialRow("openai", "OpenAI")}
+                    {renderCredentialRow("anthropic", "Claude")}
+                    {renderCredentialRow("google", "Gemini")}
+                    <span className="settings-field-hint">
+                      {t("settings_model_key_hint")}
+                    </span>
+                  </section>
 
-              <section className="settings-section">
-                <h3>{t("settings_databases_heading")}</h3>
-                <p>{t("settings_databases_desc")}</p>
-                {renderCredentialRow("materials_project", "Materials Project")}
-              </section>
+                  <section className="settings-section">
+                    <h3>{t("settings_databases_heading")}</h3>
+                    <p>{t("settings_databases_desc")}</p>
+                    {renderCredentialRow("materials_project", "Materials Project")}
+                  </section>
+                </>
+              )}
 
-              <section className="settings-section">
+              {/* AiiDA isn't connected anywhere yet (AiiDAlab-QE, #84); the
+                  web build doesn't show the placeholder toggle at all. */}
+              {!SHARED_DEPLOYMENT && <section className="settings-section">
                 <h3>{t("settings_compute_heading")}</h3>
                 <div className="profile-row">
                   <div>
@@ -10390,7 +10412,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-              </section>
+              </section>}
 
               <section className="settings-section">
                 <h3>{t("language")}</h3>

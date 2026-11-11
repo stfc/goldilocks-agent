@@ -41,6 +41,7 @@ HOME is a temporary directory, so:
 | `api.e2e.ts` | no | the pinned core is the one behind the proxy; single-user routes and MLIP Playground are refused; ranking is a job (submit, cancel), and the old synchronous call is refused |
 | `tools.e2e.ts` | no | All Tools: the web build's tools, the local version's (MLIP Playground, AiiDAlab-QE), and Beyond DFT |
 | `experience.e2e.ts` | request only | the onboarding level travels with each chat request; `/api/preferences` is never called |
+| `settings.e2e.ts` | no | Settings says where a visitor's chat goes (STFC's server, deleted after 24 hours) and links the local version; no API key fields, AiiDA toggle or history search |
 | `ranking.e2e.ts` | no | Run mMACE in the embedded Workbench shows the job queued or running, then a recommended ordering |
 | `chat-dft.e2e.ts` | yes | attach → open → review → generate: core's values in the review card, its button opening the full-page Workbench, the bundle under Generated Files and its download, all kept on reload |
 | `database.e2e.ts` | yes, network | `get_structure` → `dft_open_structure` by the fetched file's name |
