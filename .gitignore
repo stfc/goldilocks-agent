@@ -37,3 +37,6 @@ plan-*.md
 
 # Playwright e2e output (app/e2e)
 app/test-results/
+
+# The STFC Cloud VM's image pin (deploy/stfc-cloud/README.md "Redeploying").
+deploy/stfc-cloud/.env

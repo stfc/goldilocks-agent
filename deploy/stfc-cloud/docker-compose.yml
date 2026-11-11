@@ -9,13 +9,19 @@
 # access policy and redeploy steps.
 services:
   agent:
+    # The web build (app/.env.stfc-cloud: the shared-deployment UI, served at
+    # `/`), which CI publishes from main (.github/workflows/docker-publish.yml);
+    # `docker compose pull agent` fetches it. AGENT_IMAGE, in a .env file next
+    # to this one, pins another, such as a commit's `web-sha-<sha>` for a
+    # rollback (README.md "Redeploying").
+    image: ${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent:web}
+    # The fallback: `docker compose build agent` builds the same image on the
+    # VM, on the host network because of its MTU (README.md Prerequisites).
     build:
       context: ../..
+      network: host
       args:
-        # The web build (app/.env.stfc-cloud): shared-deployment UI, served
-        # at `/`.
         FRONTEND_BUILD_SCRIPT: build:stfc-cloud
-    image: goldilocks-agent-stfc-cloud:latest
     environment:
       GOLDILOCKS_AGENT_SHARED_DEPLOYMENT: "1"
       # Chat backend: Ollama, served by the `ollama` service below on this
@@ -29,6 +35,9 @@ services:
       # under real load, not guessing -- leave unset (no limit) until that
       # measurement happens, then set it here.
       # GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT: ""
+      # Chats idle this long are deleted, checkpoints and all
+      # (src/goldilocks_agent/chat_retention.py); 24 when unset.
+      # GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS: "24"
       # Optional -- uncomment/set to enable the matching feature:
       # ANTHROPIC_API_KEY:
       # OPENAI_API_KEY:

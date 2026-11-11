@@ -3396,6 +3396,11 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
   这份记忆在产品意义上已经死了，服务器晚一点用 TTL 才真正物理删除，用户完全无感。
   一个后台任务定期扫过久未使用的 `thread_id` 调 `adelete_thread()` 即可，这个函数已经存在
   （现在用于"删除会话"功能），不需要新机制。
+  - **★ 2026-11-11 才真正实现**：这条清理机制定了之后一直没做，线上版每个访客的聊天（包括附加的结构文件全文）都永久留在 `goldilocks.db` 里。网站重新对公网开放时 Junwen 发现了这个问题，决定定时删除：
+    - `chat_retention.py`：线上版每次 `/api/chat`（新消息或 resume）都在 `chat_activity` 表里记下这个 thread 的最后使用时间；后台任务启动时扫一次，之后每小时扫一次，把超过保留期没用过的 thread 用 `adelete_thread()` 删掉；
+    - 保留期默认 24 小时，用 `GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS` 调整。在保留期内刷新页面还能恢复聊天，超过之后就恢复不了；
+    - 上线前已经积累的 thread 没有活动记录，启动时按各自最新 checkpoint 的时间补上记录，所以第一次扫描就会删掉闲置超过 24 小时的；
+    - 本地版不跑这个任务：本地的聊天属于用户自己，留在侧边栏里，直到用户自己删除。
 
 ### 19.2 ⚠️⚠️ 真正的坑：`projects`/`conversations` 表现在零隔离
 
@@ -3640,6 +3645,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - `HTTP`：80 端口对外开放，只做跳转和 certbot 续期；
   - `goldilocks-stfc-internal`：22 和 443 端口，只放行 130.246.0.0/16、10/8、172.16/12、192.168/16。
   - 推翻 19.4 的 nginx allow-list 方案。nginx 只负责按 IP 限速：`/api/chat` 每分钟 10 次，`/api/mlip/` 和 `/run` 每分钟 6 次。
+  - **★ 2026-11-11 重新对公网开放**（Junwen 决定）：把原来的 `HTTPS` 安全组（443 对 0.0.0.0/0）重新挂回实例，SSH 仍然只对 STFC 开放。10 月 9 日那次公开约一小时就被一个 IP 打 `/api/mlip/*` 打爆了内存，之后按 Martin Summers 的建议改成只对内网开放。重新开放前已经做了这些：MLIP Playground 改成只在本地版提供、agent 容器加了 32 GB 内存上限、mMACE 有 200 原子上限；nginx 又给排序提交（每分钟 6 次）以及 core 的 `/explain`、`/inspect`、`/magnetic-orderings`（每分钟 30 次，可突发 20 次）加了限流（#110）。还没定的两件事：给公网用户的隐私说明（聊天记录和上传的结构存在服务器上）；要不要通知 STFC Cyber-sec。
 - **VM 上实际在用的站点配置**：已经原样提交为 `deploy/stfc-cloud/nginx-workbench.conf`，和 VM 上的文件 sha256 一致。占位用的 `nginx-agent.conf` 删除。
 - **前端只保留一种线上构建**：`build:stfc-cloud`（`.env.stfc-cloud`）。删掉 `/agent/` 前缀的 public 变体和 `VITE_BASE_PATH`。
   - 原因：它本来就跑不通。打包出来的路径指向 `/agent/...`，但 `/api/...`、图标路径、Workbench 的 `HttpCoreClient` 都用的是根路径。
@@ -3652,6 +3658,11 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 总吞吐从约 31 tok/s 升到约 50 tok/s，4 个和 8 个对话时都在这个数，说明 GPU 已接近饱和。代价是并发时每个对话出字变慢（4 个同时时 17–38 tok/s，单个时 54 tok/s）。**所以不加槽位**；
   - 显存 37.8 / 80 GB，模型全部在 GPU 上，和原来单槽 262144 上下文时差不多；
   - 镜像仍用 `ollama/ollama:latest`（Junwen 决定不固定版本），以后每次 pull 后都要重新测一次。
+- **★ 2026-11-11：VM 改为拉取 CI 发布的镜像，不再在 VM 上构建**（Junwen 选了方案 A）：
+  - 原因：线上版界面的开关 `VITE_SHARED_DEPLOYMENT` 是 Vite 在构建时写进前端的，而 CI 原来只发布本地版界面的镜像，所以 VM 一直是拉源码、用 `build:stfc-cloud` 自己构建；
+  - 现在 `docker-publish.yml` 在 main 上多构建一个 amd64 的线上版镜像，打 `web`（跟随 main）和 `web-sha-<commit>`（用于回滚）两个 tag。STFC 的 compose 用 `${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent:web}`，部署变成 `docker compose pull agent` 加 `up`；回滚时在 `.env` 里固定成上一个 commit 的镜像；
+  - 好处：部署的就是 CI 构建、测试过的镜像；部署从 5–10 分钟变成一两分钟；不再需要为了构建绕开 MTU 问题；
+  - 没有选方案 B（把开关改成运行时注入、只保留一个镜像），代价是每次 main 构建两个镜像。
 - **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
   - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；
   - 现在镜像里不再带 core 源码。agent 的 PyPI 模式（`uvx --from goldilocks-core[http]==<core_pin 版本>`）把 core 装进 uv 缓存（`goldilocks_home` volume），两个 compose 都设 `GOLDILOCKS_AGENT_CORE_AUTOSTART=1`，去掉 `GOLDILOCKS_CORE_PATH` 和 `goldilocks_core_venv` volume；
@@ -3662,5 +3673,5 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - VM 的升级流程（`deploy/stfc-cloud/README.md` "Upgrading goldilocks-core"）改成：先用 `--network host` 的一次性容器把新版本装进 uv 缓存、把资产装进 `assets-next`，再切换。这一次从 checkout 迁过来，回滚时还要恢复旧的 compose 文件，README 里写了步骤。
 - **★ 2026-11-11：mMACE 上 VM 的 GPU，配合 core 常驻排序进程**（Junwen 定）：
   - 修法 B（goldilocks-ml 0.4.0）上线后，VM 上 CPU 排 bcc Fe 用 24.6 s（原来 107 s）。其中约 6 s 花在每个排序任务新开的进程上（core 的 `ranking_jobs.py` 每个任务一个 `WorkerProcess`，为的是能立即取消、算完释放内存），GPU 上还要再加十几秒的 CUDA 初始化。所以每次新开进程的话，GPU 几乎没有收益；
-  - Junwen 指出 A100 还空着约 42 GB 显存、VM 有约 98 GB 内存，常驻进程的内存代价不成问题。于是两件事一起做：core 做常驻的排序进程（独立于 is_magnetic 的进程，取消、崩溃或排完大结构后替换），agent 在 STFC 的 compose 里给 agent 容器分配 GPU，设 `UV_TORCH_BACKEND=cu130`、`GOLDILOCKS_MMACE_DEVICE=cuda`；
-  - 两边一起部署，部署前在 VM 上实测。CUDA 版 torch 不能在 CPU 上跑（慢约 9 倍），所以退回 CPU 时三项设置要一起改回去，README "mMACE on the GPU" 写了怎么切。
+  - Junwen 指出 A100 还空着约 42 GB 显存、VM 有约 98 GB 内存，常驻进程的内存代价不成问题。于是两件事一起做：core 0.3.3 给排序任务准备一个预热好的备用进程（core#285：已经加载好 mace 和 checkpoint、初始化好 CUDA；任务拿走它的同时，下一个开始预热；任务结束进程就退出，内存全部释放，不需要替换阈值），agent 在 STFC 的 compose 里给 agent 容器分配 GPU，设 `UV_TORCH_BACKEND=cu130`、`GOLDILOCKS_MMACE_DEVICE=cuda`；
+  - 和 core 0.3.3 一起部署。Junwen 已经定了用 GPU，部署前不再单独实测，部署后的 smoke 测试和 `nvidia-smi` 用来确认 GPU 确实在用。CUDA 版 torch 不能在 CPU 上跑（慢约 9 倍），所以退回 CPU 时三项设置要一起改回去，README "mMACE on the GPU" 写了怎么切。

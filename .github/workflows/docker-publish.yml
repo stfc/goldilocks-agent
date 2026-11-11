@@ -92,3 +92,27 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The STFC Cloud web build (deploy/stfc-cloud), which the VM pulls instead
+      # of building: the same image with the shared-deployment frontend,
+      # a build-time Vite flag (`npm run build:stfc-cloud`). `web` follows
+      # main and `web-sha-<sha>` pins a commit, for a rollback. amd64 only,
+      # the VM's architecture; its own cache scope, so the two builds don't
+      # evict each other's layers.
+      - id: meta-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=web,enable={{is_default_branch}}
+            type=sha,format=short,prefix=web-sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: FRONTEND_BUILD_SCRIPT=build:stfc-cloud
+          push: true
+          tags: ${{ steps.meta-web.outputs.tags }}
+          labels: ${{ steps.meta-web.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
