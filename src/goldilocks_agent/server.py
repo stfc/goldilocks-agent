@@ -465,6 +465,42 @@ async def list_conversations() -> list[dict]:
     return await store.list_conversations(app.state.store)
 
 
+@app.get("/api/conversations/search")
+async def search_conversations(q: str) -> list[str]:
+    """Ids of the chats whose title, or a message the user or the assistant
+    wrote, contains `q`, ignoring case. Tool results (structure files, JSON)
+    are left out: searching "Si" would otherwise match nearly every chat.
+    Reads each chat's latest checkpoint; a local build holds one person's
+    chats, so a scan is fine."""
+    _reject_in_shared_deployment()
+    needle = q.strip().casefold()
+    if not needle:
+        return []
+    hits = []
+    for conversation in await store.list_conversations(app.state.store):
+        if needle in conversation["title"].casefold():
+            hits.append(conversation["id"])
+            continue
+        config = {"configurable": {"thread_id": conversation["id"]}}
+        snapshot = await app.state.graph.aget_state(config)
+        messages = (snapshot.values or {}).get("messages", [])
+        if any(needle in _written_text(m).casefold() for m in messages):
+            hits.append(conversation["id"])
+    return hits
+
+
+def _written_text(message) -> str:
+    """What the user or the assistant wrote in `message`; empty for a tool
+    result. A user message with an image keeps its text parts."""
+    if message.type not in ("human", "ai"):
+        return ""
+    if isinstance(message.content, str):
+        return message.content
+    return " ".join(
+        part.get("text", "") for part in message.content if isinstance(part, dict)
+    )
+
+
 @app.patch("/api/conversations/{conversation_id}")
 async def update_conversation(
     conversation_id: str, request: ConversationUpdate
