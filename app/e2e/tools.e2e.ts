@@ -12,7 +12,7 @@ test("All Tools separates the local version's tools from the ones coming everywh
     "Post Analysis",
   ]);
   await expect(page.locator(".tools-overview-section-label")).toHaveText([
-    "Coming soon (available in the local version)",
+    "Coming soon to the web · in the local version now",
     "Coming soon",
   ]);
   await expect(page.locator(".tools-overview-card.coming-soon strong")).toHaveText([
