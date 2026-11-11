@@ -4107,6 +4107,7 @@ export default function App() {
                 const groups = structureMatchResults?.groups ?? [];
                 const ungrouped = structureMatchResults?.ungrouped ?? [];
                 const errors = structureMatchResults?.errors ?? {};
+                const skipped = structureMatchResults?.skipped ?? {};
                 const unavailable = structureMatchResults?.unavailable_properties ?? [];
                 const truncated = structureMatchResults?.truncated_group_count ?? 0;
                 const ungroupedOpen = dbGroupOpen["__ungrouped__"] !== false;
@@ -4146,6 +4147,15 @@ export default function App() {
                         <span className="db-error-hint">Failed: {Object.keys(errors).join(", ")}</span>
                       </div>
                     )}
+                    {/* Sources not searched (Materials Project without a key):
+                        this deployment's setup, not a failure, so grey. */}
+                    {"Materials Project" in skipped && (
+                      <div className="db-empty-hint" style={{ marginBottom: 6 }}>
+                        {SHARED_DEPLOYMENT
+                          ? "Materials Project needs an API key, so it isn't searched here; the local version can use yours."
+                          : "Materials Project needs an API key: add yours in Settings to search it too."}
+                      </div>
+                    )}
                     {unavailable.length > 0 && (
                       <div className="db-empty-hint" style={{ marginBottom: 6 }}>
                         <span className="db-error-hint">Not available from these sources: {unavailable.join(", ")}</span>
@@ -4163,7 +4173,17 @@ export default function App() {
                           <button className="db-group-header" onClick={() => setDbGroupOpen(prev => ({ ...prev, [groupKey]: !isOpen }))}>
                             <span className={`db-group-caret${isOpen ? " open" : ""}`}>›</span>
                             <span className="db-group-name">{g.formula} · {g.spacegroup || "unknown SG"}</span>
-                            {g.energy_above_hull === 0 && <span className="db-result-match-badge">Ground state</span>}
+                            {/* Lowest formation energy among this search's entries from
+                                the same database (grouping.py): databases' energies
+                                aren't comparable with each other. */}
+                            {g.lowest_energy_in?.length > 0 && (
+                              <span
+                                className="db-result-match-badge"
+                                title="Lowest formation energy among this search's results from that database"
+                              >
+                                Lowest energy · {g.lowest_energy_in.join(", ")}
+                              </span>
+                            )}
                             <span className="db-group-count">{g.sources.length} source{g.sources.length > 1 ? "s" : ""}</span>
                           </button>
                           {isOpen && (

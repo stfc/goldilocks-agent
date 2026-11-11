@@ -181,6 +181,17 @@ async def _query_mp(formula_reduced: str) -> tuple[list[dict], str | None]:
                     "e_total",
                 ],
             )
+        # Most stable first before capping, so the ground state is never the
+        # one cut (silicon has 43 entries, and diamond mp-149 fell outside
+        # the first 20). MP's energy_above_hull comes from its own hull.
+        docs = sorted(
+            docs,
+            key=lambda doc: (
+                doc.energy_above_hull
+                if doc.energy_above_hull is not None
+                else float("inf")
+            ),
+        )
         entries = []
         for doc in docs[:_MAX_CANDIDATES]:
             mp_id = str(doc.material_id)
@@ -438,6 +449,16 @@ async def search_by_formula(formula: str) -> StructureMatchResult:
     """Query all four databases in parallel for a formula. No core dependency."""
     query_formula = parse_query_formula(formula)
     errors: dict[str, str] = {}
+    skipped: dict[str, str] = {}
+
+    async def _not_asked() -> tuple[list[dict], str | None]:
+        return [], None
+
+    # Without a key Materials Project isn't asked at all: that's this
+    # deployment's setup (the shared web build has none), not a failure.
+    ask_mp = bool(get_api_key("materials_project"))
+    if not ask_mp:
+        skipped["Materials Project"] = "needs an API key"
 
     async with httpx.AsyncClient(timeout=_OPTIMADE_TIMEOUT) as client:
         (
@@ -445,7 +466,7 @@ async def search_by_formula(formula: str) -> StructureMatchResult:
             (mc_entries, mc_err),
             (nomad_entries, nomad_err),
         ) = await asyncio.gather(
-            _query_mp(query_formula),
+            _query_mp(query_formula) if ask_mp else _not_asked(),
             _query_mc(query_formula, client),
             _query_nomad(query_formula, client),
         )
@@ -472,7 +493,7 @@ async def search_by_formula(formula: str) -> StructureMatchResult:
     )
 
     return StructureMatchResult(
-        results=results, query_formula=query_formula, errors=errors
+        results=results, query_formula=query_formula, errors=errors, skipped=skipped
     )
 
 

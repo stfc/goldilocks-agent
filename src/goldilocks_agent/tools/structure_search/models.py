@@ -49,9 +49,14 @@ class MatchEntry(BaseModel):
 
 
 class StructureMatchResult(BaseModel):
+    """`errors`: sources that were asked and failed. `skipped`: sources not
+    asked at all, with why (Materials Project without an API key), which is
+    not a failure."""
+
     results: list[MatchEntry]
     query_formula: str | None
     errors: dict[str, str]
+    skipped: dict[str, str] = Field(default_factory=dict)
 
 
 class CandidateGroup(BaseModel):
@@ -69,6 +74,14 @@ class CandidateGroup(BaseModel):
     spacegroup: str | None
     sources: list[str]
     entries: list[MatchEntry]
+    # How far this structure's formation energy sits above the lowest one the
+    # same database reported in this search (eV/atom, the smallest over the
+    # databases it's in), and the databases in which it is that lowest. Only
+    # one database's numbers are ever compared: their functionals differ, and
+    # the energy_above_hull they report isn't reliable across them (JARVIS
+    # gives 0.0 for metastable silicon polymorphs).
+    energy_above_lowest: float | None = None
+    lowest_energy_in: list[str] = Field(default_factory=list)
     band_gap: float | None = None
     band_gap_method: str | None = None
     formation_energy_per_atom: float | None = None
@@ -101,6 +114,7 @@ class GroupedSearchResult(BaseModel):
     truncated_group_count: int
     unavailable_properties: list[str] = Field(default_factory=list)
     errors: dict[str, str]
+    skipped: dict[str, str] = Field(default_factory=dict)
 
 
 class FetchedStructure(BaseModel):

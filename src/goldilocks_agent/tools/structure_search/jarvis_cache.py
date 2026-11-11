@@ -23,6 +23,10 @@ _CACHE_DIR = Path.home() / ".cache" / "goldilocks"
 _CACHE_FILE = _CACHE_DIR / "jarvis_dft_3d.json"
 
 _entries: list[dict] | None = None
+# Entries by reduced formula, the lowest formation energy first; built on the
+# first query (parsing ~76k formulas takes about a second) and reset whenever
+# _entries is.
+_by_formula: dict[str, list[dict]] | None = None
 
 
 def is_available() -> bool:
@@ -31,7 +35,7 @@ def is_available() -> bool:
 
 def load() -> None:
     """Load JARVIS data from disk cache into memory. No-op if already loaded."""
-    global _entries
+    global _entries, _by_formula
     if _entries is not None:
         return
     if not _CACHE_FILE.exists():
@@ -43,6 +47,7 @@ def load() -> None:
     logger.info("Loading JARVIS DFT-3D cache from %s ...", _CACHE_FILE)
     with open(_CACHE_FILE) as f:
         _entries = json.load(f)
+    _by_formula = None
     logger.info("Loaded %d JARVIS entries", len(_entries))
 
 
@@ -61,8 +66,9 @@ async def download_cache() -> None:
     with open(_CACHE_FILE, "w") as f:
         json.dump(data, f)
 
-    global _entries
+    global _entries, _by_formula
     _entries = data
+    _by_formula = None
     logger.info("JARVIS cache saved (%d entries)", len(_entries))
 
 
@@ -77,7 +83,10 @@ def get_by_jid(jid: str) -> dict | None:
 
 
 def query(formula_reduced: str, max_results: int = 20) -> list[dict]:
-    """Return JARVIS entries whose reduced formula matches the query."""
+    """Return JARVIS entries whose reduced formula matches the query, the
+    lowest formation energy first, so capping at `max_results` never drops
+    the most stable one. Formation energy, not JARVIS's ehull, which reads
+    0.0 even for silicon polymorphs 0.7 eV/atom above diamond."""
     from pymatgen.core import Composition
 
     if _entries is None:
@@ -87,16 +96,28 @@ def query(formula_reduced: str, max_results: int = 20) -> list[dict]:
         target = Composition(formula_reduced).reduced_formula
     except ValueError:
         return []
+    return _index().get(target, [])[:max_results]
 
-    results = []
-    for entry in _entries:
-        try:
-            entry_formula = entry.get("formula", "")
-            entry_reduced = Composition(entry_formula).reduced_formula
-        except ValueError:
-            continue
-        if entry_reduced == target:
-            results.append(entry)
-            if len(results) >= max_results:
-                break
-    return results
+
+def _index() -> dict[str, list[dict]]:
+    global _by_formula
+    if _by_formula is None:
+        from pymatgen.core import Composition
+
+        index: dict[str, list[dict]] = {}
+        for entry in _entries or []:
+            try:
+                reduced = Composition(entry.get("formula", "")).reduced_formula
+            except ValueError:
+                continue
+            index.setdefault(reduced, []).append(entry)
+        for entries in index.values():
+            entries.sort(key=_formation_energy)
+        _by_formula = index
+    return _by_formula
+
+
+def _formation_energy(entry: dict) -> float:
+    """An entry's formation energy per atom; inf when JARVIS has none ("na")."""
+    value = entry.get("formation_energy_peratom")
+    return value if isinstance(value, int | float) else float("inf")
