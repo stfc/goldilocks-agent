@@ -3663,6 +3663,11 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 现在 `docker-publish.yml` 在 main 上多构建一个 amd64 的线上版镜像，打 `web`（跟随 main）和 `web-sha-<commit>`（用于回滚）两个 tag。STFC 的 compose 用 `${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent:web}`，部署变成 `docker compose pull agent` 加 `up`；回滚时在 `.env` 里固定成上一个 commit 的镜像；
   - 好处：部署的就是 CI 构建、测试过的镜像；部署从 5–10 分钟变成一两分钟；不再需要为了构建绕开 MTU 问题；
   - 没有选方案 B（把开关改成运行时注入、只保留一个镜像），代价是每次 main 构建两个镜像。
+  - **同一天改成两个独立的包**：本地版和线上版放在同一个包里时，GHCR 包页面会把最后推送的那个（线上版）标成 "Latest"，页面顶部的安装命令也指向它，本地用户照着装就装错了。现在 CI 发布两个包，各有自己的页面、描述和安装命令：
+    - `ghcr.io/stfc/goldilocks-agent-local`：本地版，仓库根目录的 `docker-compose.yml` 用它；
+    - `ghcr.io/stfc/goldilocks-agent-web`：线上版，STFC 的 compose 用它；
+    - 两个都打 `latest` 和 `sha-<commit>`。描述同时写成 label 和 manifest/index annotation，因为 GitHub 读多架构镜像的描述时看的是 index；
+    - 旧名字 `ghcr.io/stfc/goldilocks-agent` 立即停止更新（Junwen 定的，不设过渡期）。2026-11-11 之前下载的 `docker-compose.yml` 要换成新的，README 里写了这一点。
 - **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
   - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；
   - 现在镜像里不再带 core 源码。agent 的 PyPI 模式（`uvx --from goldilocks-core[http]==<core_pin 版本>`）把 core 装进 uv 缓存（`goldilocks_home` volume），两个 compose 都设 `GOLDILOCKS_AGENT_CORE_AUTOSTART=1`，去掉 `GOLDILOCKS_CORE_PATH` 和 `goldilocks_core_venv` volume；
