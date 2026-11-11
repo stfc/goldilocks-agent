@@ -12,9 +12,9 @@ services:
     # The web build (app/.env.stfc-cloud: the shared-deployment UI, served at
     # `/`), which CI publishes from main (.github/workflows/docker-publish.yml);
     # `docker compose pull agent` fetches it. AGENT_IMAGE, in a .env file next
-    # to this one, pins another, such as a commit's `web-sha-<sha>` for a
+    # to this one, pins another, such as a commit's `sha-<sha>` for a
     # rollback (README.md "Redeploying").
-    image: ${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent:web}
+    image: ${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent-web:latest}
     # The fallback: `docker compose build agent` builds the same image on the
     # VM, on the host network because of its MTU (README.md Prerequisites).
     build:

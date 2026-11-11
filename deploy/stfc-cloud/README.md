@@ -13,7 +13,7 @@ different thing.
 | Addresses | private 192.168.100.226, floating 130.246.214.189 |
 | DNS | `workbench.goldilocks.ac.uk` is a CNAME to `host-130-246-214-189.nubes.stfc.ac.uk` |
 | Web server | nginx 1.18 (Ubuntu package, a host service, not in Docker) terminates TLS with a Let's Encrypt certificate for both names and proxies everything to `127.0.0.1:8080`. The app is served at `/`. |
-| Containers | this directory's `docker-compose.yml`: `agent` (`ghcr.io/stfc/goldilocks-agent:web`, the web build CI publishes from main, plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`; mMACE on the GPU), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
+| Containers | this directory's `docker-compose.yml`: `agent` (`ghcr.io/stfc/goldilocks-agent-web`, the web version CI publishes from main, plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`; mMACE on the GPU), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
 | Checkout | `/home/ubuntu/goldilocks-agent`, `origin` = https://github.com/stfc/goldilocks-agent.git, on `main` |
 
 ## Access policy
@@ -126,7 +126,7 @@ sudo certbot renew --dry-run
 For a merge that doesn't change `src/goldilocks_agent/core_pin.json`. Run the
 web build's end-to-end tests first, locally (`uv run poe e2e-web`,
 `app/e2e/README.md`). The VM doesn't build: CI publishes the web build as
-`ghcr.io/stfc/goldilocks-agent:web`, and as `:web-sha-<commit>`, when the
+`ghcr.io/stfc/goldilocks-agent-web:latest`, and as `:sha-<commit>`, when the
 merge's "Build and publish Docker image" run on main finishes. Wait for that
 run, then:
 
@@ -147,7 +147,7 @@ docker compose up -d --no-deps agent
   with `docker compose up -d --no-deps ollama`.
 - **Rollback.** Pin the previous commit's build in a `.env` file next to the
   compose file (git ignores it), then recreate:
-  `echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent:web-sha-<commit> > .env && docker compose up -d --no-deps agent`.
+  `echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent-web:sha-<commit> > .env && docker compose up -d --no-deps agent`.
   To follow main again: `rm .env`, then pull and recreate as above.
 - **Building on the VM instead** (CI is down, or to try a branch):
   `docker compose build agent && docker compose up -d --no-deps agent`. It
@@ -225,7 +225,7 @@ still in uv's cache.
 docker compose stop agent
 docker run --rm --user root -v $HOME_VOL:/h $IMG sh -euc \
   "cd /h/.local/share/goldilocks && mv assets assets-failed && mv assets-$OLD assets"
-echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent:web-sha-$OLD > .env
+echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent-web:sha-$OLD > .env
 docker compose up -d --no-deps agent
 ```
 

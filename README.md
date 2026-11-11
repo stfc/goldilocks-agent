@@ -72,6 +72,20 @@ routes through Ollama, and vice versa):
 
 ### Docker
 
+The repository publishes two Docker images of the same source. For your own
+machine, use the local version:
+
+| Image | Version | For |
+|---|---|---|
+| [`ghcr.io/stfc/goldilocks-agent-local`](https://github.com/stfc/goldilocks-agent/pkgs/container/goldilocks-agent-local) | **local** | One person on their own machine: chat history, every Tool, your own model keys. This repository's `docker-compose.yml` runs it. |
+| [`ghcr.io/stfc/goldilocks-agent-web`](https://github.com/stfc/goldilocks-agent/pkgs/container/goldilocks-agent-web) | **web** | The shared website, [workbench.goldilocks.ac.uk](https://workbench.goldilocks.ac.uk): anonymous visitors, chats kept per browser tab, a pinned local model, local-only Tools off. `deploy/stfc-cloud/docker-compose.yml` runs it. |
+
+Both are built from `main` on every push, tagged `latest` and
+`sha-<commit>`. Until 2026-11-11 the local version was published as
+`ghcr.io/stfc/goldilocks-agent`, which no longer gets updates: a
+`docker-compose.yml` downloaded before then needs replacing with the current
+one.
+
 Requires [Docker](https://docs.docker.com/get-docker/) (with Compose,
 included in current Docker Desktop/Engine installs) and whichever
 conversation engine you picked above. Only one file needed, no clone:
@@ -101,7 +115,7 @@ docker compose up
 ```
 
 This pulls the published `agent` image
-(`ghcr.io/stfc/goldilocks-agent:latest` by default, built on every push to
+(`ghcr.io/stfc/goldilocks-agent-local:latest` by default, built on every push to
 `main`) rather than building locally, so it's fast even on a machine with
 no Python/Node toolchain -- `build: .` in `docker-compose.yml` is only a
 local-dev fallback (`docker compose up --build` forces a rebuild from

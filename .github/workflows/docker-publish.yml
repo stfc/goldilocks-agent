@@ -1,9 +1,14 @@
 name: Build and publish Docker image
 
-# Publishes ghcr.io/<owner>/goldilocks-agent (whichever repo this runs in --
-# stfc/goldilocks-agent, or a fork under its own owner) so `docker compose pull` (or a plain `docker pull`) gives a
-# colleague a working image with no local clone/build/toolchain needed --
-# only `main` and version tags publish; other branches/PRs only run the
+# Publishes two images of the same source, each its own package under
+# ghcr.io/<owner>/ (stfc, or a fork's own owner):
+# - goldilocks-agent-local, the local version: one person on their own
+#   machine (the repository's docker-compose.yml);
+# - goldilocks-agent-web, the web version: the shared deployment at
+#   workbench.goldilocks.ac.uk (deploy/stfc-cloud/docker-compose.yml). It
+#   differs in the frontend, which a build-time Vite flag switches
+#   (`npm run build:stfc-cloud`).
+# Only `main` and version tags publish; other branches and PRs only run the
 # `test` gate below.
 on:
   push:
@@ -57,6 +62,20 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # What each package page says (512 characters at most).
+    env:
+      LOCAL_DESCRIPTION: >-
+        Goldilocks agent, local version: chat-driven DFT setup with
+        goldilocks-core, for one person on their own machine, with chat
+        history, every Tool and your own model keys. Run it with the
+        repository's docker-compose.yml. The shared website's build is
+        ghcr.io/stfc/goldilocks-agent-web.
+      WEB_DESCRIPTION: >-
+        Goldilocks agent, web version: the shared deployment behind
+        https://workbench.goldilocks.ac.uk, for anonymous visitors, with
+        chats kept per browser tab, a pinned local model and the local-only
+        Tools off. Run by deploy/stfc-cloud/docker-compose.yml. To run
+        Goldilocks on your own machine, use ghcr.io/stfc/goldilocks-agent-local.
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -66,46 +85,61 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # `latest` on every push to main, plus the short commit sha for
-      # traceability; semver tags (`v1.2.3` -> `1.2.3`/`1.2`/`1`) on a
-      # version tag push, for whenever real releases start.
-      - id: meta
+      # Both images: `latest` on every push to main, plus the short commit
+      # sha (`sha-xxxxxxx`) to pin one build; the local version also gets
+      # semver tags (`v1.2.3` -> `1.2.3`/`1.2`/`1`) on a version tag push.
+      # Each image's description is set as a label and as manifest and index
+      # annotations: GitHub's package page reads a multi-arch image's from
+      # the index (DOCKER_METADATA_ANNOTATIONS_LEVELS).
+      - id: meta-local
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           # Derived from the running repo, not hardcoded: a fork runs this
           # same workflow with its own GITHUB_TOKEN, scoped to its own
           # ghcr.io/<owner>/* namespace, where a hardcoded owner would just
           # fail to push.
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}-local
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.title=goldilocks-agent-local
+            org.opencontainers.image.description=${{ env.LOCAL_DESCRIPTION }}
+          annotations: |
+            org.opencontainers.image.title=goldilocks-agent-local
+            org.opencontainers.image.description=${{ env.LOCAL_DESCRIPTION }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-local.outputs.tags }}
+          labels: ${{ steps.meta-local.outputs.labels }}
+          annotations: ${{ steps.meta-local.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # The STFC Cloud web build (deploy/stfc-cloud), which the VM pulls instead
-      # of building: the same image with the shared-deployment frontend,
-      # a build-time Vite flag (`npm run build:stfc-cloud`). `web` follows
-      # main and `web-sha-<sha>` pins a commit, for a rollback. amd64 only,
-      # the VM's architecture; its own cache scope, so the two builds don't
-      # evict each other's layers.
+      # amd64 only, the STFC VM's architecture; its own cache scope, so the
+      # two builds don't evict each other's layers.
       - id: meta-web
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
-          images: ghcr.io/${{ github.repository }}
-          flavor: latest=false
+          images: ghcr.io/${{ github.repository }}-web
           tags: |
-            type=raw,value=web,enable={{is_default_branch}}
-            type=sha,format=short,prefix=web-sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=goldilocks-agent-web
+            org.opencontainers.image.description=${{ env.WEB_DESCRIPTION }}
+          annotations: |
+            org.opencontainers.image.title=goldilocks-agent-web
+            org.opencontainers.image.description=${{ env.WEB_DESCRIPTION }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -114,5 +148,6 @@ jobs:
           push: true
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
+          annotations: ${{ steps.meta-web.outputs.annotations }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
