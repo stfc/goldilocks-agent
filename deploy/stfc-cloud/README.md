@@ -18,21 +18,43 @@ different thing.
 
 ## Access policy
 
-OpenStack security groups enforce it (since 2026-10-09), not nginx:
+OpenStack security groups enforce it, not nginx. The site has been public
+since 2026-11-11; SSH stays STFC-only.
 
 | Security group | Rule |
 |---|---|
 | `HTTP` | 80/tcp from 0.0.0.0/0. nginx answers with a redirect to HTTPS, and certbot renews through it. |
-| `goldilocks-stfc-internal` | 22/tcp and 443/tcp from 130.246.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 |
+| `HTTPS` | 443/tcp from 0.0.0.0/0: the site, open to the internet. |
+| `goldilocks-stfc-internal` | 22/tcp and 443/tcp from 130.246.0.0/16, 193.62.112.0/24 (Daresbury), 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 |
 
-So the site and SSH work from the STFC network or VPN only; from off-site,
-443 and 22 time out. Nothing else is open: the agent listens on loopback.
+Nothing else is open: the agent listens on loopback. Don't attach `default`:
+it opens 22, 8000, 8080, 7777 and ICMP to everyone.
 
-To let another range in (a new STFC Wi-Fi range, say): in the OpenStack
-dashboard, Network → Security Groups → `goldilocks-stfc-internal` → Manage
-Rules → Add Rule, Custom TCP Rule, port 443 (and 22 for SSH), with the CIDR.
-Delete the rule to undo it. The team OneDrive has the step-by-step version
-with screenshots: `stfc cloud deployment/STFC_Cloud_Internal_Access_Goldilocks.docx`.
+**History.** The site was public briefly on 2026-10-09. Within about an hour,
+25 POSTs to `/api/mlip/*` from one address ran the VM out of memory. On
+Martin Summers' advice, `HTTPS` was then detached and 443 limited to STFC
+ranges. Before reopening:
+
+- MLIP Playground became local-only; its routes 404 here;
+- the `agent` container got a 32 GB memory limit;
+- mMACE got a 200-atom limit;
+- nginx rate-limits chat, `/run`, ranking submissions and core's analysis
+  routes (nginx above).
+
+**Back to STFC-only.** In the dashboard, Compute → Instances →
+`goldilocks-workbench` → Edit Security Groups, remove `HTTPS`, then Save.
+`goldilocks-stfc-internal` still lets STFC ranges in.
+
+**Letting another range reach SSH** (or 443 while STFC-only): Network →
+Security Groups → `goldilocks-stfc-internal` → Manage Rules → Add Rule,
+Custom TCP Rule, port 22 or 443, with the CIDR. Delete the rule to undo it.
+The team OneDrive has the step-by-step version with screenshots:
+`stfc cloud deployment/STFC_Cloud_Internal_Access_Goldilocks.docx`.
+
+**Watching for abuse**, in the first days especially:
+`sudo tail -f /var/log/nginx/access.log | grep -v '" 200 \|" 304 '` shows
+the 429s (rate-limited) and 404s (probes). Answers to `/api/chat` go out as
+one long stream, so its lines appear when each reply ends.
 
 ## Reaching the VM
 
