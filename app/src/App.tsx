@@ -92,6 +92,9 @@ export interface Session {
   rightPanelOpen: boolean;
   rightPanelView: string | null;
   modeState: Record<string, any>;
+  // The user named this chat (a project's starter chat): its first message
+  // doesn't replace the title.
+  titleFromUser?: boolean;
   [key: string]: any;
 }
 
@@ -1189,10 +1192,11 @@ function isFileSentInHistory(messages, name) {
   });
 }
 
-function createSession(projectId: string | null = null): Session {
+function createSession(projectId: string | null = null, title: string | null = null): Session {
   return {
     id: createId(),
-    title: "New chat",
+    title: title ?? "New chat",
+    titleFromUser: title !== null,
     messages: [],
     messagesLoaded: true,
     createdAt: new Date().toISOString(),
@@ -2632,6 +2636,8 @@ export default function App() {
       : [];
     const description = newProjectDesc.trim() || "New research project";
     const color = newProjectColor;
+    const withStarterChat = newProjectWithChat;
+    const starterChatTitle = newProjectChatTitle.trim() || null;
 
     setCreateProjectOpen(false);
     setNewProjectName("");
@@ -2660,8 +2666,17 @@ export default function App() {
       ]);
       setActiveProjectId(project.id);
       setPendingProjectId(project.id);
-      setActiveId(null);
-      setDraftProjectId(project.id);
+      if (withStarterChat) {
+        // Opened like any chat; the server records it with its first
+        // message, as it does every other new chat.
+        const starter = createSession(project.id, starterChatTitle);
+        setSessions((prev) => [starter, ...prev]);
+        setActiveId(starter.id);
+        setDraftProjectId(null);
+      } else {
+        setActiveId(null);
+        setDraftProjectId(project.id);
+      }
     } catch {
       window.alert("Couldn't create the project -- is the agent server running?");
     }
@@ -3420,7 +3435,7 @@ export default function App() {
     setView("chats");
 
     const nextMessages = [...targetSession.messages, { role: "user", content, display, images }];
-    const nextTitle = targetSession.messages.length
+    const nextTitle = targetSession.messages.length || targetSession.titleFromUser
       ? targetSession.title
       : (rawText || activeTool?.label || files[0]?.name || images[0]?.name || "New chat").slice(0, 48);
 
