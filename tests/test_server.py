@@ -417,6 +417,61 @@ def test_chat_indexes_conversation_even_when_model_call_fails(
         assert conversations[0]["title"] == "Hello"
 
 
+def test_conversation_search_matches_titles_and_written_text_only(
+    tmp_path, monkeypatch
+) -> None:
+    """The local sidebar search finds a chat by its title or by what the user
+    or the assistant wrote, ignoring case, but not by a tool result: those
+    hold structure files and JSON that would match nearly any query."""
+
+    async def find_in_databases(**kwargs):
+        return {"groups": [{"formula": "Perovskite-in-a-tool-result"}]}
+
+    from goldilocks_agent.tools import TOOL_DISPATCH
+
+    monkeypatch.setitem(TOOL_DISPATCH, "find_in_databases", find_in_databases)
+    with _make_client(tmp_path, monkeypatch) as client:
+        _stub_litellm(monkeypatch, tool="find_in_databases", arguments="{}")
+        client.post(
+            "/api/chat",
+            json={
+                "thread_id": "silicon",
+                "message": {"role": "user", "content": "Find bulk SILICON for me"},
+                "title": "Database lookup",
+            },
+        )
+        _stub_litellm(monkeypatch, tool="find_in_databases", arguments="{}")
+        client.post(
+            "/api/chat",
+            json={
+                "thread_id": "iron",
+                "message": {"role": "user", "content": "Find bcc iron"},
+                "title": "Magnetic Fe",
+            },
+        )
+
+        def search(q):
+            response = client.get("/api/conversations/search", params={"q": q})
+            assert response.status_code == 200
+            return sorted(response.json())
+
+        assert search("silicon") == ["silicon"]
+        assert search("magnetic fe") == ["iron"]
+        assert search("reviewed") == ["iron", "silicon"]
+        assert search("perovskite") == []
+        assert search("   ") == []
+
+
+def test_conversation_search_404s_in_the_shared_deployment(
+    tmp_path, monkeypatch
+) -> None:
+    """Searching would read every visitor's chats on the shared server."""
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    with _make_client(tmp_path, monkeypatch) as client:
+        response = client.get("/api/conversations/search", params={"q": "x"})
+        assert response.status_code == 404
+
+
 def test_mlip_routes_404_in_the_shared_deployment(tmp_path, monkeypatch) -> None:
     """MLIP Playground is offered by the local version only -- on the web
     deployment every `/api/mlip/*` route must refuse before touching the

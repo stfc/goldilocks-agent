@@ -554,6 +554,8 @@ const TRANSLATIONS = {
     open_project: "Open project", new_chat_in_project: "New chat in project",
     chats: "Chats", sources: "Sources", general_chat: "General chat",
     search: "Search", see_less: "See less",
+    search_chats: "Search chats", search_results: "Results",
+    search_searching: "Searching…", search_no_match: "No chats match",
     // Settings
     settings: "Settings", profile: "Profile", experience_level: "Experience level",
     not_selected: "Not selected yet", change: "Change",
@@ -653,6 +655,8 @@ const TRANSLATIONS = {
     open_project: "Ouvrir le projet", new_chat_in_project: "Nouvelle conversation dans le projet",
     chats: "Conversations", sources: "Sources", general_chat: "Chat général",
     search: "Rechercher", see_less: "Voir moins",
+    search_chats: "Rechercher dans les conversations", search_results: "Résultats",
+    search_searching: "Recherche…", search_no_match: "Aucune conversation ne correspond",
     settings: "Paramètres", profile: "Profil", experience_level: "Niveau d'expérience",
     not_selected: "Non sélectionné", change: "Modifier",
     contribute_heading: "Je veux contribuer !",
@@ -746,6 +750,8 @@ const TRANSLATIONS = {
     open_project: "Projekt öffnen", new_chat_in_project: "Neuer Chat im Projekt",
     chats: "Chats", sources: "Quellen", general_chat: "Allgemeiner Chat",
     search: "Suchen", see_less: "Weniger anzeigen",
+    search_chats: "Chats durchsuchen", search_results: "Ergebnisse",
+    search_searching: "Suche läuft…", search_no_match: "Keine passenden Chats",
     settings: "Einstellungen", profile: "Profil", experience_level: "Erfahrungsstufe",
     not_selected: "Noch nicht ausgewählt", change: "Ändern",
     contribute_heading: "Ich möchte beitragen!",
@@ -839,6 +845,8 @@ const TRANSLATIONS = {
     open_project: "打开项目", new_chat_in_project: "在项目中新建对话",
     chats: "对话", sources: "来源", general_chat: "普通对话",
     search: "搜索", see_less: "收起",
+    search_chats: "搜索聊天", search_results: "搜索结果",
+    search_searching: "正在搜索…", search_no_match: "没有匹配的聊天",
     settings: "设置", profile: "个人资料", experience_level: "经验等级",
     not_selected: "尚未选择", change: "修改",
     contribute_heading: "我想贡献！",
@@ -932,6 +940,8 @@ const TRANSLATIONS = {
     open_project: "Apri progetto", new_chat_in_project: "Nuova chat nel progetto",
     chats: "Chat", sources: "Fonti", general_chat: "Chat generale",
     search: "Cerca", see_less: "Mostra meno",
+    search_chats: "Cerca nelle chat", search_results: "Risultati",
+    search_searching: "Ricerca in corso…", search_no_match: "Nessuna chat corrispondente",
     settings: "Impostazioni", profile: "Profilo", experience_level: "Livello di esperienza",
     not_selected: "Non ancora selezionato", change: "Modifica",
     contribute_heading: "Voglio contribuire!",
@@ -2278,6 +2288,20 @@ export default function App() {
   const beyondDftMachineMeta = findOptionInGroups(DFT_HPC_GROUPS, beyondDftMachine) ?? DFT_HPC_GROUPS[0].items[0];
   const selectedBeyondDftMethodMeta = findOptionInGroups(BEYOND_DFT_METHOD_GROUPS, selectedBeyondDftMethod) ?? BEYOND_DFT_METHOD_GROUPS[1].items[0];
   const recentSessions = useMemo(() => sessions.filter((item) => item.projectId === null), [sessions]);
+  // Sidebar chat search (local build only): titles match as you type; the
+  // server adds chats whose messages match (`chatSearchHits`), debounced.
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [chatSearchHits, setChatSearchHits] = useState<string[]>([]);
+  const [chatSearchPending, setChatSearchPending] = useState(false);
+  const chatSearchTimer = useRef<number | null>(null);
+  const chatSearchAbort = useRef<AbortController | null>(null);
+  const chatSearchResults = useMemo(() => {
+    const needle = chatSearchQuery.trim().toLocaleLowerCase();
+    if (!needle) return [];
+    const hits = new Set(chatSearchHits);
+    return sessions.filter((item) => hits.has(item.id) || item.title.toLocaleLowerCase().includes(needle));
+  }, [sessions, chatSearchQuery, chatSearchHits]);
   const visibleProjects = showAllProjects ? projects : projects.slice(0, 3);
   const hiddenProjectCount = Math.max(projects.length - 3, 0);
   const selectedElements = useMemo(() => Object.keys(pickerElements).filter((s) => pickerElements[s] > 0), [pickerElements]);
@@ -2630,6 +2654,40 @@ export default function App() {
     } catch {
       window.alert("Couldn't create the project -- is the agent server running?");
     }
+  }
+
+  function changeChatSearch(query: string) {
+    setChatSearchQuery(query);
+    setChatSearchHits([]);
+    if (chatSearchTimer.current !== null) window.clearTimeout(chatSearchTimer.current);
+    chatSearchAbort.current?.abort();
+    setChatSearchPending(Boolean(query.trim()));
+    if (!query.trim()) return;
+    chatSearchTimer.current = window.setTimeout(() => {
+      const controller = new AbortController();
+      chatSearchAbort.current = controller;
+      fetch(`/api/conversations/search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((ids: string[]) => {
+          setChatSearchHits(ids);
+          setChatSearchPending(false);
+        })
+        .catch((error) => {
+          if (error.name !== "AbortError") setChatSearchPending(false);
+        });
+    }, 250);
+  }
+
+  function closeChatSearch() {
+    changeChatSearch("");
+    setChatSearchOpen(false);
+  }
+
+  function openSearchResult(item: Session) {
+    setActiveId(item.id);
+    setActiveProjectId(item.projectId);
+    setView("chats");
+    setShowElementPicker(false);
   }
 
   function openProject(projectId) {
@@ -5345,6 +5403,30 @@ export default function App() {
 
         .sidebar-nav + .sidebar-nav {
           padding-top: 0;
+        }
+
+        .sidebar-search-input {
+          width: 100%;
+          box-sizing: border-box;
+          margin-top: 4px;
+          padding: 8px 12px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--bg-elev);
+          color: var(--text);
+          font: inherit;
+          font-size: 13px;
+          outline: none;
+        }
+
+        .sidebar-search-input:focus {
+          border-color: color-mix(in srgb, var(--border) 180%, transparent);
+        }
+
+        .sidebar-search-note {
+          padding: 4px 10px;
+          font-size: 12px;
+          color: var(--subtle);
         }
 
         .nav-row {
@@ -9455,10 +9537,26 @@ export default function App() {
             </button>
             {/* The web build keeps no chat history to search (§19.2). */}
             {!SHARED_DEPLOYMENT && (
-              <button className="nav-row">
+              <button
+                className={`nav-row${chatSearchOpen ? " active" : ""}`}
+                aria-expanded={chatSearchOpen}
+                onClick={() => (chatSearchOpen ? closeChatSearch() : setChatSearchOpen(true))}
+              >
                 <SearchIcon />
                 <span>{t("search")}</span>
               </button>
+            )}
+            {!SHARED_DEPLOYMENT && chatSearchOpen && (
+              <input
+                autoFocus
+                type="search"
+                className="sidebar-search-input"
+                placeholder={t("search_chats")}
+                aria-label={t("search_chats")}
+                value={chatSearchQuery}
+                onChange={(event) => changeChatSearch(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Escape") closeChatSearch(); }}
+              />
             )}
           </div>
 
@@ -9469,6 +9567,36 @@ export default function App() {
               the shared deployment rather than showing an empty/broken list. */}
           {!SHARED_DEPLOYMENT && (
           <div className="session-list">
+            {chatSearchOpen && chatSearchQuery.trim() ? (
+              <>
+                <div className="group-label">{t("search_results")}</div>
+                <div className="sidebar-project-chats">
+                  {chatSearchResults.map((item) => {
+                    const tool = getToolById(item.tool);
+                    const project = projects.find((entry) => entry.id === item.projectId);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`session-item${item.id === currentActiveId ? " active" : ""}`}
+                        onClick={() => openSearchResult(item)}
+                      >
+                        <div className="tool-dot" style={{ background: tool?.color ?? "transparent" }} />
+                        <div className="session-copy">
+                          <div className="session-title">{item.title}</div>
+                          {project ? <div className="session-meta">{project.name}</div> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {chatSearchResults.length === 0 ? (
+                  <div className="sidebar-search-note">
+                    {chatSearchPending ? t("search_searching") : t("search_no_match")}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+            <>
             <div className="group-label">{t("projects")}</div>
             <button className="nav-row sidebar-project-create" onClick={() => setCreateProjectOpen(true)}>
               <FolderIcon />
@@ -9539,6 +9667,8 @@ export default function App() {
                 );
               })}
             </div>
+            </>
+            )}
 
           </div>
           )}
