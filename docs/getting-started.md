@@ -44,7 +44,7 @@ Quickest to set up. Get an API key from
 [OpenAI](https://platform.openai.com/api-keys) or
 [Google](https://aistudio.google.com/apikey) (Gemini). Then either:
 
-- paste it into the app under **Settings → Model**, or
+- paste it into the app under **Settings → Chat model and API keys**, or
 - put it in a file named `.env` next to `docker-compose.yml`, then run
   `docker compose up -d` again:
 
@@ -119,7 +119,7 @@ nothing. `down -v` deletes them.
 
 **Chat replies with an authentication error.** The cloud model you picked
 has no API key, or a wrong one. In the model menu, a provider with a saved
-key says "✓ API key saved". Add or fix the key in **Settings → Model**, or
+key says "✓ API key saved". Add or fix the key in **Settings → Chat model and API keys**, or
 pick another model.
 
 **No reply from the local model.**

@@ -14,9 +14,9 @@ Run `docker compose up -d` after changing either file.
 
 | Key for | In Settings | In `.env` |
 |---|---|---|
-| Anthropic (Claude) | Model | `ANTHROPIC_API_KEY` |
-| OpenAI | Model | `OPENAI_API_KEY` |
-| Google (Gemini) | Model | `GEMINI_API_KEY` |
+| Anthropic (Claude) | Chat model and API keys | `ANTHROPIC_API_KEY` |
+| OpenAI | Chat model and API keys | `OPENAI_API_KEY` |
+| Google (Gemini) | Chat model and API keys | `GEMINI_API_KEY` |
 | Materials Project search | Databases | `MP_API_KEY` |
 
 A key in `.env` takes precedence over one saved in Settings. Settings saves

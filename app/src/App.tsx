@@ -642,11 +642,17 @@ const TRANSLATIONS = {
     tools_coming_soon: "Coming soon",
     tools_coming_soon_local: "Coming soon to the web · in the local version now",
     narrow_screen_notice: "Goldilocks is made for a computer screen. On a phone or a narrow window parts of it overlap; please use a desktop browser or a wider window.",
-    settings_model_heading: "Model",
-    settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
+    settings_model_heading: "Chat model and API keys",
+    settings_model_heading_shared: "Chat model",
+    settings_model_desc: "Pick the model in the menu next to the message box. Qwen3.8-27B runs on this computer through Ollama (install Ollama and run ollama pull qwen3.8 first), so your messages and structures stay here. Claude, OpenAI and Gemini need their API key below; with them, your messages and attached structures are sent to that provider.",
     settings_model_key_placeholder: "Not set",
     settings_model_key_hint: "Stored locally on this machine only — a key is only sent to the provider it belongs to, never anywhere else.",
-    settings_model_desc_shared: "On this website the model (Qwen3.8-27B) runs on STFC's server. Your messages and attached structures are sent there and deleted 24 hours after your last message, so please don't upload confidential data. To keep everything on your own machine, use the local version.",
+    settings_model_desc_shared: "On this website the chat model is Qwen3.8-27B, running on STFC's server. You can't pick another model or add API keys here. Your messages and attached structures are sent to STFC's server and deleted 24 hours after your last message, so please don't upload confidential data.",
+    settings_local_only_heading: "The local version, on your own computer, also has:",
+    settings_local_only_models: "Claude, OpenAI or Gemini with your own API key, or Qwen3.8-27B run by Ollama on your computer",
+    settings_local_only_mp: "Materials Project search, with your own free API key",
+    settings_local_only_mlip: "MLIP Playground, for MACE calculations on your structures",
+    settings_local_only_chats: "Chats that stay on your computer until you delete them",
     settings_local_version_link: "Get the local version",
     settings_databases_heading: "Databases",
     settings_databases_desc: "Materials Project needs a free API key to search. Get one at materialsproject.org/api.",
@@ -739,11 +745,17 @@ const TRANSLATIONS = {
     tools_coming_soon: "Bientôt disponible",
     tools_coming_soon_local: "Bientôt sur le web · déjà dans la version locale",
     narrow_screen_notice: "Goldilocks est conçu pour un écran d'ordinateur. Sur un téléphone ou une fenêtre étroite, certains éléments se chevauchent : utilisez un navigateur de bureau ou une fenêtre plus large.",
-    settings_model_heading: "Modèle",
-    settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
+    settings_model_heading: "Modèle de chat et clés API",
+    settings_model_heading_shared: "Modèle de chat",
+    settings_model_desc: "Choisissez le modèle dans le menu à côté de la zone de message. Qwen3.8-27B tourne sur cet ordinateur via Ollama (installez Ollama et lancez ollama pull qwen3.8 d'abord) : vos messages et vos structures restent ici. Claude, OpenAI et Gemini nécessitent leur clé API ci-dessous ; avec eux, vos messages et les structures jointes sont envoyés à ce fournisseur.",
     settings_model_key_placeholder: "Non définie",
     settings_model_key_hint: "Stockée uniquement en local sur cette machine — une clé n'est envoyée qu'au fournisseur auquel elle appartient, jamais ailleurs.",
-    settings_model_desc_shared: "Sur ce site, le modèle (Qwen3.8-27B) tourne sur le serveur du STFC. Vos messages et les structures jointes y sont envoyés et supprimés 24 heures après votre dernier message : merci de ne pas téléverser de données confidentielles. Pour tout garder sur votre propre machine, utilisez la version locale.",
+    settings_model_desc_shared: "Sur ce site, le modèle de chat est Qwen3.8-27B, qui tourne sur le serveur du STFC. Vous ne pouvez pas choisir un autre modèle ni ajouter de clé API ici. Vos messages et les structures jointes sont envoyés au serveur du STFC et supprimés 24 heures après votre dernier message : merci de ne pas téléverser de données confidentielles.",
+    settings_local_only_heading: "La version locale, sur votre propre ordinateur, offre en plus :",
+    settings_local_only_models: "Claude, OpenAI ou Gemini avec votre propre clé API, ou Qwen3.8-27B exécuté par Ollama sur votre ordinateur",
+    settings_local_only_mp: "La recherche dans Materials Project, avec votre propre clé API gratuite",
+    settings_local_only_mlip: "MLIP Playground, pour des calculs MACE sur vos structures",
+    settings_local_only_chats: "Des conversations conservées sur votre ordinateur jusqu'à ce que vous les supprimiez",
     settings_local_version_link: "Obtenir la version locale",
     settings_databases_heading: "Bases de données",
     settings_databases_desc: "Materials Project nécessite une clé API gratuite pour la recherche. Obtenez-en une sur materialsproject.org/api.",
@@ -836,11 +848,17 @@ const TRANSLATIONS = {
     tools_coming_soon: "Demnächst verfügbar",
     tools_coming_soon_local: "Bald auch im Web · in der lokalen Version schon verfügbar",
     narrow_screen_notice: "Goldilocks ist für einen Computerbildschirm gemacht. Auf einem Telefon oder in einem schmalen Fenster überlappen sich Teile; bitte verwenden Sie einen Desktop-Browser oder ein breiteres Fenster.",
-    settings_model_heading: "Modell",
-    settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
+    settings_model_heading: "Chat-Modell und API-Schlüssel",
+    settings_model_heading_shared: "Chat-Modell",
+    settings_model_desc: "Wählen Sie das Modell im Menü neben dem Eingabefeld. Qwen3.8-27B läuft über Ollama auf diesem Rechner (installieren Sie zuerst Ollama und führen Sie ollama pull qwen3.8 aus), Ihre Nachrichten und Strukturen bleiben also hier. Claude, OpenAI und Gemini benötigen unten ihren API-Schlüssel; mit ihnen werden Ihre Nachrichten und angehängten Strukturen an den jeweiligen Anbieter gesendet.",
     settings_model_key_placeholder: "Nicht festgelegt",
     settings_model_key_hint: "Wird nur lokal auf diesem Rechner gespeichert — ein Schlüssel wird ausschließlich an den zugehörigen Anbieter gesendet, niemals anderswohin.",
-    settings_model_desc_shared: "Auf dieser Website läuft das Modell (Qwen3.8-27B) auf dem Server des STFC. Ihre Nachrichten und angehängten Strukturen werden dorthin gesendet und 24 Stunden nach Ihrer letzten Nachricht gelöscht; laden Sie daher bitte keine vertraulichen Daten hoch. Wenn alles auf Ihrem eigenen Rechner bleiben soll, verwenden Sie die lokale Version.",
+    settings_model_desc_shared: "Auf dieser Website ist das Chat-Modell Qwen3.8-27B, das auf dem Server des STFC läuft. Hier können Sie kein anderes Modell wählen und keine API-Schlüssel hinzufügen. Ihre Nachrichten und angehängten Strukturen werden an den Server des STFC gesendet und 24 Stunden nach Ihrer letzten Nachricht gelöscht; laden Sie daher bitte keine vertraulichen Daten hoch.",
+    settings_local_only_heading: "Die lokale Version auf Ihrem eigenen Rechner bietet zusätzlich:",
+    settings_local_only_models: "Claude, OpenAI oder Gemini mit Ihrem eigenen API-Schlüssel, oder Qwen3.8-27B, von Ollama auf Ihrem Rechner ausgeführt",
+    settings_local_only_mp: "Suche in Materials Project, mit Ihrem eigenen kostenlosen API-Schlüssel",
+    settings_local_only_mlip: "MLIP Playground, für MACE-Rechnungen an Ihren Strukturen",
+    settings_local_only_chats: "Unterhaltungen, die auf Ihrem Rechner bleiben, bis Sie sie löschen",
     settings_local_version_link: "Lokale Version herunterladen",
     settings_databases_heading: "Datenbanken",
     settings_databases_desc: "Materials Project benötigt einen kostenlosen API-Schlüssel für die Suche. Holen Sie sich einen unter materialsproject.org/api.",
@@ -933,11 +951,17 @@ const TRANSLATIONS = {
     tools_coming_soon: "即将推出",
     tools_coming_soon_local: "网页版即将推出 · 本地版已可用",
     narrow_screen_notice: "Goldilocks 是为电脑屏幕设计的。在手机或较窄的窗口里，部分内容会互相重叠，请使用电脑浏览器或把窗口拉宽。",
-    settings_model_heading: "模型",
-    settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
+    settings_model_heading: "聊天模型与 API 密钥",
+    settings_model_heading_shared: "聊天模型",
+    settings_model_desc: "在消息框旁边的菜单里选择模型。Qwen3.8-27B 通过 Ollama 在这台电脑上运行（需要先安装 Ollama 并运行 ollama pull qwen3.8），你的消息和结构文件都留在本机。Claude、OpenAI 和 Gemini 需要在下方填写各自的 API 密钥；使用它们时，你的消息和附加的结构文件会发送给对应的服务商。",
     settings_model_key_placeholder: "未设置",
     settings_model_key_hint: "仅保存在本机——密钥只会发送给其所属的服务商，绝不会发往其他任何地方。",
-    settings_model_desc_shared: "在本网站上，模型（Qwen3.8-27B）运行在 STFC 的服务器上。你的消息和附加的结构文件会发送到服务器，并在你最后一条消息 24 小时后删除，所以请不要上传保密数据。如果希望所有内容都只留在自己的电脑上，请使用本地版。",
+    settings_model_desc_shared: "本网站的聊天模型是 Qwen3.8-27B，运行在 STFC 的服务器上。这里不能选择其他模型，也不能填写 API 密钥。你的消息和附加的结构文件会发送到 STFC 的服务器，并在你最后一条消息 24 小时后删除，所以请不要上传保密数据。",
+    settings_local_only_heading: "在你自己电脑上运行的本地版还提供：",
+    settings_local_only_models: "Claude、OpenAI 或 Gemini（使用你自己的 API 密钥），或通过 Ollama 在你电脑上运行的 Qwen3.8-27B",
+    settings_local_only_mp: "Materials Project 搜索（使用你自己的免费 API 密钥）",
+    settings_local_only_mlip: "MLIP Playground：用 MACE 计算你的结构",
+    settings_local_only_chats: "对话保存在你自己的电脑上，直到你删除为止",
     settings_local_version_link: "获取本地版",
     settings_databases_heading: "数据库",
     settings_databases_desc: "搜索 Materials Project 需要一个免费的 API key，可以在 materialsproject.org/api 申请。",
@@ -1030,11 +1054,17 @@ const TRANSLATIONS = {
     tools_coming_soon: "Prossimamente",
     tools_coming_soon_local: "Presto sul web · già nella versione locale",
     narrow_screen_notice: "Goldilocks è pensato per lo schermo di un computer. Su un telefono o in una finestra stretta alcune parti si sovrappongono: usa un browser desktop o una finestra più larga.",
-    settings_model_heading: "Modello",
-    settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
+    settings_model_heading: "Modello di chat e chiavi API",
+    settings_model_heading_shared: "Modello di chat",
+    settings_model_desc: "Scegli il modello nel menu accanto alla casella del messaggio. Qwen3.8-27B gira su questo computer tramite Ollama (prima installa Ollama ed esegui ollama pull qwen3.8), quindi i tuoi messaggi e le tue strutture restano qui. Claude, OpenAI e Gemini richiedono la loro chiave API qui sotto; con loro, i tuoi messaggi e le strutture allegate vengono inviati a quel fornitore.",
     settings_model_key_placeholder: "Non impostata",
     settings_model_key_hint: "Salvata solo localmente su questa macchina — una chiave viene inviata solo al fornitore a cui appartiene, mai altrove.",
-    settings_model_desc_shared: "Su questo sito il modello (Qwen3.8-27B) gira sul server dello STFC. I tuoi messaggi e le strutture allegate vengono inviati lì ed eliminati 24 ore dopo il tuo ultimo messaggio, quindi non caricare dati riservati. Per tenere tutto sul tuo computer, usa la versione locale.",
+    settings_model_desc_shared: "Su questo sito il modello di chat è Qwen3.8-27B, che gira sul server dello STFC. Qui non puoi scegliere un altro modello né aggiungere chiavi API. I tuoi messaggi e le strutture allegate vengono inviati al server dello STFC ed eliminati 24 ore dopo il tuo ultimo messaggio, quindi non caricare dati riservati.",
+    settings_local_only_heading: "La versione locale, sul tuo computer, offre anche:",
+    settings_local_only_models: "Claude, OpenAI o Gemini con la tua chiave API, oppure Qwen3.8-27B eseguito da Ollama sul tuo computer",
+    settings_local_only_mp: "La ricerca in Materials Project, con la tua chiave API gratuita",
+    settings_local_only_mlip: "MLIP Playground, per calcoli MACE sulle tue strutture",
+    settings_local_only_chats: "Conversazioni che restano sul tuo computer finché non le elimini",
     settings_local_version_link: "Scarica la versione locale",
     settings_databases_heading: "Banche dati",
     settings_databases_desc: "Materials Project richiede una chiave API gratuita per la ricerca. Ottienine una su materialsproject.org/api.",
@@ -9242,6 +9272,18 @@ export default function App() {
           font-size: 12px;
         }
 
+        .settings-section p.settings-list-lead {
+          margin-bottom: 4px;
+        }
+
+        .settings-list {
+          color: var(--muted);
+          font-size: 12px;
+          line-height: 1.6;
+          margin: 0 0 10px;
+          padding-left: 18px;
+        }
+
         .credential-row {
           display: flex;
           align-items: center;
@@ -10616,10 +10658,19 @@ export default function App() {
                 // the visitor's own (server.py rejects /api/credentials), so
                 // the section says where their chat goes and how long it
                 // stays -- 24 h is chat_retention.py's default
-                // (GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS in the STFC compose).
+                // (GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS in the STFC compose)
+                // -- and what only the local version has: cloud models, MP
+                // search (find_in_databases skips it here), MLIP Playground.
                 <section className="settings-section">
-                  <h3>{t("settings_model_heading")}</h3>
+                  <h3>{t("settings_model_heading_shared")}</h3>
                   <p>{t("settings_model_desc_shared")}</p>
+                  <p className="settings-list-lead">{t("settings_local_only_heading")}</p>
+                  <ul className="settings-list">
+                    <li>{t("settings_local_only_models")}</li>
+                    <li>{t("settings_local_only_mp")}</li>
+                    <li>{t("settings_local_only_mlip")}</li>
+                    <li>{t("settings_local_only_chats")}</li>
+                  </ul>
                   <a
                     className="settings-link"
                     href={LOCAL_VERSION_URL}
