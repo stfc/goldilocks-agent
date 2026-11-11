@@ -6,8 +6,9 @@ four sources and can return dozens of raw entries, many of which are the same
 structure indexed independently by more than one database, or genuinely
 distinct polymorphs. Presenting that flat list makes the user click through
 every entry to find anything useful -- grouping by (formula, spacegroup)
-surfaces a structure corroborated by multiple independent sources, or one
-that's the thermodynamic ground state, before an isolated single-source hit.
+and ranking puts the lowest-energy structure first, its formation energy
+compared only with the same database's others (functionals differ between
+databases), and then one corroborated by more independent sources.
 
 `filter_by_properties` backs the UI panel's "What are you looking for?" chips
 (Electronic structure / Stability & energy / Magnetic / Elastic & mechanical /
@@ -16,6 +17,8 @@ user actually asked about, not just decoration on an unfiltered dump.
 """
 
 from __future__ import annotations
+
+from pymatgen.core import Composition
 
 from goldilocks_agent.tools.structure_search.models import (
     CandidateGroup,
@@ -31,6 +34,10 @@ from goldilocks_agent.tools.structure_search.models import (
 _SOURCE_PRIORITY = ["Materials Project", "JARVIS", "NOMAD", "Materials Cloud"]
 
 _DEFAULT_MAX_GROUPS = 8
+
+# Formation energies closer than this (eV/atom) count as the same lowest one,
+# e.g. two entries of the same structure in one database.
+_LOWEST_TOLERANCE = 1e-3
 
 # Every field a group can carry, keyed by which of the UI panel's six filter
 # chips it belongs to (models.py's module docstring has the per-source
@@ -85,14 +92,54 @@ def _build_group(
     )
 
 
-def _sort_key(group: CandidateGroup) -> tuple[int, float, int]:
-    # More independent sources first; then closer to the thermodynamic ground
-    # state (None sorts last, not first -- an unknown stability is not
-    # evidence of instability); then more raw entries as a final tiebreak.
-    hull = group.energy_above_hull
+def _same_formula(formula: str) -> str:
+    """One spelling per composition: the sources order elements differently
+    (Materials Cloud and NOMAD give NaCl as "ClNa"), which split one structure
+    into two groups. Falls back to the formula as given if it doesn't parse."""
+    try:
+        return Composition(formula).reduced_formula
+    except (ValueError, KeyError):
+        return formula
+
+
+def _rank_energies(groups: list[CandidateGroup], entries: list[MatchEntry]) -> None:
+    """Fill each group's energy_above_lowest and lowest_energy_in from
+    formation energies, comparing a database only with itself: the lowest
+    per (database, composition) over every entry in the search, grouped or
+    not."""
+    lowest: dict[tuple[str, str], float] = {}
+    for entry in entries:
+        if entry.formation_energy_per_atom is None:
+            continue
+        key = (entry.source, _same_formula(entry.formula))
+        lowest[key] = min(
+            lowest.get(key, entry.formation_energy_per_atom),
+            entry.formation_energy_per_atom,
+        )
+    for group in groups:
+        above: dict[str, float] = {}
+        for entry in group.entries:
+            if entry.formation_energy_per_atom is None:
+                continue
+            gap = (
+                entry.formation_energy_per_atom - lowest[(entry.source, group.formula)]
+            )
+            above[entry.source] = min(above.get(entry.source, gap), gap)
+        if above:
+            group.energy_above_lowest = min(above.values())
+            group.lowest_energy_in = sorted(
+                source for source, gap in above.items() if gap <= _LOWEST_TOLERANCE
+            )
+
+
+def _sort_key(group: CandidateGroup) -> tuple[float, int, int]:
+    # Lowest energy first, judged within one database (energy_above_lowest;
+    # None sorts last -- unknown isn't evidence of instability); then more
+    # independent sources; then more raw entries as a final tiebreak.
+    energy = group.energy_above_lowest
     return (
+        energy if energy is not None else float("inf"),
         -len(group.sources),
-        hull if hull is not None else float("inf"),
         -len(group.entries),
     )
 
@@ -100,7 +147,8 @@ def _sort_key(group: CandidateGroup) -> tuple[int, float, int]:
 def group_candidates(
     result: StructureMatchResult, max_groups: int = _DEFAULT_MAX_GROUPS
 ) -> GroupedSearchResult:
-    """Dedupe `result.results` by (formula, spacegroup) and rank the groups.
+    """Dedupe `result.results` by (formula, spacegroup) and rank the groups;
+    formulas compare by composition (`_same_formula`).
 
     Entries with no spacegroup (structure couldn't be resolved -- happens for
     some Materials Cloud/NOMAD hits) go to `ungrouped` instead of being
@@ -113,12 +161,14 @@ def group_candidates(
         if not entry.spacegroup:
             ungrouped.append(entry)
             continue
-        groups_by_key.setdefault((entry.formula, entry.spacegroup), []).append(entry)
+        key = (_same_formula(entry.formula), entry.spacegroup)
+        groups_by_key.setdefault(key, []).append(entry)
 
     groups = [
         _build_group(formula, spacegroup, entries)
         for (formula, spacegroup), entries in groups_by_key.items()
     ]
+    _rank_energies(groups, result.results)
     groups.sort(key=_sort_key)
 
     truncated_group_count = max(0, len(groups) - max_groups)
@@ -128,6 +178,7 @@ def group_candidates(
         ungrouped=ungrouped,
         truncated_group_count=truncated_group_count,
         errors=result.errors,
+        skipped=result.skipped,
     )
 
 
