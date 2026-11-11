@@ -13,7 +13,7 @@ different thing.
 | Addresses | private 192.168.100.226, floating 130.246.214.189 |
 | DNS | `workbench.goldilocks.ac.uk` is a CNAME to `host-130-246-214-189.nubes.stfc.ac.uk` |
 | Web server | nginx 1.18 (Ubuntu package, a host service, not in Docker) terminates TLS with a Let's Encrypt certificate for both names and proxies everything to `127.0.0.1:8080`. The app is served at `/`. |
-| Containers | this directory's `docker-compose.yml`: `agent` (`ghcr.io/stfc/goldilocks-agent:web`, the web build CI publishes from main, plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
+| Containers | this directory's `docker-compose.yml`: `agent` (`ghcr.io/stfc/goldilocks-agent:web`, the web build CI publishes from main, plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`; mMACE on the GPU), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
 | Checkout | `/home/ubuntu/goldilocks-agent`, `origin` = https://github.com/stfc/goldilocks-agent.git, on `main` |
 
 ## Access policy
@@ -186,10 +186,11 @@ HOME_VOL=stfc-cloud_goldilocks_home
 OLD=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' $(docker compose ps -q agent) | cut -c1-7)
 docker compose pull agent
 IMG=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["agent"]["image"])')
+TORCH=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["agent"]["environment"]["UV_TORCH_BACKEND"])')
 docker run --rm --network host -v $HOME_VOL:/home/goldilocks \
   -v $PWD/core-upgrade/prewarm.sh:/prewarm.sh:ro -v $PWD/core-upgrade/smoke.py:/smoke.py:ro \
   -e GOLDILOCKS_ASSET_ROOT=/home/goldilocks/.local/share/goldilocks/assets-next \
-  -e UV_TORCH_BACKEND=cpu \
+  -e UV_TORCH_BACKEND=$TORCH \
   $IMG sh /prewarm.sh
 ```
 
@@ -241,6 +242,51 @@ the image carried core's source and ran it from the volume
 a few days, remove what that left behind:
 `docker volume rm stfc-cloud_goldilocks_core_venv stfc-cloud_goldilocks_core_venv_prev stfc-cloud_goldilocks_core_venv_v030`,
 `assets-v031`, and the local images `goldilocks-agent-stfc-cloud:*`.
+
+## mMACE on the GPU
+
+goldilocks-core's mMACE (the is_magnetic classifier and magnetic-ordering
+ranking) runs on the A100, next to Ollama (2026-11-11):
+
+- `GOLDILOCKS_MMACE_DEVICE: cuda` tells core to use the GPU. Without a usable
+  GPU, core falls back to the CPU and logs one warning at startup.
+- `UV_TORCH_BACKEND: cu130` makes `uvx` install a CUDA build of torch for
+  core.
+- The `agent` service reserves the same GPU as `ollama`.
+
+**What was measured.** The first measurements were on the A100 on 2026-11-10,
+with goldilocks-ml 0.3.3:
+
+- Rankings came out identical to the CPU's.
+- A ranking added about 1 GB of GPU memory, and a 128-atom cell 5.3 GB.
+- While a ranking ran, each chat decoded about 18% slower.
+
+With core 0.3.2 the CPU ranked bcc Fe in 24.6 s. On the GPU, a ranking that
+started a fresh worker spent most of its time starting it: about 19 s,
+including CUDA init. Since core 0.3.3, a ranking runs on a standby worker
+warmed ahead of it, with mace imported, the checkpoint loaded and CUDA
+initialised (core#285). The job takes the standby, and the next one warms
+while it runs; a job's worker exits when it ends, freeing its memory. So on
+the GPU a ranking skips that start. The cost is one more resident process,
+two while a job runs, each holding a CUDA context and the model.
+
+**Switching, either way.** Change the three settings in
+`docker-compose.yml`:
+
+- `UV_TORCH_BACKEND`: `cu130` for the GPU, `cpu` for the CPU;
+- `GOLDILOCKS_MMACE_DEVICE`: present for the GPU, removed for the CPU;
+- the `agent` service's GPU reservation: present for the GPU, removed for the
+  CPU.
+
+Then follow "Upgrading goldilocks-core" above. Its prewarm reads
+`UV_TORCH_BACKEND` from the compose file and builds that torch build's
+environment. The first switch to the GPU downloads about 3 GB of CUDA
+libraries, and the assets don't change. Don't run the CUDA build on the CPU:
+it ranked bcc Fe about 9 times slower than the CPU build.
+
+**Checking.** While a ranking runs, `nvidia-smi` lists a second process next
+to Ollama's. The core log has no `GOLDILOCKS_MMACE_DEVICE=cuda, but ...,
+so mMACE runs on the CPU` warning: `docker compose logs agent | grep -i mmace`.
 
 ## Verifying
 
