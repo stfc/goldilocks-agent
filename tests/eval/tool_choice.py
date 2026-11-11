@@ -7,8 +7,8 @@ OpenAI-style messages, streamed through litellm) and checks whether that step
 is the expected one: which tool, with valid arguments, or no tool. Free-form
 answers are not judged, except that an answer comes in the question's language,
 the image case names a number, a summary of tool results states no parameter
-values of its own and doesn't repeat the review card, and the open-goal cases
-(G) name the task to switch or the task the review actually ran.
+values or walltime of its own and doesn't repeat the review card, and the
+open-goal cases (G) name the task to switch or the task the review actually ran.
 
 Tool results in the multi-step cases are built from goldilocks-core 0.3.0's
 recorded responses in app/src/__fixtures__/core, trimmed the way
@@ -497,6 +497,38 @@ def expect_no_card_repeat(max_values: int = 3) -> Check:
     return check
 
 
+# Hours, single or a range ("168h", "1-2 hours", "1-2 小时", en dash too).
+_HOURS = re.compile(
+    rf"(?<![\w.])({_NUMBER})(?:\s*[-\u2013~]\s*({_NUMBER}))?\s*(?:h|hrs?|hours?|小时)(?![a-zA-Z])"
+)
+
+
+def expect_no_hours_of_its_own(messages: list[dict]) -> Check:
+    """No walltime of the model's own: every number of hours the answer
+    states appears as hours in the tool results (core's 168h ceiling), the
+    usual slip being "set it to 1-2 h" (2026-11-11)."""
+    tool_text = " ".join(m["content"] for m in messages if m["role"] == "tool")
+    known = {
+        float(n) for match in _HOURS.finditer(tool_text) for n in match.groups() if n
+    }
+    known |= {
+        float(n) for n in re.findall(r'"walltime_h":\s*(\d+(?:\.\d+)?)', tool_text)
+    }
+
+    def check(step: Step) -> str | None:
+        own = sorted(
+            {
+                n
+                for match in _HOURS.finditer(step.content)
+                for n in match.groups()
+                if n and float(n) not in known
+            }
+        )
+        return f"hours of its own: {', '.join(own)}" if own else None
+
+    return check
+
+
 def values_mentioned(content: str) -> int:
     """How many parameter values (numbers with units, k-meshes) an answer
     names. #74 shows a review's values in a card; the report prints this for
@@ -547,6 +579,23 @@ def cases() -> list[Case]:
     ]
     review_turn = [
         *open_turn,
+        call("dft_review", {}, "c2"),
+        result("c2", _review_result("explain")),
+    ]
+    # M2 in Chinese, asking about the job too: on the web (2026-11-11) a
+    # Chinese review answer told the user to set walltime to "1-2h".
+    review_turn_zh = [
+        user(
+            _attached(
+                "Si.cif",
+                "cif",
+                SI_CIF,
+                "这是硅。我想做一个 SCF 计算。请帮我看看推荐的参数。"
+                "特别是作业要怎么设。",
+            )
+        ),
+        call("dft_open_structure", si_open_args, "c1"),
+        result("c1", _open_result()),
         call("dft_review", {}, "c2"),
         result("c2", _review_result("explain")),
     ]
@@ -744,6 +793,7 @@ def cases() -> list[Case]:
                 expect_answer(),
                 expect_values_from(review_turn),
                 expect_no_card_repeat(),
+                expect_no_hours_of_its_own(review_turn),
             ),
         ),
         Case(
@@ -768,6 +818,7 @@ def cases() -> list[Case]:
                 expect_answer(),
                 expect_values_from(blocked_turn),
                 expect_no_card_repeat(),
+                expect_no_hours_of_its_own(blocked_turn),
             ),
         ),
         Case(
@@ -807,6 +858,17 @@ def cases() -> list[Case]:
             ),
         ),
         # open-ended goals (2026-11-09 browser runs: "I want to study NaCl")
+        Case(
+            "M7",
+            "multi",
+            review_turn_zh,
+            expect_all(
+                expect_answer(lang="zh"),
+                expect_values_from(review_turn_zh),
+                expect_no_card_repeat(),
+                expect_no_hours_of_its_own(review_turn_zh),
+            ),
+        ),
         Case(
             "G1",
             "goal",
