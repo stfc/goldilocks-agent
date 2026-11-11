@@ -1,7 +1,6 @@
 site_name: goldilocks-agent
 site_description: >-
-  LLM orchestration, feedback-driven scientific workflow, and AiiDA execution
-  layer for goldilocks-core.
+  A chat assistant for setting up DFT calculations with goldilocks-core.
 repo_url: https://github.com/stfc/goldilocks-agent
 repo_name: goldilocks-agent
 
@@ -46,3 +45,4 @@ nav:
   - Getting started: getting-started.md
   - Configuration: configuration.md
   - Tools: tools.md
+  - Development: development.md

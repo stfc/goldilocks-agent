@@ -47,7 +47,7 @@ services:
       # Developing goldilocks-core itself? Run your own checkout instead
       # (checkout mode): mount it and uncomment both lines to match. Its
       # environment then lives in the checkout's own .venv.
-      # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/getting-started.md
+      # GOLDILOCKS_CORE_PATH: /goldilocks-core   # see docs/development.md
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

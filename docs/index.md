@@ -1,44 +1,25 @@
-# goldilocks-agent
+# Goldilocks agent
 
-LLM orchestration, feedback-driven scientific workflow, and AiiDA execution
-layer for [`goldilocks-core`](https://github.com/stfc/goldilocks-core). Core
-decides DFT parameters; this package decides *when to ask the user*, *how to
-explain a recommendation*, and *how to run it* (bundle download or AiiDA
-submission).
+A chat assistant for setting up DFT calculations. Give it a crystal
+structure, or ask it to find one in Materials Project, Materials Cloud, NOMAD
+or JARVIS. It shows the Quantum ESPRESSO parameters
+[goldilocks-core](https://github.com/stfc/goldilocks-core) recommends, says
+where each one comes from, and gives you the input files.
 
-## Status
+- **Try it in your browser** at
+  [workbench.goldilocks.ac.uk](https://workbench.goldilocks.ac.uk). Nothing to
+  install; chats are deleted 24 hours after your last message.
+- **Run it on your own computer** with Docker, keeping your chats and using
+  your own model: [Getting started](getting-started.md).
 
-Real, working chat + tool-calling for **Find in Databases** (Materials
-Project/Materials Cloud/NOMAD/JARVIS search). **DFT Workbench** is real
-too, but not via chat tool-calling -- it embeds `goldilocks-core`'s own
-published Workbench UI directly (same content inline, as tabs, and
-full-page, as a grid), talking to a `goldilocks-core` HTTP backend
-goldilocks-agent auto-starts for you (see
-[Configuration](configuration.md)). **MLIP Playground** (local MACE
-calculations via `janus-core`, built) and **Beyond DFT** (panel-only) are
-parked under *Coming soon* this release (see [Tools](tools.md)). **Post
-Analysis** is partial (only its phonon visualizer is real). **AiiDA** is
-not built.
+## On this site
 
-This site covers running and configuring goldilocks-agent. For the full
-product design and a dated log of what's actually been built vs. still
-planned, see
-[`docs/goldilocks-agent-design.md`](https://github.com/stfc/goldilocks-agent/blob/main/docs/goldilocks-agent-design.md)
-and
-[`docs/goldilocks-agent-implementation-plan.md`](https://github.com/stfc/goldilocks-agent/blob/main/docs/goldilocks-agent-implementation-plan.md)
-in the repository -- internal working documents, not part of this site.
+- [Getting started](getting-started.md): install, choose a model, first
+  steps, common problems
+- [Configuration](configuration.md): API keys and options
+- [Tools](tools.md): what each Tool in the right-hand panel does
+- [Development](development.md): running from source, tests, how the code is
+  laid out
 
-## Layout
-
-```
-src/goldilocks_agent/   Python package (LangGraph orchestration, local HTTP/SSE server, Tools)
-app/                    React/Vite frontend (chat + Tools panel; DFT Workbench's inline panel
-                        and full-page detail both embed goldilocks-core/web's published UI)
-mlip-cli/               Own project (own pyproject.toml), just a `janus-core[mace]` dependency pin --
-                        keeps torch/mace out of goldilocks-agent's own env; MLIP Playground shells
-                        out to `janus` (janus-core's own CLI) inside it
-tests/
-docs/                   This site, plus the internal design log
-```
-
-Start with [Getting started](getting-started.md).
+The source, issues and Docker images are on
+[GitHub](https://github.com/stfc/goldilocks-agent).

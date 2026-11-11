@@ -1,41 +1,55 @@
 # Tools
 
-Start a chat and either talk to the model directly, or open one of the
-Tool panels on the right (the small icon strip) for a structured
-interface into the same underlying capability -- for Find in Databases,
-both paths call the same backend functions, and the panel updates live
-when the model calls a tool on its own. DFT Workbench is the
-exception: it has no chat tool-calling of its own -- Goldilocks in chat
-only ever gives DFT guidance, the real setup/results live entirely in its
-embedded panel.
+You can ask for everything in the chat. The Tools on the right show the same
+work as panels: open one from the Tools list, or let the chat open it. The
+expand button at the top of the list shows every Tool full-page.
 
-- **Find in Databases**: search by chemical formula, or type/attach a
-  structure and ask about it directly (`find_in_databases`/`get_structure`
-  tools, no confirmation needed -- it's a read-only lookup). Searches
-  Materials Project, Materials Cloud, NOMAD, and JARVIS.
-- **DFT Workbench**: the embedded goldilocks-core Workbench itself handles
-  structure input, analysis, advisors, and bundle download/generation --
-  talk to it directly, not through chat (`GOLDILOCKS_AGENT_CORE_AUTOSTART`
-  or `GOLDILOCKS_CORE_PATH` must be set; goldilocks-agent auto-starts
-  core's backend for you either way, see [Configuration](configuration.md)).
-  Chat can still explain DFT concepts/workflows in general, it just can't
-  drive this Tool's panel the way it drives Find in Databases. Its magnetism fields can additionally run on a real ML tier
-  (mMACE) instead of heuristic/LLM -- separate opt-in setup, see
-  [Configuration](configuration.md).
-- **Post Analysis** is partial today -- only its phonon visualizer (open
-  any phonopy `band.yaml`) is real.
-- **Local version only**: **MLIP Playground** (MACE single-point/geomopt/
-  EOS/NEB/phonons, confirmation-gated; running it also needs
-  `GOLDILOCKS_AGENT_MLIP_ENABLED`, see Configuration above) and
-  **AiiDAlab-QE**. Their `TOOLS` entries in `app/src/App.tsx` are
-  `localOnly`: the STFC Cloud web deployment lists them under "Coming soon
-  (available in the local version)", hides MLIP Playground's `run_mlip_*`
-  tools from the chat model and refuses its `/api/mlip/*` routes
-  (`mlip_playground_offered()` in `src/goldilocks_agent/tools/__init__.py`).
-- **Coming soon** everywhere (shown only in the full-page All Tools view):
-  **Beyond DFT**. To re-enable it, drop `comingSoon: true` from its `TOOLS`
-  entry in `app/src/App.tsx`.
-- **AiiDAlab-QE** has its entry but no backend yet.
-- Drag a structure file (CIF/XYZ/POSCAR/VASP/XSF/CUBE) onto the window, or
-  use a Tool panel's own "Upload structure" button, to add it to the
-  current chat.
+## Find in Databases
+
+Searches Materials Project, Materials Cloud, NOMAD and JARVIS for a chemical
+formula, for example "find NaCl" in the chat or a formula in the panel.
+Entries that are the same structure are grouped, and within each database
+the lowest-energy structure is marked. Import one into the chat to use it.
+
+Materials Project needs an API key (see [Configuration](configuration.md));
+without one it is skipped and the other databases are searched.
+
+## DFT Workbench
+
+goldilocks-core's Workbench, built in. Give it a structure, attached in the
+chat or uploaded in the panel, and pick a calculation:
+
+- **Structure**: the structure it read.
+- **Analysis**: what goldilocks-core found about it, such as whether it is a
+  metal or magnetic. Magnetism comes from goldilocks-core's ML model where it
+  can; for a magnetic structure, **Run mMACE** ranks its possible magnetic
+  orderings.
+- **Advisors**: the recommended parameters (functional, cutoffs, k-points,
+  smearing, pseudopotentials, ...), each with where it came from.
+- **Bundles**: the Quantum ESPRESSO input files, to download.
+
+The chat can do the same steps for you: open a structure, review the
+recommendation (shown as a card in the chat) and generate the input files.
+The values always come from goldilocks-core, never from the chat model.
+
+In the Tools panel the cards are tabs; full-page they sit side by side.
+
+## Post Analysis
+
+Plots results you have already calculated. For now that is phonon band
+structures: upload a phonopy `band.yaml`. More analyses are coming.
+
+## Local version only
+
+These are in the [local version](getting-started.md), not on the website:
+
+- **MLIP Playground** runs MACE machine-learned interatomic potentials on a
+  structure: single-point energy, geometry optimisation, equation of state,
+  NEB and phonons. When the chat runs one for you, it asks first.
+- **AiiDAlab-QE** is listed but not built yet: it will run Quantum ESPRESSO
+  through AiiDAlab's QE app.
+
+## Coming soon
+
+**Beyond DFT** (GW, BSE, QMC, TDDFT, DFT+DMFT and more) is shown in the
+full-page Tools view but can't be opened yet.

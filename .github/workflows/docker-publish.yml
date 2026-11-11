@@ -62,20 +62,21 @@ jobs:
     permissions:
       contents: read
       packages: write
-    # What each package page says (512 characters at most).
+    # What each package page says above the repository README: plain text,
+    # 512 characters at most.
     env:
       LOCAL_DESCRIPTION: >-
-        Goldilocks agent, local version: chat-driven DFT setup with
-        goldilocks-core, for one person on their own machine, with chat
-        history, every Tool and your own model keys. Run it with the
-        repository's docker-compose.yml. The shared website's build is
-        ghcr.io/stfc/goldilocks-agent-web.
+        Goldilocks on your own computer: a chat assistant that sets up DFT
+        calculations with goldilocks-core. To run it, download
+        docker-compose.yml from https://github.com/stfc/goldilocks-agent, run
+        "docker compose up -d" and open http://localhost:8080. The README
+        below has the steps. Keeps your chat history, has every Tool and uses
+        your own model keys.
       WEB_DESCRIPTION: >-
-        Goldilocks agent, web version: the shared deployment behind
-        https://workbench.goldilocks.ac.uk, for anonymous visitors, with
-        chats kept per browser tab, a pinned local model and the local-only
-        Tools off. Run by deploy/stfc-cloud/docker-compose.yml. To run
-        Goldilocks on your own machine, use ghcr.io/stfc/goldilocks-agent-local.
+        The server image behind https://workbench.goldilocks.ac.uk, the
+        Goldilocks website. You don't need it: to use Goldilocks, open the
+        website; to run it on your own computer, use
+        ghcr.io/stfc/goldilocks-agent-local (steps in the README below).
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -121,6 +122,10 @@ jobs:
           tags: ${{ steps.meta-local.outputs.tags }}
           labels: ${{ steps.meta-local.outputs.labels }}
           annotations: ${{ steps.meta-local.outputs.annotations }}
+          # No build provenance attestation: GHCR lists it under OS / Arch as
+          # an "unknown/unknown" platform with its own pull command, which
+          # reads as a third image. Nothing checks it.
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
       # amd64 only, the STFC VM's architecture; its own cache scope, so the
@@ -149,5 +154,6 @@ jobs:
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
           annotations: ${{ steps.meta-web.outputs.annotations }}
+          provenance: false
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web

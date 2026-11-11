@@ -3670,6 +3670,11 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
     - `ghcr.io/stfc/goldilocks-agent-web`：线上版，STFC 的 compose 用它；
     - 两个都打 `latest` 和 `sha-<commit>`。描述同时写成 label 和 manifest/index annotation，因为 GitHub 读多架构镜像的描述时看的是 index；
     - 旧名字 `ghcr.io/stfc/goldilocks-agent` 立即停止更新（Junwen 定的，不设过渡期）。2026-11-11 之前下载的 `docker-compose.yml` 要换成新的，README 里写了这一点。
+  - **同一天重写了 README 和文档站，面向使用者**（Junwen 选的分工）：两个包页面都显示仓库 README（GitHub 的容器包没有自己的 README，只有一句 ≤512 字符的描述），原来的 README 开头是开发者内容，用户要翻好几屏才看到怎么跑。现在：
+    - README（也就是两个包页面）只写上手：一句话说明、网站链接、本机三步、选模型、更新/停止、两个镜像各是什么，链接都写成绝对地址，因为包页面上相对链接解析不了；
+    - 文档站（stfc.github.io/goldilocks-agent）写完整指南：Getting started（安装、选模型、第一步、常见问题）、Configuration、Tools 更新到现状；开发者内容集中到新的 `docs/development.md`；
+    - 两个包的描述改成白话，本地版写明怎么跑；构建去掉 provenance attestation（`provenance: false`），它在 OS / Arch 里显示成一个 unknown/unknown 平台，像第三个镜像，而且没人校验它；
+    - 写文档时发现 README 里"把 key 写进 `.env`"其实不生效：compose 只用 `.env` 填 `${...}`，key 那几行是注释掉的，容器拿不到。单独修了（compose 里列出四个 key、不给值，设了就传进去，没设就不设）。
 - **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
   - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；
   - 现在镜像里不再带 core 源码。agent 的 PyPI 模式（`uvx --from goldilocks-core[http]==<core_pin 版本>`）把 core 装进 uv 缓存（`goldilocks_home` volume），两个 compose 都设 `GOLDILOCKS_AGENT_CORE_AUTOSTART=1`，去掉 `GOLDILOCKS_CORE_PATH` 和 `goldilocks_core_venv` volume；

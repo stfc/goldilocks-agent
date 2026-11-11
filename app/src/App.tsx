@@ -1978,7 +1978,7 @@ const CORE_SERVER_RESTORE_WAIT_MS = 65 * 60 * 1000;
 // 502, which is exactly the confusing state this replaces.
 function coreWorkbenchStatusMessage(status: { status: string; detail: string | null } | null): string {
   if (status?.status === "not_configured") {
-    return "DFT Workbench needs a goldilocks-core checkout -- set GOLDILOCKS_CORE_PATH (see the README's Configuration section) and reopen this Tool.";
+    return "DFT Workbench is off: start goldilocks-agent with GOLDILOCKS_AGENT_CORE_AUTOSTART=1, or GOLDILOCKS_CORE_PATH set to a goldilocks-core checkout (https://stfc.github.io/goldilocks-agent/development/#dft-workbench).";
   }
   if (status?.status === "error") {
     return status.detail ?? "Couldn't start goldilocks-core's backend -- see the server logs for details.";
