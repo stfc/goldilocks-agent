@@ -631,6 +631,7 @@ const TRANSLATIONS = {
     tool_aiida_launcher: "Run Quantum ESPRESSO workflows with AiiDA through AiiDAlab's QE app",
     tools_coming_soon: "Coming soon",
     tools_coming_soon_local: "Coming soon (available in the local version)",
+    narrow_screen_notice: "Goldilocks is made for a computer screen. On a phone or a narrow window parts of it overlap; please use a desktop browser or a wider window.",
     settings_model_heading: "Model",
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
     settings_model_key_placeholder: "Not set",
@@ -724,6 +725,7 @@ const TRANSLATIONS = {
     tool_aiida_launcher: "Lancer des workflows Quantum ESPRESSO avec AiiDA via l'app QE d'AiiDAlab",
     tools_coming_soon: "Bientôt disponible",
     tools_coming_soon_local: "Bientôt disponible (déjà dans la version locale)",
+    narrow_screen_notice: "Goldilocks est conçu pour un écran d'ordinateur. Sur un téléphone ou une fenêtre étroite, certains éléments se chevauchent : utilisez un navigateur de bureau ou une fenêtre plus large.",
     settings_model_heading: "Modèle",
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
     settings_model_key_placeholder: "Non définie",
@@ -817,6 +819,7 @@ const TRANSLATIONS = {
     tool_aiida_launcher: "Quantum-ESPRESSO-Workflows mit AiiDA über die QE-App von AiiDAlab ausführen",
     tools_coming_soon: "Demnächst verfügbar",
     tools_coming_soon_local: "Demnächst verfügbar (in der lokalen Version bereits enthalten)",
+    narrow_screen_notice: "Goldilocks ist für einen Computerbildschirm gemacht. Auf einem Telefon oder in einem schmalen Fenster überlappen sich Teile; bitte verwenden Sie einen Desktop-Browser oder ein breiteres Fenster.",
     settings_model_heading: "Modell",
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
     settings_model_key_placeholder: "Nicht festgelegt",
@@ -910,6 +913,7 @@ const TRANSLATIONS = {
     tool_aiida_launcher: "通过 AiiDAlab 的 QE 应用，用 AiiDA 运行 Quantum ESPRESSO 工作流",
     tools_coming_soon: "即将推出",
     tools_coming_soon_local: "即将推出（本地版已提供）",
+    narrow_screen_notice: "Goldilocks 是为电脑屏幕设计的。在手机或较窄的窗口里，部分内容会互相重叠，请使用电脑浏览器或把窗口拉宽。",
     settings_model_heading: "模型",
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
     settings_model_key_placeholder: "未设置",
@@ -1003,6 +1007,7 @@ const TRANSLATIONS = {
     tool_aiida_launcher: "Esegui workflow Quantum ESPRESSO con AiiDA tramite l'app QE di AiiDAlab",
     tools_coming_soon: "Prossimamente",
     tools_coming_soon_local: "Prossimamente (già disponibile nella versione locale)",
+    narrow_screen_notice: "Goldilocks è pensato per lo schermo di un computer. Su un telefono o in una finestra stretta alcune parti si sovrappongono: usa un browser desktop o una finestra più larga.",
     settings_model_heading: "Modello",
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
     settings_model_key_placeholder: "Non impostata",
@@ -5012,6 +5017,10 @@ export default function App() {
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
     >
+      {/* Only below 768px (CSS): the layout isn't adapted to phones yet. */}
+      <div className="narrow-screen-notice" role="status">
+        {t("narrow_screen_notice")}
+      </div>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body, #root { height: 100%; }
@@ -5933,6 +5942,49 @@ export default function App() {
            -- fixed here rather than in core/web's own CSS since that file is
            shared with core's real standalone deployment, which does have the
            header the calc assumes. */
+        /* Below 768px: say the layout isn't made for phones yet. */
+        .narrow-screen-notice {
+          display: none;
+        }
+        @media (max-width: 767px) {
+          .narrow-screen-notice {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 2000;
+            padding: 10px 14px;
+            background: #fff4d6;
+            color: #5b4300;
+            border-bottom: 1px solid #f0d58a;
+            font-size: 13px;
+            line-height: 1.45;
+          }
+        }
+
+        /* The full-page grid scrolls sideways when its cards don't fit (core
+           sets overflow-x: auto), but macOS hides overlay scrollbars until
+           you scroll, so nothing showed there was more to the right. A styled
+           scrollbar stays visible. Chrome ignores these pseudo-elements once
+           scrollbar-width/-color are set, so Firefox gets those on its own. */
+        .workbench-embed .workbench-grid::-webkit-scrollbar {
+          height: 10px;
+        }
+        .workbench-embed .workbench-grid::-webkit-scrollbar-track {
+          background: var(--bg-soft);
+        }
+        .workbench-embed .workbench-grid::-webkit-scrollbar-thumb {
+          background: var(--muted);
+          border-radius: 5px;
+        }
+        @supports not selector(::-webkit-scrollbar) {
+          .workbench-embed .workbench-grid {
+            scrollbar-width: thin;
+            scrollbar-color: var(--muted) var(--bg-soft);
+          }
+        }
+
         .workbench-embed .workbench-grid {
           height: auto;
           flex: 1;
@@ -6548,7 +6600,9 @@ export default function App() {
           color: var(--text);
           font-size: 15px;
           line-height: 1.55;
-          min-height: 40px;
+          /* Two lines: the placeholders often wrap to a second line, which
+             a one-line box cut in half. */
+          min-height: calc(2 * 1.55em);
           max-height: 140px;
           font-family: inherit;
         }
