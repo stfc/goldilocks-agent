@@ -1410,6 +1410,8 @@ SSE 事件（如 `"Calculating k-points…"`），`goldilocks-web/src/App.jsx`
   - 改之后，回答是"完整推荐见上方卡片，需要注意的是……"，只列警告和下一步，每次 2–3 个数值，回答变短（M2 中位长度约 1400 → 1000 字符）；
   - 全量 eval 24 个用例 3/3，G4 没有退步。
 
+**★★ 2026-11-11 再收紧：不给自己的数值，作业资源也算。** 线上真人测试时，一次中文的 Fe review 回答建议"walltime 改小一点（比如 1–2h）"，这是模型自己给的数值。prompt 改为 "Never invent parameter values or suggest values of your own, walltime and other job resources included: for a warning about a setting, or if the user wants different settings, say which setting to change in DFT Workbench, not what to set it to."。eval 加了 `expect_no_hours_of_its_own`：回答里出现的小时数必须出自工具结果（core 的 168h 上限），并用在 M2、M4 和新加的 M7 上。M7 是 M2 的中文版，还特意问了作业怎么设。改之前，M7 跑 6 次没有一次自己给出数值（这个口误本来就少见）；改之后，全量 25 个用例都是 3/3，M2 每次提到的数值从 2–4 个降到 1–3 个。
+
 ### 12.4 ★★ 已定（2026-09-15）：四个 MODE 不是并列的四块，是一条管线
 
 先前 12.1 那张表已经隐约看得出四个 MODE 风险不均，但没说清楚**它们彼此是
