@@ -3660,3 +3660,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 代价：core 的间接依赖不再由 core 的 uv.lock 锁定，装的时候才解析；
   - enumlib 的 `makeStr.py` 原来的 shebang 指向 checkout 的 venv，改成镜像自己的 `/app/.venv`（numpy 由 ase 带进来），和 core 自己的镜像做法一样；
   - VM 的升级流程（`deploy/stfc-cloud/README.md` "Upgrading goldilocks-core"）改成：先用 `--network host` 的一次性容器把新版本装进 uv 缓存、把资产装进 `assets-next`，再切换。这一次从 checkout 迁过来，回滚时还要恢复旧的 compose 文件，README 里写了步骤。
+- **★ 2026-11-11：mMACE 上 VM 的 GPU，配合 core 常驻排序进程**（Junwen 定）：
+  - 修法 B（goldilocks-ml 0.4.0）上线后，VM 上 CPU 排 bcc Fe 用 24.6 s（原来 107 s）。其中约 6 s 花在每个排序任务新开的进程上（core 的 `ranking_jobs.py` 每个任务一个 `WorkerProcess`，为的是能立即取消、算完释放内存），GPU 上还要再加十几秒的 CUDA 初始化。所以每次新开进程的话，GPU 几乎没有收益；
+  - Junwen 指出 A100 还空着约 42 GB 显存、VM 有约 98 GB 内存，常驻进程的内存代价不成问题。于是两件事一起做：core 做常驻的排序进程（独立于 is_magnetic 的进程，取消、崩溃或排完大结构后替换），agent 在 STFC 的 compose 里给 agent 容器分配 GPU，设 `UV_TORCH_BACKEND=cu130`、`GOLDILOCKS_MMACE_DEVICE=cuda`；
+  - 两边一起部署，部署前在 VM 上实测。CUDA 版 torch 不能在 CPU 上跑（慢约 9 倍），所以退回 CPU 时三项设置要一起改回去，README "mMACE on the GPU" 写了怎么切。

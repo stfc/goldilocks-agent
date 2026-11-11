@@ -45,14 +45,16 @@ services:
       # (README.md "Upgrading goldilocks-core"). Not a checkout since core
       # 0.3.2 (design doc §19.8), so no GOLDILOCKS_CORE_PATH.
       GOLDILOCKS_AGENT_CORE_AUTOSTART: "1"
-      # Which torch build `uvx` installs for core. PyPI's own Linux torch is
-      # a CUDA build, and on the CPU it ran a bcc Fe ranking about 9x slower
-      # than the CPU build (185 s vs 21 s, 2026-11-11). `cu130` with
-      # GOLDILOCKS_MMACE_DEVICE=cuda and a GPU reservation is the GPU route.
-      # The prewarm (README.md) must use the same value, or the live
-      # container finds no environment for it in the cache. uv calls the
-      # option experimental.
-      UV_TORCH_BACKEND: cpu
+      # mMACE (is_magnetic and ordering ranking) on the VM's GPU, next to
+      # Ollama (README.md "mMACE on the GPU"). UV_TORCH_BACKEND picks the
+      # torch build `uvx` installs for core: cu130 here. Don't run cuda's
+      # build on the CPU: it ranked bcc Fe about 9x slower than the CPU
+      # build (185 s vs 21 s, 2026-11-11), so going back to the CPU means
+      # `cpu` here, no GOLDILOCKS_MMACE_DEVICE and no GPU reservation. The
+      # prewarm reads this value from this file, so the live container finds
+      # its environment in the cache. uv calls the option experimental.
+      UV_TORCH_BACKEND: cu130
+      GOLDILOCKS_MMACE_DEVICE: cuda
     ports:
       # Loopback only: nginx on the VM is the one way in. A port published
       # on all interfaces would bypass nginx, and Docker's port publishing
@@ -63,6 +65,16 @@ services:
       # - mlip_cli_venv:/app/mlip-cli/.venv   # MLIP Playground, see above
     depends_on:
       - ollama
+    # The same GPU as Ollama's (one A100, shared): mMACE's models take about
+    # 1 GB of its memory, and a ranking up to about 8 GB at core's 200-atom
+    # limit, next to Ollama's 38 of 80 GB.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
     # Container-wide memory backstop (stfc/goldilocks-agent#70): goldilocks-core's
     # mMACE worker grows with the structure (~45 MB/atom, 11.8 GB at 250 atoms,
