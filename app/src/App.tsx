@@ -23,6 +23,7 @@ import {
   TRUNCATED_ATTACHMENT_MARKER,
   WEAS_SUPPORTED_EXTS,
   collectChatStructures,
+  contentText,
   fetchedStructureMessage,
   formatStructureLabel,
   getRawFileExtension,
@@ -189,7 +190,9 @@ function rehydrateMessages(rawMessages) {
       continue;
     }
     if (m.role === "assistant" && !m.content) continue;
-    messages.push({ role: m.role, content: m.content });
+    // `display` is the bubble text a user message was sent with (an
+    // attached file's name, not its contents), kept by the server.
+    messages.push(m.display ? { role: m.role, content: m.content, display: m.display } : { role: m.role, content: m.content });
   }
   return messages;
 }
@@ -1186,9 +1189,8 @@ const STRUCTURE_ATTACHMENT_CHAR_BUDGET = 20000;
 function isFileSentInHistory(messages, name) {
   return messages.some((msg) => {
     if (msg.role !== "user") return false;
-    const parts = getMessageDisplayParts(msg);
-    if (parts.text.includes(`[Attached file: ${name}]`)) return true;
-    return parts.images.some((img) => img.name === name);
+    if (contentText(msg.content).includes(`[Attached file: ${name}]`)) return true;
+    return getMessageDisplayParts(msg).images.some((img) => img.name === name);
   });
 }
 
@@ -3467,7 +3469,9 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           thread_id: targetSession.id,
-          message: { role: "user", content },
+          // The bubble text goes along when it isn't the content, so the
+          // server keeps it for a reload.
+          message: display && display !== textContent ? { role: "user", content, display } : { role: "user", content },
           model_id: modelId,
           experience_level: experienceLevelForChat(),
           title: nextTitle,

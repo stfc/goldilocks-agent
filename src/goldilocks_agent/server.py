@@ -102,6 +102,11 @@ class ChatMessage(BaseModel):
     # when an image is attached -- Qwen3.8 is vision-capable and litellm's
     # ollama_chat provider accepts this shape as-is (verified 2026-09-15).
     content: str | list[dict]
+    # What the chat bubble shows when it isn't `content`: an attached file's
+    # name instead of its contents, a panel prompt's short sentence instead
+    # of its data. Kept with the message in the checkpointer so a reloaded
+    # chat shows it too; never sent to the model.
+    display: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -361,7 +366,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
             request.thread_id,
             request.model_id,
             _experience_level_for(request),
-            message=request.message.model_dump(),
+            message=request.message.model_dump(exclude_none=True),
         ),
         media_type="text/event-stream",
     )
@@ -379,7 +384,17 @@ async def get_chat_history(thread_id: str) -> dict:
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await app.state.graph.aget_state(config)
     messages = snapshot.values.get("messages", []) if snapshot.values else []
-    return {"messages": convert_to_openai_messages(messages)}
+    return {"messages": [_history_entry(message) for message in messages]}
+
+
+def _history_entry(message) -> dict:
+    """`message` in OpenAI format, with the `display` text the user's chat
+    bubble showed when it was sent, if it had one."""
+    entry = convert_to_openai_messages(message)
+    display = message.additional_kwargs.get("display")
+    if display:
+        entry["display"] = display
+    return entry
 
 
 @app.post("/api/credentials")
@@ -490,10 +505,14 @@ async def search_conversations(q: str) -> list[str]:
 
 
 def _written_text(message) -> str:
-    """What the user or the assistant wrote in `message`; empty for a tool
-    result. A user message with an image keeps its text parts."""
+    """What the user or the assistant wrote in `message`: a user message's
+    bubble text when it had one (an attached file's name, not its
+    contents), its text parts when it has an image; empty for a tool
+    result."""
     if message.type not in ("human", "ai"):
         return ""
+    if message.additional_kwargs.get("display"):
+        return message.additional_kwargs["display"]
     if isinstance(message.content, str):
         return message.content
     return " ".join(

@@ -44,8 +44,12 @@ test("open, review and generate from chat, all kept on reload", async ({ page })
   ]);
   expect(download.suggestedFilename()).toBe("Si.cif-scf_single_point.zip");
 
-  // The tab keeps its chat across a reload; cards are rebuilt from history.
+  // The tab keeps its chat across a reload; cards are rebuilt from history,
+  // and the message shows the attached file's name, not its contents.
   await page.reload();
+  const firstMessage = page.locator(".user-bubble").first();
+  await expect(firstMessage).toContainText("📎 Si.cif");
+  await expect(firstMessage).not.toContainText("_cell_length_a");
   await expect(page.locator(".review-card").first()).toContainText("48 / 192 Ry");
   await openGeneratedFiles(page);
   await expect(page.locator(".files-list .files-row").first()).toContainText("Si.cif-scf_single_point.zip");
