@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from datetime import timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -152,3 +153,17 @@ def read_shared_deployment_enabled() -> bool:
     if env_value is not None:
         return env_value.strip().lower() not in ("", "0", "false", "no")
     return bool(read_config().get("shared_deployment", {}).get("enabled"))
+
+
+# How long the shared deployment keeps a chat nobody has used: the server
+# holds every visitor's history (the checkpointer) so that each request
+# carries only the new message and a reloaded tab can read its chat back,
+# and chat_retention.py deletes it once it has been idle this long.
+def read_chat_retention() -> timedelta:
+    raw = os.environ.get("GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS", "").strip()
+    hours = float(raw) if raw else 24.0
+    if not hours > 0:
+        raise ValueError(
+            f"GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS={raw!r} is not a positive number"
+        )
+    return timedelta(hours=hours)
