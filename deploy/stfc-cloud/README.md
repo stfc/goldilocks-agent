@@ -13,7 +13,7 @@ different thing.
 | Addresses | private 192.168.100.226, floating 130.246.214.189 |
 | DNS | `workbench.goldilocks.ac.uk` is a CNAME to `host-130-246-214-189.nubes.stfc.ac.uk` |
 | Web server | nginx 1.18 (Ubuntu package, a host service, not in Docker) terminates TLS with a Let's Encrypt certificate for both names and proxies everything to `127.0.0.1:8080`. The app is served at `/`. |
-| Containers | this directory's `docker-compose.yml`: `agent` (the web build plus goldilocks-core in checkout mode at `core_pin.json`'s commit, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
+| Containers | this directory's `docker-compose.yml`: `agent` (the web build plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
 | Checkout | `/home/ubuntu/goldilocks-agent`, `origin` = https://github.com/stfc/goldilocks-agent.git, on `main` |
 
 ## Access policy
@@ -87,7 +87,7 @@ sudo certbot renew --dry-run
   reservation fails without it.
 - **Docker MTU.** The VM's interface has MTU 1450 and Docker's bridges 1500,
   so long downloads from inside a container get reset. Examples are the
-  Dockerfile's `git clone`s and core's `uv sync`. Build with
+  Dockerfile's `git clone`s and core's first `uvx` install. Build with
   `--network host`, and give `--network host` to any one-off container that
   downloads, as the core upgrade below does.
 
@@ -117,38 +117,42 @@ docker compose up -d --no-deps agent
 
 ## Upgrading goldilocks-core
 
-When a merge changes `core_pin.json`, the agent's core environment and assets
-need the new release:
+When a merge changes `core_pin.json`, the agent needs the new release's
+environment and assets:
 
-- the environment is in the volume `stfc-cloud_goldilocks_core_venv`;
-- the assets are in `~/.local/share/goldilocks/assets`, inside the volume
-  `stfc-cloud_goldilocks_home`.
+- **The environment.** `uvx` installs `goldilocks-core[http]==<version>` from
+  PyPI into uv's cache, `~/.cache/uv` in the volume
+  `stfc-cloud_goldilocks_home`. Each release keeps its own environment there,
+  so the previous one is still there for a rollback.
+- **The assets.** They are in `~/.local/share/goldilocks/assets`, in the same
+  volume.
 
-Prepare them next to the live ones, then switch, so the site keeps serving
-until the switch. The scripts are in `core-upgrade/`; this is how v0.3.0 and
-v0.3.1 went in. Pick a suffix for the old version's backups, such as `v031`.
+Prepare both next to the live ones, then switch, so the site keeps serving
+until the switch. The live container must not do the install itself: its
+downloads go through Docker's bridge, which resets long ones (Prerequisites).
+The scripts are in `core-upgrade/`. Pick a suffix for the old version's
+backups, such as `v031`.
 
 **Phase A: no downtime.**
 
 ```bash
 cd ~/goldilocks-agent && git pull --ff-only && cd deploy/stfc-cloud
-IMG=goldilocks-agent-stfc-cloud; HOME_VOL=stfc-cloud_goldilocks_home
-VENV_VOL=stfc-cloud_goldilocks_core_venv; OLD=v031
+IMG=goldilocks-agent-stfc-cloud; HOME_VOL=stfc-cloud_goldilocks_home; OLD=v031
 docker tag $IMG:latest $IMG:$OLD
 docker build --network host --build-arg FRONTEND_BUILD_SCRIPT=build:stfc-cloud -t $IMG:latest ../..
-docker volume create ${VENV_VOL}_$OLD
-docker run --rm --user root -v $VENV_VOL:/from:ro -v ${VENV_VOL}_$OLD:/to $IMG:latest sh -c 'cp -a /from/. /to/'
 docker run --rm --network host -v $HOME_VOL:/home/goldilocks \
   -v $PWD/core-upgrade/prewarm.sh:/prewarm.sh:ro -v $PWD/core-upgrade/smoke.py:/smoke.py:ro \
   -e GOLDILOCKS_ASSET_ROOT=/home/goldilocks/.local/share/goldilocks/assets-next \
-  -e UV_PROJECT_ENVIRONMENT=/tmp/prewarm-venv \
+  -e UV_TORCH_BACKEND=cpu \
   $IMG:latest sh /prewarm.sh
 ```
 
 The prewarm does four things:
 
 - copies the assets to `assets-next`;
-- fills the uv cache from a throwaway venv;
+- installs the release from PyPI into uv's cache, with the requirement string
+  the agent itself uses and the same `UV_TORCH_BACKEND` as
+  `docker-compose.yml`, so the live container finds that environment there;
 - installs the release's assets into `assets-next`;
 - smoke-tests a throwaway core on :18000.
 
@@ -166,21 +170,35 @@ python3 core-upgrade/smoke.py http://127.0.0.1:8080 <new version>
 python3 core-upgrade/rank_smoke.py http://127.0.0.1:8080
 ```
 
-**Rollback.**
+**Rollback.** The old image names the old release, whose environment is
+still in uv's cache.
 
 ```bash
 docker compose stop agent
 docker run --rm --user root -v $HOME_VOL:/h $IMG:$OLD sh -euc \
   "cd /h/.local/share/goldilocks && mv assets assets-failed && mv assets-$OLD assets"
-docker run --rm --user root -v ${VENV_VOL}_$OLD:/from:ro -v $VENV_VOL:/to $IMG:$OLD \
-  sh -euc 'find /to -mindepth 1 -delete; cp -a /from/. /to/'
 docker tag $IMG:$OLD $IMG:latest
 docker compose up -d --no-deps agent
 ```
 
-**Cleanup**, once the new version has run for a few days:
-`docker volume rm ${VENV_VOL}_$OLD`, remove `assets-$OLD`, and
-`docker image rm $IMG:$OLD`.
+**Cleanup**, once the new version has run for a few days: remove
+`assets-$OLD` and `docker image rm $IMG:$OLD`. Old releases' environments stay
+in uv's cache until pruned:
+`docker compose exec agent uv cache prune` drops what nothing references.
+
+**Moving from checkout mode (once, core 0.3.1 to 0.3.2).** Until core 0.3.2
+the image carried core's source and ran it from the volume
+`stfc-cloud_goldilocks_core_venv`, with `GOLDILOCKS_CORE_PATH` in
+`docker-compose.yml` (design doc §19.8). The steps above do this move too.
+Two things differ:
+
+- **Rollback.** The old image needs the old compose file as well, so
+  before `docker compose up` in the rollback run
+  `git checkout 3b19622 -- docker-compose.yml`, the last commit that ran
+  checkout mode. Then, when rolling forward again,
+  `git checkout -- docker-compose.yml`.
+- **Cleanup.** After the few days, also remove the checkout-mode volumes:
+  `docker volume rm stfc-cloud_goldilocks_core_venv stfc-cloud_goldilocks_core_venv_prev stfc-cloud_goldilocks_core_venv_v030`.
 
 ## Verifying
 

@@ -24,23 +24,24 @@ RUN npm run ${FRONTEND_BUILD_SCRIPT}
 # --- runtime ------------------------------------------------------------
 # Ships uv + Python 3.12 preinstalled (matches pyproject.toml's
 # requires-python = ">=3.12"). `uv` stays in the final image (not discarded
-# after this build) because MLIP Playground and DFT Workbench both shell
-# out to `uv run --project <path> ...` at runtime, not just at build time.
+# after this build) because MLIP Playground (`uv run --project <path> ...`)
+# and DFT Workbench (`uvx --from goldilocks-core[http]==<pin> ...`, PyPI mode
+# in core_server.py) both shell out to it at runtime.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 WORKDIR /app
 
 # None of `git`/`curl`/`build-essential`/`gfortran` are in the base slim
-# image -- needed by this stage's own steps below or at *runtime*, by
-# checkout mode's lazy `--extra http` sync (core_server.py's
+# image -- needed by this stage's own steps below or at *runtime*, by the
+# first `uvx` install of goldilocks-core (core_server.py's
 # `_spawn_command()`), long after this build finishes:
-# - `git`: fetches the pinned goldilocks-core commit below.
-# - `curl`: core's own `poe serve` probes port 8000 with it before starting.
+# - `git`: fetches enumlib below.
+# - `curl`: the STFC Cloud pre-warm (deploy/stfc-cloud/core-upgrade/) probes
+#   a throwaway core with it.
 # - `build-essential` (g++/gcc/make): goldilocks-ml's own `dscribe` dependency
 #   has no prebuilt wheel for every platform (confirmed missing on
-#   linux/arm64, 2026-09-25: `uv sync --extra http` fails with `error:
-#   [Errno 2] No such file or directory: 'g++'` compiling dscribe's C++
-#   extensions from source) -- required for checkout-mode DFT Workbench on
-#   such platforms.
+#   linux/arm64, 2026-09-25: the install fails with `error: [Errno 2] No
+#   such file or directory: 'g++'` compiling dscribe's C++ extensions from
+#   source) -- required for DFT Workbench on such platforms.
 # - `gfortran`: builds enumlib below (also used to install `libgfortran5`,
 #   the shared library enum.x links against at runtime -- apt pulls it in
 #   as gfortran's own dependency, no separate line needed).
@@ -54,12 +55,12 @@ RUN apt-get update \
 # warning, if it's missing rather than erroring). Built from source the
 # same way stfc/goldilocks-core#227 builds it for *that* repo's own
 # Dockerfile -- this repo has no enumlib-providing package of its own
-# either (Fortran, not pip-installable). `makeStr.py`'s shebang points at
-# goldilocks-core's own venv (not this image's `/app/.venv`) since that's
-# whose pymatgen actually shells out to it -- the path doesn't exist yet
-# at build time (that venv is synced lazily at container runtime, see
-# `git clone` below), only needs to by the time this script actually runs.
-# Pinned to the commit goldilocks-core's own image and CI build (core 0.3.1,
+# either (Fortran, not pip-installable). pymatgen, in core's own
+# environment, runs `makeStr.py` as a program, so its shebang names a Python
+# that has numpy, its one dependency: this image's own `/app/.venv` (numpy
+# via ase), as goldilocks-core's image names its venv. Core's `uvx`
+# environment sits in uv's cache under a hashed path, so it can't be named.
+# Pinned to the commit goldilocks-core's own image and CI build (core 0.3.2,
 # its ENUMLIB_COMMIT), so both images list orderings with the same code.
 ARG ENUMLIB_COMMIT=67217859c1cfe6e1d8cfe25b76a1d14a28c6030e
 RUN git clone --quiet https://github.com/msg-byu/enumlib.git /tmp/enumlib \
@@ -69,30 +70,18 @@ RUN git clone --quiet https://github.com/msg-byu/enumlib.git /tmp/enumlib \
     && make -C /tmp/enumlib/src F90=gfortran \
     && make -C /tmp/enumlib/src F90=gfortran enum.x \
     && install /tmp/enumlib/src/enum.x /usr/local/bin/enum.x \
-    && sed '1s|.*|#!/opt/goldilocks-core/.venv/bin/python3|' /tmp/enumlib/aux_src/makeStr.py > /usr/local/bin/makeStr.py \
+    && sed '1s|.*|#!/app/.venv/bin/python3|' /tmp/enumlib/aux_src/makeStr.py > /usr/local/bin/makeStr.py \
     && chmod +x /usr/local/bin/makeStr.py \
     && rm -rf /tmp/enumlib
 
-# goldilocks-core's *source* only (a few MB) -- the default DFT Workbench
-# backend (docker-compose.yml's GOLDILOCKS_CORE_PATH) for anyone using this
-# image, not just mMACE users, since checkout mode is what mMACE requires
-# and is a strict superset of the PyPI/uvx autostart path otherwise. The
-# commit comes from core_pin.json, the one place this build names a core
-# version (tests/test_core_pin.py checks the vendored Workbench tarball and
-# PyPI mode against it). Fetched by commit -- `git clone --branch` can't
-# take a SHA -- and asserted afterwards; copied and fetched ahead of the
-# agent's own source so editing src/ doesn't refetch core. Its own deps
-# (torch et al.) are deliberately NOT installed here -- see core_server.py's
-# lazy `--extra http` sync, same "first real use pays the cost" pattern as
-# mlip-cli/.venv below.
-COPY src/goldilocks_agent/core_pin.json /tmp/core_pin.json
-RUN set -eu \
-    && set -- $(python3 -c 'import json, sys; pin = json.load(open(sys.argv[1])); print(pin["repository"], pin["commit"])' /tmp/core_pin.json) \
-    && git init -q /opt/goldilocks-core \
-    && git -C /opt/goldilocks-core fetch -q --depth 1 "$1" "$2" \
-    && git -C /opt/goldilocks-core checkout -q --detach FETCH_HEAD \
-    && test "$(git -C /opt/goldilocks-core rev-parse HEAD)" = "$2" \
-    && rm /tmp/core_pin.json
+# goldilocks-core itself isn't in the image: core_server.py's PyPI mode
+# installs the release core_pin.json names with `uvx` on first use, into
+# uv's cache under $HOME (a volume in both compose files), and starts it from
+# there. Until core 0.3.0, mMACE needed a fork of mace installed from git, so
+# the image baked in core's source and ran it in checkout mode; since then
+# core's mMACE dependencies come from PyPI (design doc §19.8). A developer
+# checkout still works: set GOLDILOCKS_CORE_PATH and mount it
+# (docker-compose.yml).
 
 # `mlip-cli/` must stay a sibling of `src/` -- config.py's mlip_cli_path()
 # resolves it relative to the installed package's own file location, not cwd.
@@ -104,16 +93,15 @@ RUN uv sync --locked --no-group dev
 
 COPY --from=frontend-build /app/app/dist ./app/dist
 
-# Pre-create the mount points for the mlip_cli_venv/goldilocks_core_venv
-# volumes (compose service `agent`) with the right ownership before they
-# exist -- Docker seeds a fresh named volume from whatever's already at
-# that path in the image, so an empty dir owned by `goldilocks` here means
-# the later lazy `uv sync` writes (janus-core[mace] for MLIP Playground,
-# goldilocks-core's own deps for DFT Workbench) aren't blocked by a
-# root-owned auto-created mount point.
+# Pre-create the mount point for the mlip_cli_venv volume (compose service
+# `agent`) with the right ownership before it exists -- Docker seeds a fresh
+# named volume from whatever's already at that path in the image, so an
+# empty dir owned by `goldilocks` here means the later lazy `uv sync` writes
+# (janus-core[mace] for MLIP Playground) aren't blocked by a root-owned
+# auto-created mount point.
 RUN useradd --create-home --home-dir /home/goldilocks goldilocks \
-    && mkdir -p /app/mlip-cli/.venv /opt/goldilocks-core/.venv \
-    && chown -R goldilocks:goldilocks /app /opt/goldilocks-core
+    && mkdir -p /app/mlip-cli/.venv \
+    && chown -R goldilocks:goldilocks /app
 USER goldilocks
 ENV HOME=/home/goldilocks \
     GOLDILOCKS_AGENT_STATIC_DIR=/app/app/dist

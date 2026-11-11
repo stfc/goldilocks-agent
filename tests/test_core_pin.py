@@ -1,6 +1,6 @@
 """Every place that names a goldilocks-core version must agree with
-`src/goldilocks_agent/core_pin.json` (`core_server.CORE_PIN`): the
-Dockerfile's fetch, PyPI mode's requirement, and the vendored
+`src/goldilocks_agent/core_pin.json` (`core_server.CORE_PIN`): PyPI mode's
+requirement (the Dockerfile names no core release of its own), and the vendored
 goldilocks-workbench tarball, whose `HttpCoreClient` refuses any core that
 reports a different `vocabulary_version`. A half-done bump fails here instead
 of in the browser. File reads only, no network.
@@ -52,11 +52,13 @@ def test_pypi_mode_installs_the_pinned_release() -> None:
     assert script.count(f"--from {shlex.quote(requirement)} ") == 2
 
 
-def test_dockerfile_fetches_the_pinned_commit_only() -> None:
+def test_dockerfile_names_no_core_release() -> None:
+    """The image carries no goldilocks-core: PyPI mode installs the pinned
+    release at runtime (above), so there's no second core ref to drift."""
     dockerfile = (REPO_ROOT / "Dockerfile").read_text("utf-8")
-    assert "COPY src/goldilocks_agent/core_pin.json" in dockerfile
-    # No second, hand-written core ref that could drift from the pin.
     assert "goldilocks-core.git" not in dockerfile
+    assert "/opt/goldilocks-core" not in dockerfile
+    assert not re.search(r"goldilocks-core\S*==\d", dockerfile)
     assert not re.search(r"--branch\s+v\d", dockerfile)
 
 

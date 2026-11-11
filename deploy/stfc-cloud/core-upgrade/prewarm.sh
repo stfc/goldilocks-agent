@@ -1,21 +1,21 @@
 # Runs inside the NEW agent image (README.md "Upgrading goldilocks-core"):
-# prepares the pinned goldilocks-core's environment and assets without
-# touching what the live container uses, then starts a throwaway core on
-# :18000 and smoke-tests it.
+# installs the pinned goldilocks-core from PyPI into uv's cache and its assets
+# into assets-next, without touching what the live container uses, then
+# starts a throwaway core on :18000 and smoke-tests it.
 set -eu
 A="$HOME/.local/share/goldilocks"
-cd /opt/goldilocks-core
-VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-echo "== goldilocks-core $VERSION"
+# The agent's own requirement string, so this builds the very `uvx`
+# environment core_server.py's PyPI mode looks up in the cache.
+REQ=$(/app/.venv/bin/python -c 'from goldilocks_agent.core_server import CORE_PYPI_REQUIREMENT as r; print(r)')
+VERSION=$(/app/.venv/bin/python -c 'from goldilocks_agent.core_server import CORE_PIN as p; print(p["version"])')
+echo "== $REQ"
 echo "== copy the live assets to assets-next (the live directory is only read)"
 rm -rf "$A/assets-next"
 cp -a "$A/assets" "$A/assets-next"
-echo "== core's environment into a throwaway venv (fills the uv cache)"
-uv sync --locked --extra http
-echo "== assets into assets-next (PSDI downloads; can take many minutes)"
-uv run --locked --extra http goldilocks assets install all
+echo "== the release into uv's cache, its assets into assets-next (PSDI downloads; can take many minutes)"
+uvx --from "$REQ" goldilocks assets install all
 echo "== throwaway core on :18000"
-uv run --locked --extra http goldilocks serve http --host 127.0.0.1 --port 18000 &
+uvx --from "$REQ" goldilocks serve http --host 127.0.0.1 --port 18000 &
 pid=$!
 ok=0
 for i in $(seq 1 180); do

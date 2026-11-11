@@ -57,17 +57,17 @@ open <http://localhost:8080>.
 What's on by default:
 - Chat with the local model, and **Find in Databases** (Materials
   Project/Materials Cloud/NOMAD/JARVIS search).
-- **DFT Workbench** is enabled too -- the image bakes in goldilocks-core's
-  own source (a pinned release), so the first time you open the Tool,
-  goldilocks-agent auto-starts it for you inside the container; that first
-  open triggers its own one-time download of goldilocks-core's own
-  dependencies, independent of the Ollama download above.
+- **DFT Workbench** is enabled too: the first time you open the Tool,
+  goldilocks-agent installs goldilocks-core from PyPI (the release in
+  `src/goldilocks_agent/core_pin.json`) inside the container and starts it.
+  That first open is a one-time download of goldilocks-core and its
+  dependencies, independent of the Ollama download above, cached in the
+  `goldilocks_home` volume afterward.
 - **Magnetism ML tier (mMACE)** is enabled too -- `is_magnetic`
   classification and magnetic-ordering ranking in DFT Workbench run on a
-  real ML model, not the heuristic/LLM fallback. Piggybacks on DFT
-  Workbench's first-open download above with its own extra one-time cost
-  (a checkpoint plus a few manually-pinned packages) -- several GB total,
-  cached afterward the same way.
+  real ML model, not the heuristic/LLM fallback. Its packages come with
+  goldilocks-core and its checkpoint with core's assets, in the same
+  first-open download.
 - **AFM magnetic-ordering enumeration** works too -- the image builds
   `enum.x`/`makeStr.py` (enumlib) from source, the same way
   [stfc/goldilocks-core#227](https://github.com/stfc/goldilocks-core/pull/227)

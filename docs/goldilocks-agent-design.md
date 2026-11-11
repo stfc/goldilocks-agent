@@ -3652,3 +3652,11 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 总吞吐从约 31 tok/s 升到约 50 tok/s，4 个和 8 个对话时都在这个数，说明 GPU 已接近饱和。代价是并发时每个对话出字变慢（4 个同时时 17–38 tok/s，单个时 54 tok/s）。**所以不加槽位**；
   - 显存 37.8 / 80 GB，模型全部在 GPU 上，和原来单槽 262144 上下文时差不多；
   - 镜像仍用 `ollama/ollama:latest`（Junwen 决定不固定版本），以后每次 pull 后都要重新测一次。
+- **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
+  - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；
+  - 现在镜像里不再带 core 源码。agent 的 PyPI 模式（`uvx --from goldilocks-core[http]==<core_pin 版本>`）把 core 装进 uv 缓存（`goldilocks_home` volume），两个 compose 都设 `GOLDILOCKS_AGENT_CORE_AUTOSTART=1`，去掉 `GOLDILOCKS_CORE_PATH` 和 `goldilocks_core_venv` volume；
+  - 好处：线上跑的和 e2e 测的是同一条路径；以后接 GPU 不需要 core 的 `cu130` 依赖组；
+  - **torch 用 CPU 版**：Linux 上 PyPI 的 torch 是 CUDA 版，在 CPU 上跑 mMACE 慢得多。同一个容器、同一套代码，bcc Fe 排序 CUDA 版 185 s、CPU 版 21 s（2026-11-11，aarch64 Docker；x86 VM 上 GPU 测速时 CPU 那一轮用的也是 CUDA 版，同样慢得反常）。所以两个 compose 都设 `UV_TORCH_BACKEND=cpu`，uvx 就装 CPU 版，也少下载几 GB 的 nvidia 库。要走 GPU 时改成 `cu130`，加 `GOLDILOCKS_MMACE_DEVICE=cuda` 和 GPU。uv 目前把这个选项标为实验性；
+  - 代价：core 的间接依赖不再由 core 的 uv.lock 锁定，装的时候才解析；
+  - enumlib 的 `makeStr.py` 原来的 shebang 指向 checkout 的 venv，改成镜像自己的 `/app/.venv`（numpy 由 ase 带进来），和 core 自己的镜像做法一样；
+  - VM 的升级流程（`deploy/stfc-cloud/README.md` "Upgrading goldilocks-core"）改成：先用 `--network host` 的一次性容器把新版本装进 uv 缓存、把资产装进 `assets-next`，再切换。这一次从 checkout 迁过来，回滚时还要恢复旧的 compose 文件，README 里写了步骤。
