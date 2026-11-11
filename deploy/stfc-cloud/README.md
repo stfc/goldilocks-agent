@@ -13,7 +13,7 @@ different thing.
 | Addresses | private 192.168.100.226, floating 130.246.214.189 |
 | DNS | `workbench.goldilocks.ac.uk` is a CNAME to `host-130-246-214-189.nubes.stfc.ac.uk` |
 | Web server | nginx 1.18 (Ubuntu package, a host service, not in Docker) terminates TLS with a Let's Encrypt certificate for both names and proxies everything to `127.0.0.1:8080`. The app is served at `/`. |
-| Containers | this directory's `docker-compose.yml`: `agent` (the web build plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
+| Containers | this directory's `docker-compose.yml`: `agent` (`ghcr.io/stfc/goldilocks-agent:web`, the web build CI publishes from main, plus goldilocks-core from PyPI at `core_pin.json`'s version, run by `uvx`, on `127.0.0.1:8080`), `ollama` (qwen3.8:27b on the GPU), `ollama-pull` (one-shot model pull), `vllm` (behind a profile, not used) |
 | Checkout | `/home/ubuntu/goldilocks-agent`, `origin` = https://github.com/stfc/goldilocks-agent.git, on `main` |
 
 ## Access policy
@@ -115,33 +115,49 @@ sudo certbot renew --dry-run
   reservation fails without it.
 - **Docker MTU.** The VM's interface has MTU 1450 and Docker's bridges 1500,
   so long downloads from inside a container get reset. Examples are the
-  Dockerfile's `git clone`s and core's first `uvx` install. Build with
-  `--network host`, and give `--network host` to any one-off container that
-  downloads, as the core upgrade below does.
+  Dockerfile's `git clone`s and core's first `uvx` install. Image pulls are
+  fine: the Docker daemon downloads on the host's own network. The compose
+  file builds on the host network (the fallback, below), and any one-off
+  container that downloads gets `--network host`, as the core upgrade below
+  does.
 
 ## Redeploying
 
 For a merge that doesn't change `src/goldilocks_agent/core_pin.json`. Run the
 web build's end-to-end tests first, locally (`uv run poe e2e-web`,
-`app/e2e/README.md`).
+`app/e2e/README.md`). The VM doesn't build: CI publishes the web build as
+`ghcr.io/stfc/goldilocks-agent:web`, and as `:web-sha-<commit>`, when the
+merge's "Build and publish Docker image" run on main finishes. Wait for that
+run, then:
 
 ```bash
-cd ~/goldilocks-agent && git pull --ff-only
-cd deploy/stfc-cloud
-IMG=goldilocks-agent-stfc-cloud
-docker tag $IMG:latest $IMG:previous
-docker build --network host --build-arg FRONTEND_BUILD_SCRIPT=build:stfc-cloud -t $IMG:latest ../..
+cd ~/goldilocks-agent && git pull --ff-only && cd deploy/stfc-cloud
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' $(docker compose ps -q agent) | cut -c1-7
+docker compose pull agent
 docker compose up -d --no-deps agent
 ```
 
+- **`git pull`** brings this directory's compose file, scripts and nginx
+  config; the image comes from GHCR.
+- **The `docker inspect` line** prints the running build's commit, for a
+  rollback.
 - **Why `--no-deps`.** It keeps Ollama running. Without it, compose also
   recreates `ollama` whenever its settings changed, and chat is down while
   the model reloads. When Ollama's settings do change, recreate it on its own
   with `docker compose up -d --no-deps ollama`.
-- **Rollback.** `docker tag $IMG:previous $IMG:latest && docker compose up -d --no-deps agent`.
+- **Rollback.** Pin the previous commit's build in a `.env` file next to the
+  compose file (git ignores it), then recreate:
+  `echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent:web-sha-<commit> > .env && docker compose up -d --no-deps agent`.
+  To follow main again: `rm .env`, then pull and recreate as above.
+- **Building on the VM instead** (CI is down, or to try a branch):
+  `docker compose build agent && docker compose up -d --no-deps agent`. It
+  tags the local build with the same name, and the next pull replaces it.
 - **A refused `git pull`.** Checkouts from before 2026-11-10 carry a local
   `127.0.0.1:8080:8080` edit to `docker-compose.yml`, which is now committed.
   If `git pull` refuses, run `git checkout -- docker-compose.yml` first.
+- **The first pull (2026-11-11).** Builds before then were local, tagged
+  `goldilocks-agent-stfc-cloud:*`, and carry no commit label. To roll back to
+  one, pin it: `echo AGENT_IMAGE=goldilocks-agent-stfc-cloud:latest > .env`.
 
 ## Upgrading goldilocks-core
 
@@ -158,21 +174,23 @@ environment and assets:
 Prepare both next to the live ones, then switch, so the site keeps serving
 until the switch. The live container must not do the install itself: its
 downloads go through Docker's bridge, which resets long ones (Prerequisites).
-The scripts are in `core-upgrade/`. Pick a suffix for the old version's
-backups, such as `v031`.
+The scripts are in `core-upgrade/`. As in "Redeploying", wait for CI to
+publish the merge's image first. The old build's commit becomes the suffix of
+its backups, `OLD`.
 
 **Phase A: no downtime.**
 
 ```bash
 cd ~/goldilocks-agent && git pull --ff-only && cd deploy/stfc-cloud
-IMG=goldilocks-agent-stfc-cloud; HOME_VOL=stfc-cloud_goldilocks_home; OLD=v031
-docker tag $IMG:latest $IMG:$OLD
-docker build --network host --build-arg FRONTEND_BUILD_SCRIPT=build:stfc-cloud -t $IMG:latest ../..
+HOME_VOL=stfc-cloud_goldilocks_home
+OLD=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' $(docker compose ps -q agent) | cut -c1-7)
+docker compose pull agent
+IMG=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["agent"]["image"])')
 docker run --rm --network host -v $HOME_VOL:/home/goldilocks \
   -v $PWD/core-upgrade/prewarm.sh:/prewarm.sh:ro -v $PWD/core-upgrade/smoke.py:/smoke.py:ro \
   -e GOLDILOCKS_ASSET_ROOT=/home/goldilocks/.local/share/goldilocks/assets-next \
   -e UV_TORCH_BACKEND=cpu \
-  $IMG:latest sh /prewarm.sh
+  $IMG sh /prewarm.sh
 ```
 
 The prewarm does four things:
@@ -184,13 +202,14 @@ The prewarm does four things:
 - installs the release's assets into `assets-next`;
 - smoke-tests a throwaway core on :18000.
 
-Stop if it doesn't end with `== PREWARM OK`. Nothing live has changed.
+Stop if it doesn't end with `== PREWARM OK`. Nothing live has changed: the
+running container keeps the image it started with until it's recreated.
 
 **Phase B: DFT Workbench is down 2–5 minutes, chat a few seconds.**
 
 ```bash
 docker compose stop agent
-docker run --rm --user root -v $HOME_VOL:/h $IMG:latest sh -euc \
+docker run --rm --user root -v $HOME_VOL:/h $IMG sh -euc \
   "cd /h/.local/share/goldilocks && mv assets assets-$OLD && mv assets-next assets"
 docker compose up -d --no-deps agent
 while :; do s=$(curl -s -X POST http://127.0.0.1:8080/api/core-server/ensure); echo "$s"; case "$s" in *'"ready"'*|*'"error"'*) break;; esac; sleep 5; done
@@ -198,35 +217,30 @@ python3 core-upgrade/smoke.py http://127.0.0.1:8080 <new version>
 python3 core-upgrade/rank_smoke.py http://127.0.0.1:8080
 ```
 
-**Rollback.** The old image names the old release, whose environment is
+**Rollback.** The old build names the old release, whose environment is
 still in uv's cache.
 
 ```bash
 docker compose stop agent
-docker run --rm --user root -v $HOME_VOL:/h $IMG:$OLD sh -euc \
+docker run --rm --user root -v $HOME_VOL:/h $IMG sh -euc \
   "cd /h/.local/share/goldilocks && mv assets assets-failed && mv assets-$OLD assets"
-docker tag $IMG:$OLD $IMG:latest
+echo AGENT_IMAGE=ghcr.io/stfc/goldilocks-agent:web-sha-$OLD > .env
 docker compose up -d --no-deps agent
 ```
 
-**Cleanup**, once the new version has run for a few days: remove
-`assets-$OLD` and `docker image rm $IMG:$OLD`. Old releases' environments stay
-in uv's cache until pruned:
-`docker compose exec agent uv cache prune` drops what nothing references.
+**Cleanup**, once the new version has run for a few days:
 
-**Moving from checkout mode (once, core 0.3.1 to 0.3.2).** Until core 0.3.2
+- remove `assets-$OLD`;
+- `docker image prune` drops the images nothing uses any more;
+- `docker compose exec agent uv cache prune` drops old releases'
+  environments that nothing references from uv's cache.
+
+**Moved from checkout mode on 2026-11-11** (core 0.3.1 to 0.3.2). Until then
 the image carried core's source and ran it from the volume
-`stfc-cloud_goldilocks_core_venv`, with `GOLDILOCKS_CORE_PATH` in
-`docker-compose.yml` (design doc §19.8). The steps above do this move too.
-Two things differ:
-
-- **Rollback.** The old image needs the old compose file as well, so
-  before `docker compose up` in the rollback run
-  `git checkout 3b19622 -- docker-compose.yml`, the last commit that ran
-  checkout mode. Then, when rolling forward again,
-  `git checkout -- docker-compose.yml`.
-- **Cleanup.** After the few days, also remove the checkout-mode volumes:
-  `docker volume rm stfc-cloud_goldilocks_core_venv stfc-cloud_goldilocks_core_venv_prev stfc-cloud_goldilocks_core_venv_v030`.
+`stfc-cloud_goldilocks_core_venv` (design doc §19.8). Once 0.3.2 has run for
+a few days, remove what that left behind:
+`docker volume rm stfc-cloud_goldilocks_core_venv stfc-cloud_goldilocks_core_venv_prev stfc-cloud_goldilocks_core_venv_v030`,
+`assets-v031`, and the local images `goldilocks-agent-stfc-cloud:*`.
 
 ## Verifying
 

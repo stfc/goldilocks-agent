@@ -3658,6 +3658,11 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 总吞吐从约 31 tok/s 升到约 50 tok/s，4 个和 8 个对话时都在这个数，说明 GPU 已接近饱和。代价是并发时每个对话出字变慢（4 个同时时 17–38 tok/s，单个时 54 tok/s）。**所以不加槽位**；
   - 显存 37.8 / 80 GB，模型全部在 GPU 上，和原来单槽 262144 上下文时差不多；
   - 镜像仍用 `ollama/ollama:latest`（Junwen 决定不固定版本），以后每次 pull 后都要重新测一次。
+- **★ 2026-11-11：VM 改为拉取 CI 发布的镜像，不再在 VM 上构建**（Junwen 选了方案 A）：
+  - 原因：线上版界面的开关 `VITE_SHARED_DEPLOYMENT` 是 Vite 在构建时写进前端的，而 CI 原来只发布本地版界面的镜像，所以 VM 一直是拉源码、用 `build:stfc-cloud` 自己构建；
+  - 现在 `docker-publish.yml` 在 main 上多构建一个 amd64 的线上版镜像，打 `web`（跟随 main）和 `web-sha-<commit>`（用于回滚）两个 tag。STFC 的 compose 用 `${AGENT_IMAGE:-ghcr.io/stfc/goldilocks-agent:web}`，部署变成 `docker compose pull agent` 加 `up`；回滚时在 `.env` 里固定成上一个 commit 的镜像；
+  - 好处：部署的就是 CI 构建、测试过的镜像；部署从 5–10 分钟变成一两分钟；不再需要为了构建绕开 MTU 问题；
+  - 没有选方案 B（把开关改成运行时注入、只保留一个镜像），代价是每次 main 构建两个镜像。
 - **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
   - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；
   - 现在镜像里不再带 core 源码。agent 的 PyPI 模式（`uvx --from goldilocks-core[http]==<core_pin 版本>`）把 core 装进 uv 缓存（`goldilocks_home` volume），两个 compose 都设 `GOLDILOCKS_AGENT_CORE_AUTOSTART=1`，去掉 `GOLDILOCKS_CORE_PATH` 和 `goldilocks_core_venv` volume；
