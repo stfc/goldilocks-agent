@@ -3640,6 +3640,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - `HTTP`：80 端口对外开放，只做跳转和 certbot 续期；
   - `goldilocks-stfc-internal`：22 和 443 端口，只放行 130.246.0.0/16、10/8、172.16/12、192.168/16。
   - 推翻 19.4 的 nginx allow-list 方案。nginx 只负责按 IP 限速：`/api/chat` 每分钟 10 次，`/api/mlip/` 和 `/run` 每分钟 6 次。
+  - **★ 2026-11-11 重新对公网开放**（Junwen 决定）：把原来的 `HTTPS` 安全组（443 对 0.0.0.0/0）重新挂回实例，SSH 仍然只对 STFC 开放。10 月 9 日那次公开约一小时就被一个 IP 打 `/api/mlip/*` 打爆了内存，之后按 Martin Summers 的建议改成只对内网开放。重新开放前已经做了这些：MLIP Playground 改成只在本地版提供、agent 容器加了 32 GB 内存上限、mMACE 有 200 原子上限；nginx 又给排序提交（每分钟 6 次）以及 core 的 `/explain`、`/inspect`、`/magnetic-orderings`（每分钟 30 次，可突发 20 次）加了限流（#110）。还没定的两件事：给公网用户的隐私说明（聊天记录和上传的结构存在服务器上）；要不要通知 STFC Cyber-sec。
 - **VM 上实际在用的站点配置**：已经原样提交为 `deploy/stfc-cloud/nginx-workbench.conf`，和 VM 上的文件 sha256 一致。占位用的 `nginx-agent.conf` 删除。
 - **前端只保留一种线上构建**：`build:stfc-cloud`（`.env.stfc-cloud`）。删掉 `/agent/` 前缀的 public 变体和 `VITE_BASE_PATH`。
   - 原因：它本来就跑不通。打包出来的路径指向 `/agent/...`，但 `/api/...`、图标路径、Workbench 的 `HttpCoreClient` 都用的是根路径。
