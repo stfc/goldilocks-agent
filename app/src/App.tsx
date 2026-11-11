@@ -3562,6 +3562,11 @@ export default function App() {
     let buffer = "";
     let currentEventType = null;
     let receivedAny = false;
+    // One response can carry several model turns, with server-side tool
+    // calls between them (a tool_status event each). Their texts share this
+    // bubble; a paragraph break keeps "...to work from." and "Good news..."
+    // from running together as "from.Good news".
+    let breakBeforeNextText = false;
 
     while (true) {
       let chunk;
@@ -3589,6 +3594,7 @@ export default function App() {
         const data = line.slice(6);
         if (data === "[DONE]") break;
         if (currentEventType === "tool_status") {
+          breakBeforeNextText = assistantContent.length > 0;
           try {
             const payload = JSON.parse(data);
             setToolStatus(payload.label);
@@ -3723,6 +3729,8 @@ export default function App() {
         }
         currentEventType = null;
         if (!assistantContent) setToolStatus(null);
+        if (breakBeforeNextText && !/\n\s*$/.test(assistantContent)) assistantContent += "\n\n";
+        breakBeforeNextText = false;
         try { assistantContent += JSON.parse(data); } catch { assistantContent += data; }
         const text = assistantContent;
         replaceSession(targetSessionId, (current) => {
