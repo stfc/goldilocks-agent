@@ -1196,7 +1196,7 @@ goldilocks 的形状正好是它：
 **决定（Junwen 2026-11-09）**：
 
 - **只在本地版提供两个 Tool**：MLIP Playground（在用户自己的机器上跑 MACE）和 AiiDA 那一项。
-  - 线上（共享部署）的 All Tools 页把它们列在单独一组 "Coming soon (available in the local version)"。
+  - 线上（共享部署）的 All Tools 页把它们列在单独一组 "Coming soon (available in the local version)"；2026-11-11 Junwen 改成 "Coming soon to the web · in the local version now"，原来的说法读起来像两个版本都还没有。
   - Beyond DFT 仍在普通的 "Coming soon" 里，本地版也没开放。
 - **MLIP Playground 在本地重新启用**：它从 2026-10-09 起在线上和本地都停用。
   - 原来的 `MLIP_PLAYGROUND_RELEASED` 常量删掉，改成按部署判断：`tools.tool_schemas(shared_deployment=...)` 和 `mlip_playground_offered()`。

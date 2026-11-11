@@ -355,8 +355,9 @@ const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#installation
 // 2026-10-09: Beyond DFT parked.
 //
 // `localOnly: true` is a Tool the local version offers and the web app
-// (SHARED_DEPLOYMENT) doesn't: there it is listed as coming soon, in its own
-// "available in the local version" group (Junwen, 2026-11-09). MLIP
+// (SHARED_DEPLOYMENT) doesn't: there it is listed in its own "Coming soon to
+// the web · in the local version now" group (Junwen, 2026-11-09; heading
+// reworded 2026-11-11). MLIP
 // Playground runs MACE on the user's own machine (the server side is gated
 // the same way: goldilocks_agent.tools.mlip_playground_offered());
 // AiiDAlab-QE works against the user's own AiiDA profile.
@@ -638,7 +639,7 @@ const TRANSLATIONS = {
     tool_post_analysis_launcher: "Parse and interpret DFT/MLIP outputs, plots, and convergence data",
     tool_aiida_launcher: "Run Quantum ESPRESSO workflows with AiiDA through AiiDAlab's QE app",
     tools_coming_soon: "Coming soon",
-    tools_coming_soon_local: "Coming soon (available in the local version)",
+    tools_coming_soon_local: "Coming soon to the web · in the local version now",
     narrow_screen_notice: "Goldilocks is made for a computer screen. On a phone or a narrow window parts of it overlap; please use a desktop browser or a wider window.",
     settings_model_heading: "Model",
     settings_model_desc: "Qwen3.8-27B runs locally by default — your structures and conversations never leave this machine. Add a cloud API key below only if you want to switch to OpenAI, Claude, or Gemini for a chat.",
@@ -734,7 +735,7 @@ const TRANSLATIONS = {
     tool_post_analysis_launcher: "Analyser et interpréter les sorties DFT/MLIP, les graphiques et les données de convergence",
     tool_aiida_launcher: "Lancer des workflows Quantum ESPRESSO avec AiiDA via l'app QE d'AiiDAlab",
     tools_coming_soon: "Bientôt disponible",
-    tools_coming_soon_local: "Bientôt disponible (déjà dans la version locale)",
+    tools_coming_soon_local: "Bientôt sur le web · déjà dans la version locale",
     narrow_screen_notice: "Goldilocks est conçu pour un écran d'ordinateur. Sur un téléphone ou une fenêtre étroite, certains éléments se chevauchent : utilisez un navigateur de bureau ou une fenêtre plus large.",
     settings_model_heading: "Modèle",
     settings_model_desc: "Qwen3.8-27B s'exécute localement par défaut — vos structures et conversations ne quittent jamais cette machine. Ajoutez une clé API cloud ci-dessous uniquement si vous souhaitez utiliser OpenAI, Claude ou Gemini pour une conversation.",
@@ -830,7 +831,7 @@ const TRANSLATIONS = {
     tool_post_analysis_launcher: "DFT/MLIP-Ausgaben, Diagramme und Konvergenzdaten analysieren und interpretieren",
     tool_aiida_launcher: "Quantum-ESPRESSO-Workflows mit AiiDA über die QE-App von AiiDAlab ausführen",
     tools_coming_soon: "Demnächst verfügbar",
-    tools_coming_soon_local: "Demnächst verfügbar (in der lokalen Version bereits enthalten)",
+    tools_coming_soon_local: "Bald auch im Web · in der lokalen Version schon verfügbar",
     narrow_screen_notice: "Goldilocks ist für einen Computerbildschirm gemacht. Auf einem Telefon oder in einem schmalen Fenster überlappen sich Teile; bitte verwenden Sie einen Desktop-Browser oder ein breiteres Fenster.",
     settings_model_heading: "Modell",
     settings_model_desc: "Qwen3.8-27B läuft standardmäßig lokal — Ihre Strukturen und Unterhaltungen verlassen diesen Rechner nie. Fügen Sie unten nur dann einen Cloud-API-Schlüssel hinzu, wenn Sie für einen Chat zu OpenAI, Claude oder Gemini wechseln möchten.",
@@ -926,7 +927,7 @@ const TRANSLATIONS = {
     tool_post_analysis_launcher: "解析并解读 DFT/MLIP 输出、图表和收敛数据",
     tool_aiida_launcher: "通过 AiiDAlab 的 QE 应用，用 AiiDA 运行 Quantum ESPRESSO 工作流",
     tools_coming_soon: "即将推出",
-    tools_coming_soon_local: "即将推出（本地版已提供）",
+    tools_coming_soon_local: "网页版即将推出 · 本地版已可用",
     narrow_screen_notice: "Goldilocks 是为电脑屏幕设计的。在手机或较窄的窗口里，部分内容会互相重叠，请使用电脑浏览器或把窗口拉宽。",
     settings_model_heading: "模型",
     settings_model_desc: "Qwen3.8-27B 默认在本地运行——你的结构和对话内容不会离开这台机器。只有当你想切换到 OpenAI、Claude 或 Gemini 进行对话时，才需要在下方添加云端 API 密钥。",
@@ -1022,7 +1023,7 @@ const TRANSLATIONS = {
     tool_post_analysis_launcher: "Analizza e interpreta output DFT/MLIP, grafici e dati di convergenza",
     tool_aiida_launcher: "Esegui workflow Quantum ESPRESSO con AiiDA tramite l'app QE di AiiDAlab",
     tools_coming_soon: "Prossimamente",
-    tools_coming_soon_local: "Prossimamente (già disponibile nella versione locale)",
+    tools_coming_soon_local: "Presto sul web · già nella versione locale",
     narrow_screen_notice: "Goldilocks è pensato per lo schermo di un computer. Su un telefono o in una finestra stretta alcune parti si sovrappongono: usa un browser desktop o una finestra più larga.",
     settings_model_heading: "Modello",
     settings_model_desc: "Qwen3.8-27B viene eseguito localmente per impostazione predefinita — le tue strutture e conversazioni non lasciano mai questa macchina. Aggiungi una chiave API cloud qui sotto solo se vuoi passare a OpenAI, Claude o Gemini per una chat.",
