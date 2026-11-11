@@ -1,113 +1,67 @@
 # Configuration
 
-All of this is optional at first launch -- the app runs and tells you
-clearly (a 503 with a specific message, not a crash) if you try to use
-something that isn't configured yet.
+Everything here is optional: the compose file from
+[Getting started](getting-started.md) already turns on every Tool.
 
-**LLM providers** -- set whichever you want to use, either as an
-environment variable before starting the server, or later from the app's
-own Settings panel (saved to `~/.config/goldilocks/config.toml`, mode
-`0600`; the env var always wins if both are set):
+- **API keys** go in the app's **Settings** panel, or in a file named `.env`
+  next to `docker-compose.yml`.
+- **Other options** go in `docker-compose.yml` itself, under the `agent`
+  service's `environment:`.
 
-| Provider | Env var |
-|---|---|
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| Google (Gemini) | `GEMINI_API_KEY` |
-| Materials Project (structure search, not an LLM) | `MP_API_KEY` |
+Run `docker compose up -d` after changing either file.
 
-**Local model** (no API key, runs on your own machine): `ollama pull
-qwen3.8` natively, per [Getting started](getting-started.md) -- it's what
-the model selector's "Local" group uses, and is vision-capable. Override
-the resolved model entirely with `GOLDILOCKS_AGENT_MODEL` (a litellm model
-string, e.g. `anthropic/claude-sonnet-5`) if you want to force a specific
-one.
+## API keys
 
-You need at least one of the two above -- a cloud API key or a local
-Ollama model -- for chat to actually respond; everything below this point
-is opt-in for extra Tools, not required to start using the app at all.
+| Key for | In Settings | In `.env` |
+|---|---|---|
+| Anthropic (Claude) | Model | `ANTHROPIC_API_KEY` |
+| OpenAI | Model | `OPENAI_API_KEY` |
+| Google (Gemini) | Model | `GEMINI_API_KEY` |
+| Materials Project search | Databases | `MP_API_KEY` |
 
-**Optional: MLIP Playground** (local MACE calculations via `janus-core`) --
-*Coming soon* this release, so this has no effect until it's re-enabled
-(see [Tools](tools.md)). Off by default (the first real calculation
-triggers a multi-GB `uv sync` inside `./mlip-cli/`, so this needs to be
-opt-in):
+A key in `.env` takes precedence over one saved in Settings. Settings saves
+keys inside the container, in `~/.config/goldilocks/config.toml`, which is
+kept in the `goldilocks_home` volume. A key is only ever sent to the service
+it belongs to.
 
-```bash
-export GOLDILOCKS_AGENT_MLIP_ENABLED=1
+A Materials Project key is free from
+[materialsproject.org/api](https://materialsproject.org/api). Without one,
+Find in Databases searches the other databases and skips Materials Project.
+
+## The model
+
+Pick the model in the menu next to the message box. Cloud models need their
+API key; the local model, Qwen3.8-27B, needs [Ollama](https://ollama.com)
+running on your computer with `ollama pull qwen3.8` done (see
+[Getting started](getting-started.md#a-local-model)).
+
+To use one model for every chat whatever the menu says, add it under
+`environment:` in `docker-compose.yml` as a
+[litellm model name](https://docs.litellm.ai/docs/providers):
+
+```yaml
+      GOLDILOCKS_AGENT_MODEL: anthropic/claude-sonnet-5
 ```
 
-**Optional: DFT Workbench** (goldilocks-core's own real Workbench UI,
-embedded directly) -- `goldilocks-core` is
-[on PyPI](https://pypi.org/project/goldilocks-core/) now, so the simplest
-way to enable this needs no checkout at all:
+Ollama is expected on your computer at its default port, 11434. The compose
+file reaches it as `http://host.docker.internal:11434` (`OLLAMA_API_BASE`).
 
-```bash
-export GOLDILOCKS_AGENT_CORE_AUTOSTART=1
-```
+## Options set in the compose file
 
-If you're actively developing goldilocks-core itself, point at your local
-checkout instead -- it takes priority over the PyPI package, so you get
-your own uncommitted changes. The checkout needs its `http` extra synced
-first (`fastapi`/`uvicorn` aren't in core's base install -- the PyPI path
-above doesn't need this step because `goldilocks-core[http]` already
-requests it):
+`docker-compose.yml` sets these for you:
 
-```bash
-cd /path/to/your/goldilocks-core && uv sync --extra http
-export GOLDILOCKS_CORE_PATH=/path/to/your/goldilocks-core
-```
+| Option | Set to | What it does |
+|---|---|---|
+| `GOLDILOCKS_AGENT_CORE_AUTOSTART` | `1` | Turns on DFT Workbench: Goldilocks installs goldilocks-core from PyPI the first time it is needed and starts it. |
+| `UV_TORCH_BACKEND` | `cpu` | Installs goldilocks-core's PyTorch for the CPU, which is smaller and faster there than PyPI's default GPU build. |
+| `GOLDILOCKS_AGENT_MLIP_ENABLED` | `1` | Turns on MLIP Playground's calculations. The first one installs its MACE environment, a few GB. |
 
-The checkout has to speak the same `vocabulary_version` as the embedded
-Workbench UI (the one in `src/goldilocks_agent/core_pin.json`; a checkout
-reports its own in `src/goldilocks_core/capabilities.py`) -- otherwise
-goldilocks-agent reports an error naming both vocabulary versions instead
-of loading DFT Workbench.
+The DFT parameters themselves always come from goldilocks-core, which has its
+own [documentation](https://github.com/stfc/goldilocks-core).
 
-Unlike MLIP Playground's per-call `janus` CLI shell-out, this one *is* a
-persistent service -- the first time something needs it (opening DFT
-Workbench inline or full-page, a chat DFT tool, or reloading a page with a
-saved DFT Workbench state), goldilocks-agent lazily runs it for you (either
-`uvx --from goldilocks-core[http]==<version> goldilocks serve http`,
-with `<version>` the core release pinned in
-`src/goldilocks_agent/core_pin.json`, or your
-checkout's own `uv run --directory <path> poe serve` if
-`GOLDILOCKS_CORE_PATH` is set), health-checking first so it reuses an
-instance you already started yourself in another terminal instead of
-double-spawning, and keeps it running for the rest of the session,
-shutting it down when goldilocks-agent's own process exits. Nothing to
-start by hand either way. Its output, including the traceback behind any
-HTTP 500, goes to goldilocks-agent's own log prefixed `[goldilocks-core]`
-(`docker compose logs agent` in Docker).
+## Running the website
 
-**Magnetism ML tier (mMACE)** -- goldilocks-core's ML `is_magnetic`
-classification and magnetic-ordering ranking. Since goldilocks-core v0.3.0
-it needs no setup of its own, in either mode: `mace-torch` is an ordinary
-core dependency, and `goldilocks assets install all` (the profile was
-`workbench` before core v0.3.1), which the auto-start runs before serving,
-installs the model's backbone with core's
-other models. Open DFT Workbench and load a magnetic structure (e.g.
-goldilocks-core's own `src/goldilocks_core/examples/structures/Fe_bcc.cif`)
--- the Analysis card's "is magnetic" caption reads "Goldilocks-ML
-prediction".
-
-Upgrading from an earlier setup:
-
-- Unset `GOLDILOCKS_MACE_BACKBONE` if it still points at the v1.0 checkpoint
-  (`mace_matpes_pbe_baseline_run-3.model`). It overrides the installed
-  backbone, and core refuses the v1.0 file, so every `is_magnetic` request
-  fails.
-- A checkout with the `CheukHinHoJerry/mace` fork or `sphericart` installed
-  by hand gets its locked `mace-torch` back on the next
-  `uv sync --extra http` there.
-- The first start after the upgrade fetches the changed models and the
-  PseudoDojo tables again (from PSDI), which can take many minutes; DFT
-  Workbench says so, with core's latest output, while it runs.
-
-goldilocks-core's `docs/mmace-setup.md` has the details.
-
-Don't confuse this with **MLIP Playground** above -- different `mace`
-package (core's own `mace-torch` vs. `janus-core`'s `[mace]` extra), different
-purpose (magnetism classification/ranking vs. general-purpose
-single-point/EOS/NEB/phonon calculations), different checkpoint, no shared
-configuration.
+The shared website at [workbench.goldilocks.ac.uk](https://workbench.goldilocks.ac.uk)
+uses the `goldilocks-agent-web` image and options of its own (anonymous
+visitors, chat retention, a pinned model). They are described in
+[`deploy/stfc-cloud/README.md`](https://github.com/stfc/goldilocks-agent/blob/main/deploy/stfc-cloud/README.md).
