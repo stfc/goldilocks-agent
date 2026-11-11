@@ -28,11 +28,13 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       OLLAMA_API_BASE: http://host.docker.internal:11434
-      # Optional -- uncomment/set to enable the matching feature:
-      # ANTHROPIC_API_KEY:
-      # OPENAI_API_KEY:
-      # GEMINI_API_KEY:
-      # MP_API_KEY:
+      # Model and Materials Project keys, taken from a `.env` file next to
+      # this one (or your shell) when set there; unset ones stay unset in
+      # the container. A key set here wins over one saved in Settings.
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      GEMINI_API_KEY:
+      MP_API_KEY:
       GOLDILOCKS_AGENT_MLIP_ENABLED: "1"
       # DFT Workbench's backend is goldilocks-core from PyPI, the release in
       # core_pin.json: `uvx` installs it on the Tool's first open, into uv's
