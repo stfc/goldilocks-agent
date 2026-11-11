@@ -56,6 +56,14 @@ jobs:
   docker:
     needs: test
     runs-on: ubuntu-latest
+    # One publish per branch at a time, in push order: several merges in a
+    # row used to publish side by side, and whichever finished last owned
+    # `latest`, an older commit as often as not (2026-11-11: web `latest`
+    # was #126's build after #128 had merged). A newer push waits for the
+    # running publish and replaces any older one still waiting.
+    concurrency:
+      group: docker-publish-${{ github.ref }}
+      cancel-in-progress: false
     # Only main/tags actually publish -- PRs stop at the `test` job above,
     # they never get push permission or a registry login.
     if: github.event_name != 'pull_request'
