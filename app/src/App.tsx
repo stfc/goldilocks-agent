@@ -2139,13 +2139,16 @@ export default function App() {
   const modelRef = useRef(null);
   const widgetsAreaRef = useRef(null);
   const chatAreaRef = useRef(null);
-  // Bridges the gap between "just created a session because there wasn't
-  // one" and React's next render actually reflecting it in `session` below
-  // -- without this, two lazy-creating calls in the same synchronous burst
-  // (e.g. readFile's setSessionFiles then setAttachedFiles, both reading
-  // the same stale `session === null`) would each create their own new
-  // session and silently drop one of the two updates. See ensureSession().
-  const pendingSessionRef = useRef(null);
+  // The active session as of the last render, or the one ensureSession()
+  // has just created before React re-renders `session` below. Without it,
+  // two lazy-creating calls in the same synchronous burst (e.g. readFile's
+  // setSessionFiles then setAttachedFiles, both reading the same stale
+  // `session === null`) would each create their own new session and
+  // silently drop one of the two updates. It follows `session` after every
+  // render, so opening a project, creating one or deleting the last chat
+  // leaves it empty: it used to keep the last chat ensureSession() created
+  // until "New chat" was clicked, and the next message went into that chat.
+  const activeSessionRef = useRef(null);
   // Set only by the user's own "Formula" toggle click, consumed when the
   // formula box mounts. Not `autoFocus`: a chat-driven find_in_databases
   // result also switches the panel to formula mode, and autoFocus then
@@ -2155,6 +2158,9 @@ export default function App() {
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
   const session = activeId ? (sessions.find((item) => item.id === activeId) ?? null) : null;
+  useLayoutEffect(() => {
+    activeSessionRef.current = session;
+  }, [session]);
   const messages = session?.messages ?? EMPTY_MESSAGES;
   const hasMessages = messages.length > 0;
   const activeTool = getToolById(session?.tool);
@@ -2542,15 +2548,15 @@ export default function App() {
   // Returns the active session, lazily creating one first if there isn't
   // one yet (a fresh "New chat" has `session === null` until the first
   // message/attachment materializes it -- same session `send()` has always
-  // created on demand). `pendingSessionRef` makes repeated calls within the
+  // created on demand). `activeSessionRef` makes repeated calls within the
   // same synchronous burst (before React re-renders `session` itself)
   // return the *same* freshly-created session instead of each spawning a
   // new one.
   function ensureSession() {
     if (session) return session;
-    if (pendingSessionRef.current) return pendingSessionRef.current;
+    if (activeSessionRef.current) return activeSessionRef.current;
     const created = createSession(draftProjectId);
-    pendingSessionRef.current = created;
+    activeSessionRef.current = created;
     setSessions((prev) => [created, ...prev]);
     setActiveId(created.id);
     setDraftProjectId(null);
@@ -2558,14 +2564,14 @@ export default function App() {
   }
 
   function newChat(projectId = null) {
-    pendingSessionRef.current = null;
     setActiveId(null);
     setDraftProjectId(projectId);
     setActiveProjectId(projectId);
     setView("chats");
     setInput("");
-    setAttachedFiles([]);
-    setSessionFiles([]);
+    // No setAttachedFiles/setSessionFiles here: those are per chat, a new
+    // chat has none until it exists, and calling them made ensureSession()
+    // clear the files of the chat being left or create an empty chat.
     setAttachedImages([]);
     setSessionImages([]);
     setShowElementPicker(false);
