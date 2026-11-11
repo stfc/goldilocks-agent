@@ -345,7 +345,7 @@ const EXPERIENCE_OPTIONS = [
 // a single local user's own state should.
 const SHARED_DEPLOYMENT = import.meta.env.VITE_SHARED_DEPLOYMENT === "1";
 // Where the web build sends visitors for the local version.
-const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#installation";
+const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#run-it-on-your-own-computer";
 
 // `comingSoon: true` parks a Tool everywhere: hidden from the side-panel
 // picker, listed only in the full-page overview's "Coming soon" section,
