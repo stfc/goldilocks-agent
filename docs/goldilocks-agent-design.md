@@ -3674,6 +3674,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
     - README（也就是两个包页面）只写上手：一句话说明、网站链接、本机三步、选模型、更新/停止、两个镜像各是什么，链接都写成绝对地址，因为包页面上相对链接解析不了；
     - 文档站（stfc.github.io/goldilocks-agent）写完整指南：Getting started（安装、选模型、第一步、常见问题）、Configuration、Tools 更新到现状；开发者内容集中到新的 `docs/development.md`；
     - 两个包的描述改成白话，本地版写明怎么跑；构建去掉 provenance attestation（`provenance: false`），它在 OS / Arch 里显示成一个 unknown/unknown 平台，像第三个镜像，而且没人校验它；
+      - 这一改让线上版的发布失败了一次（e2242b0）：线上版只有一个平台，没有 attestation 后推送的是单个 manifest 而不是 index，buildx 拒绝 index annotation（`index annotations not supported for single platform export`）。本地版两个平台仍是 index，不受影响。修法：线上版的 `DOCKER_METADATA_ANNOTATIONS_LEVELS` 只用 `manifest`，描述由 label 提供（GitHub 读单平台镜像的 label）。合并前在本地用 buildx 复现了报错并验证了修法；
     - 写文档时发现 README 里"把 key 写进 `.env`"其实不生效：compose 只用 `.env` 填 `${...}`，key 那几行是注释掉的，容器拿不到。单独修了（compose 里列出四个 key、不给值，设了就传进去，没设就不设）。
 - **★ 2026-11-11：core 改从 PyPI 运行，不再用源码 checkout**（Junwen 2026-11-10 定，随 core 0.3.2 一起做）：
   - 当初用 checkout 的原因（2026-09-25，commit 3455fab）：mMACE 依赖 mace 的 fork 和钉死版本的 ase/e3nn/sphericart，要从 git 装，PyPI 的 extras 表达不了。core 0.3.0（#47）去掉了这些，mMACE 的依赖由 goldilocks-ml 从 PyPI 带进来；

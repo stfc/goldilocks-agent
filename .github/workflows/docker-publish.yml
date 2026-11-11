@@ -89,9 +89,10 @@ jobs:
       # Both images: `latest` on every push to main, plus the short commit
       # sha (`sha-xxxxxxx`) to pin one build; the local version also gets
       # semver tags (`v1.2.3` -> `1.2.3`/`1.2`/`1`) on a version tag push.
-      # Each image's description is set as a label and as manifest and index
-      # annotations: GitHub's package page reads a multi-arch image's from
-      # the index (DOCKER_METADATA_ANNOTATIONS_LEVELS).
+      # Each image's description is set as a label and as annotations:
+      # GitHub's package page reads a multi-arch image's from the index
+      # (DOCKER_METADATA_ANNOTATIONS_LEVELS), a single-platform one's from
+      # its label.
       - id: meta-local
         uses: docker/metadata-action@v5
         env:
@@ -129,11 +130,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       # amd64 only, the STFC VM's architecture; its own cache scope, so the
-      # two builds don't evict each other's layers.
+      # two builds don't evict each other's layers. One platform without a
+      # provenance attestation is pushed as a single manifest, not an index,
+      # and buildx refuses index annotations for it, so manifest only.
       - id: meta-web
         uses: docker/metadata-action@v5
         env:
-          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
         with:
           images: ghcr.io/${{ github.repository }}-web
           tags: |
