@@ -11,6 +11,10 @@ test("All Tools separates the local version's tools from the ones coming everywh
     "DFT Workbench",
     "Post Analysis",
   ]);
+  // The website doesn't search Materials Project, and says where it is.
+  await expect(page.locator(".tools-overview-card", { hasText: "Find in Databases" })).toContainText(
+    "Search Materials Cloud, NOMAD and JARVIS; Materials Project in the local version",
+  );
   await expect(page.locator(".tools-overview-section-label")).toHaveText([
     "Coming soon to the web · in the local version now",
     "Coming soon",

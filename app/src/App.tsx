@@ -633,6 +633,7 @@ const TRANSLATIONS = {
     tab_analysis: "Analysis", tab_metrics: "Metrics", tab_compute: "Compute",
     // Mode launcher descriptions
     tool_structure_search_launcher: "Search Materials Cloud, Materials Project, NOMAD, and JARVIS",
+    tool_structure_search_launcher_shared: "Search Materials Cloud, NOMAD and JARVIS; Materials Project in the local version",
     tool_ml_analysis_launcher: "Explore materials research with machine learning interatomic potentials",
     tool_dft_workbench_launcher: "Guidance for DFT workflows, inputs, convergence, and results",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM, and beyond",
@@ -729,6 +730,7 @@ const TRANSLATIONS = {
     tab_setup: "Configuration", tab_inputs: "Entrées", tab_checks: "Explication",
     tab_analysis: "Analyse", tab_metrics: "Métriques", tab_compute: "Calcul",
     tool_structure_search_launcher: "Rechercher dans Materials Cloud, Materials Project, NOMAD et JARVIS",
+    tool_structure_search_launcher_shared: "Rechercher dans Materials Cloud, NOMAD et JARVIS ; Materials Project dans la version locale",
     tool_ml_analysis_launcher: "Explorer la recherche sur les matériaux avec des potentiels interatomiques ML",
     tool_dft_workbench_launcher: "Aide pour les workflows DFT, entrées, convergence et résultats",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM et au-delà",
@@ -825,6 +827,7 @@ const TRANSLATIONS = {
     tab_setup: "Einrichtung", tab_inputs: "Eingaben", tab_checks: "Erklärung",
     tab_analysis: "Analyse", tab_metrics: "Metriken", tab_compute: "Berechnen",
     tool_structure_search_launcher: "In Materials Cloud, Materials Project, NOMAD und JARVIS suchen",
+    tool_structure_search_launcher_shared: "In Materials Cloud, NOMAD und JARVIS suchen; Materials Project in der lokalen Version",
     tool_ml_analysis_launcher: "Materialforschung mit maschinellen interatomaren Potentialen erkunden",
     tool_dft_workbench_launcher: "Anleitung für DFT-Workflows, Eingaben, Konvergenz und Ergebnisse",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM und darüber hinaus",
@@ -921,6 +924,7 @@ const TRANSLATIONS = {
     tab_setup: "配置", tab_inputs: "输入", tab_checks: "解释",
     tab_analysis: "分析", tab_metrics: "指标", tab_compute: "计算",
     tool_structure_search_launcher: "搜索 Materials Cloud、Materials Project、NOMAD 和 JARVIS",
+    tool_structure_search_launcher_shared: "搜索 Materials Cloud、NOMAD 和 JARVIS；Materials Project 在本地版中可用",
     tool_ml_analysis_launcher: "用机器学习原子间势探索材料研究",
     tool_dft_workbench_launcher: "DFT 工作流、输入、收敛和结果指导",
     tool_beyond_dft_launcher: "GW、BSE、QMC、TDDFT、Wannier、DMFT、QM/MM 及更多",
@@ -1017,6 +1021,7 @@ const TRANSLATIONS = {
     tab_setup: "Configurazione", tab_inputs: "Input", tab_checks: "Spiegazione",
     tab_analysis: "Analisi", tab_metrics: "Metriche", tab_compute: "Calcolo",
     tool_structure_search_launcher: "Cerca su Materials Cloud, Materials Project, NOMAD e JARVIS",
+    tool_structure_search_launcher_shared: "Cerca su Materials Cloud, NOMAD e JARVIS; Materials Project nella versione locale",
     tool_ml_analysis_launcher: "Esplora la ricerca sui materiali con potenziali interatomici ML",
     tool_dft_workbench_launcher: "Guida per workflow DFT, input, convergenza e risultati",
     tool_beyond_dft_launcher: "GW, BSE, QMC, TDDFT, Wannier, DMFT, QM/MM e oltre",
@@ -2379,6 +2384,13 @@ export default function App() {
   const activeViewerSource = chatStructures[safeViewerIdx] ?? null;
 
   const t = (key) => TRANSLATIONS[language]?.[key] ?? TRANSLATIONS.en[key] ?? key;
+  // A Tool's one-line description; the web build's own wording where the
+  // website differs (Find in Databases: no Materials Project there).
+  const toolLauncherText = (tool) => {
+    const key = `tool_${tool.id.replace(/-/g, "_")}_launcher`;
+    if (SHARED_DEPLOYMENT && TRANSLATIONS.en[`${key}_shared`]) return t(`${key}_shared`);
+    return t(key) || tool.launcherDesc;
+  };
 
   const workspaceContent = renderWorkspace();
 
@@ -3986,7 +3998,7 @@ export default function App() {
             </div>
             <div className="menu-item-copy">
               <strong>{tool.label}</strong>
-              <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+              <span>{toolLauncherText(tool)}</span>
             </div>
           </div>
         ))}
@@ -4239,13 +4251,20 @@ export default function App() {
                         <span className="db-error-hint">Failed: {Object.keys(errors).join(", ")}</span>
                       </div>
                     )}
-                    {/* Sources not searched (Materials Project without a key):
-                        this deployment's setup, not a failure, so grey. */}
+                    {/* Sources not searched: the website never searches
+                        Materials Project, the local version needs a key.
+                        This deployment's setup, not a failure, so grey. */}
                     {"Materials Project" in skipped && (
                       <div className="db-empty-hint" style={{ marginBottom: 6 }}>
-                        {SHARED_DEPLOYMENT
-                          ? "Materials Project needs an API key, so it isn't searched here; the local version can use yours."
-                          : "Materials Project needs an API key: add yours in Settings to search it too."}
+                        {SHARED_DEPLOYMENT ? (
+                          <>
+                            Materials Project isn't searched on the website. The{" "}
+                            <a href={LOCAL_VERSION_URL} target="_blank" rel="noreferrer">local version</a>{" "}
+                            searches it with your own free API key.
+                          </>
+                        ) : (
+                          "Materials Project needs an API key: add yours in Settings to search it too."
+                        )}
                       </div>
                     )}
                     {unavailable.length > 0 && (
@@ -5023,7 +5042,7 @@ export default function App() {
             </div>
             <div className="tools-overview-card-copy">
               <strong>{tool.label}</strong>
-              <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+              <span>{toolLauncherText(tool)}</span>
             </div>
             <span className="tools-overview-expand-btn" title={`Expand ${tool.label}`}>
               <ExpandIcon />
@@ -5048,7 +5067,7 @@ export default function App() {
                 </div>
                 <div className="tools-overview-card-copy">
                   <strong>{tool.label}</strong>
-                  <span>{t("tool_" + tool.id.replace(/-/g, "_") + "_launcher") || tool.launcherDesc}</span>
+                  <span>{toolLauncherText(tool)}</span>
                 </div>
               </div>
             ))}

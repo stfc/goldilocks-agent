@@ -34,7 +34,7 @@ from pymatgen.core import Composition, Lattice, Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.symmetry.groups import SpaceGroup
 
-from goldilocks_agent.config import get_api_key
+from goldilocks_agent.config import get_api_key, read_shared_deployment_enabled
 from goldilocks_agent.tools.structure_search import jarvis_cache
 from goldilocks_agent.tools.structure_search.models import (
     FetchedStructure,
@@ -445,6 +445,20 @@ def _jarvis_entry_to_result(entry: dict) -> MatchEntry:
     )
 
 
+def materials_project_skip_reason() -> str | None:
+    """Why Materials Project isn't searched here, or None when it is. The
+    website never searches it (Junwen, 2026-11-11), whatever key the server
+    has; the local version needs the user's own free key."""
+    if read_shared_deployment_enabled():
+        return (
+            "not searched on the website; the local version searches it "
+            "with the user's own free API key"
+        )
+    if not get_api_key("materials_project"):
+        return "needs an API key, added in Settings"
+    return None
+
+
 async def search_by_formula(formula: str) -> StructureMatchResult:
     """Query all four databases in parallel for a formula. No core dependency."""
     query_formula = parse_query_formula(formula)
@@ -454,11 +468,11 @@ async def search_by_formula(formula: str) -> StructureMatchResult:
     async def _not_asked() -> tuple[list[dict], str | None]:
         return [], None
 
-    # Without a key Materials Project isn't asked at all: that's this
-    # deployment's setup (the shared web build has none), not a failure.
-    ask_mp = bool(get_api_key("materials_project"))
+    # A source this deployment doesn't search is `skipped`, not an error.
+    mp_skip_reason = materials_project_skip_reason()
+    ask_mp = mp_skip_reason is None
     if not ask_mp:
-        skipped["Materials Project"] = "needs an API key"
+        skipped["Materials Project"] = mp_skip_reason
 
     async with httpx.AsyncClient(timeout=_OPTIMADE_TIMEOUT) as client:
         (
@@ -510,9 +524,10 @@ def _structure_from_optimade_attrs(attrs: dict) -> str:
 
 
 async def _fetch_mp(entry_id: str) -> FetchedStructure:
+    reason = materials_project_skip_reason()
+    if reason is not None:
+        raise RuntimeError(f"Materials Project is {reason}")
     api_key = get_api_key("materials_project")
-    if not api_key:
-        raise RuntimeError("MP_API_KEY not configured")
 
     def _sync():
         from mp_api.client import MPRester

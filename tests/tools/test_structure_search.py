@@ -88,6 +88,7 @@ def test_search_by_formula_skips_materials_project_without_a_key(monkeypatch) ->
     async def must_not_run(*args):
         raise AssertionError("Materials Project was asked without a key")
 
+    monkeypatch.delenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", raising=False)
     monkeypatch.setattr(query, "get_api_key", lambda provider: None)
     monkeypatch.setattr(query, "_query_mp", must_not_run)
     monkeypatch.setattr(query, "_query_mc", no_entries)
@@ -96,9 +97,38 @@ def test_search_by_formula_skips_materials_project_without_a_key(monkeypatch) ->
 
     result = asyncio.run(search_by_formula("NaCl"))
 
-    assert result.skipped == {"Materials Project": "needs an API key"}
+    assert result.skipped == {
+        "Materials Project": "needs an API key, added in Settings"
+    }
     assert result.errors == {}
     assert group_candidates(result).skipped == result.skipped
+
+
+def test_the_website_never_searches_materials_project(monkeypatch) -> None:
+    """The website doesn't offer Materials Project (Junwen, 2026-11-11), even
+    if the server has a key: a search skips it with that reason, and fetching
+    one of its structures is refused."""
+    from goldilocks_agent.tools.structure_search import query
+
+    async def no_entries(*args):
+        return [], None
+
+    async def must_not_run(*args):
+        raise AssertionError("the website asked Materials Project")
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    monkeypatch.setattr(query, "get_api_key", lambda provider: "a-key")
+    monkeypatch.setattr(query, "_query_mp", must_not_run)
+    monkeypatch.setattr(query, "_query_mc", no_entries)
+    monkeypatch.setattr(query, "_query_nomad", no_entries)
+    monkeypatch.setattr(query, "_query_jarvis", lambda formula: ([], None))
+
+    result = asyncio.run(search_by_formula("NaCl"))
+
+    assert list(result.skipped) == ["Materials Project"]
+    assert "website" in result.skipped["Materials Project"]
+    with pytest.raises(RuntimeError, match="website"):
+        asyncio.run(query.fetch_structure("Materials Project", "mp-22862"))
 
 
 def test_group_candidates_separates_entries_with_unknown_spacegroup() -> None:
