@@ -33,7 +33,7 @@ docs/                   This site, plus the internal design documents
 
 Needs Python 3.12+, [`uv`](https://docs.astral.sh/uv/), Node.js 18+ with npm,
 and a model (a cloud API key or [Ollama](https://ollama.com), as in
-[Getting started](getting-started.md#2-choose-a-model)).
+[Getting started](getting-started.md#step-2-choose-a-language-model)).
 
 ```bash
 git clone https://github.com/stfc/goldilocks-agent.git && cd goldilocks-agent

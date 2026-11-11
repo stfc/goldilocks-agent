@@ -13,7 +13,8 @@ COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
 
 
 def test_keys_in_a_dot_env_file_reach_the_container() -> None:
-    """The README puts keys in a `.env` file next to docker-compose.yml.
+    """docs/configuration.md puts keys in a `.env` file next to
+    docker-compose.yml.
     Compose only uses that file to fill in `${...}`, so a key reaches the
     container only if `environment` lists it, with no value: it is then
     passed through when set and left unset otherwise."""

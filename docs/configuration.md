@@ -33,7 +33,7 @@ Find in Databases searches the other databases and skips Materials Project.
 Pick the model in the menu next to the message box. Cloud models need their
 API key; the local model, Qwen3.8-27B, needs [Ollama](https://ollama.com)
 running on your computer with `ollama pull qwen3.8` done (see
-[Getting started](getting-started.md#a-local-model)).
+[Getting started](getting-started.md#b-local-model-install-ollama-and-qwen38-27b)).
 
 To use one model for every chat whatever the menu says, add it under
 `environment:` in `docker-compose.yml` as a

@@ -32,6 +32,15 @@ theme:
     - navigation.tracking
     - search.suggest
 
+# getting-started.md takes the install steps from README.md's
+# `local-install` section, so the README (also shown on the GHCR package
+# pages) and the docs site share one copy.
+markdown_extensions:
+  - pymdownx.snippets:
+      check_paths: true
+  # Code blocks inside list items, as in the README's install steps.
+  - pymdownx.superfences
+
 validation:
   links:
     # These docs deliberately cross-link to ../README.md (outside docs_dir)
