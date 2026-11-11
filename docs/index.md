@@ -8,7 +8,8 @@ where each one comes from, and gives you the input files.
 
 - **Try it in your browser** at
   [workbench.goldilocks.ac.uk](https://workbench.goldilocks.ac.uk). Nothing to
-  install; chats are deleted 24 hours after your last message.
+  install; chats are deleted 24 hours after your last message. The website
+  doesn't search Materials Project.
 - **Run it on your own computer** with Docker, keeping your chats and using
   your own model: [Getting started](getting-started.md).
 

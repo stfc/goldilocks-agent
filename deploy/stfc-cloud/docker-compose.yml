@@ -38,11 +38,11 @@ services:
       # Chats idle this long are deleted, checkpoints and all
       # (src/goldilocks_agent/chat_retention.py); 24 when unset.
       # GOLDILOCKS_AGENT_CHAT_RETENTION_HOURS: "24"
-      # Optional -- uncomment/set to enable the matching feature:
-      # ANTHROPIC_API_KEY:
-      # OPENAI_API_KEY:
-      # GEMINI_API_KEY:
-      # MP_API_KEY:
+      # No API keys here: the website's model is pinned
+      # (GOLDILOCKS_AGENT_MODEL above), and the website never searches
+      # Materials Project, whatever key it has (Junwen, 2026-11-11;
+      # materials_project_skip_reason() in tools/structure_search/query.py).
+      # The local version searches it with the user's own key.
       # MLIP Playground is offered by the local version only (2026-11-09,
       # mlip_playground_offered() in src/goldilocks_agent/tools/__init__.py):
       # with GOLDILOCKS_AGENT_SHARED_DEPLOYMENT set, its routes 404 and the

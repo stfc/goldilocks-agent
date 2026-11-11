@@ -11,8 +11,10 @@ formula, for example "find NaCl" in the chat or a formula in the panel.
 Entries that are the same structure are grouped, and within each database
 the lowest-energy structure is marked. Import one into the chat to use it.
 
-Materials Project needs an API key (see [Configuration](configuration.md));
-without one it is skipped and the other databases are searched.
+The website doesn't search Materials Project; the
+[local version](getting-started.md) does, with your own free API key (see
+[Configuration](configuration.md)). Without a key it is skipped and the other
+databases are searched.
 
 ## DFT Workbench
 

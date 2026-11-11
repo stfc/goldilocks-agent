@@ -3670,6 +3670,7 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
     - `ghcr.io/stfc/goldilocks-agent-web`：线上版，STFC 的 compose 用它；
     - 两个都打 `latest` 和 `sha-<commit>`。描述同时写成 label 和 manifest/index annotation，因为 GitHub 读多架构镜像的描述时看的是 index；
     - 旧名字 `ghcr.io/stfc/goldilocks-agent` 立即停止更新（Junwen 定的，不设过渡期）。2026-11-11 之前下载的 `docker-compose.yml` 要换成新的，README 里写了这一点。
+  - **同一天定了：网页版不搜 Materials Project，本地版搜**（Junwen 看过 MP 的条款后决定）。原计划是给 VM 配一个团队 key，现在不配了。服务端强制：共享部署下 `materials_project_skip_reason()` 总是返回原因，搜索时 MP 进 `skipped`（即使服务器有 key），按 MP 的 id 取结构也被拒（503）。网页版提醒用户：Find in Databases 结果上方的灰色提示写明网页版不搜 MP、本地版用自己的免费 key 可以搜（带链接），Tools 列表里 Find in Databases 的说明也改成网页版的说法。本地版不变：有 key 就搜，没 key 灰色提示去 Settings 填。
   - **同一天重写了 README 和文档站，面向使用者**（Junwen 选的分工）：两个包页面都显示仓库 README（GitHub 的容器包没有自己的 README，只有一句 ≤512 字符的描述），原来的 README 开头是开发者内容，用户要翻好几屏才看到怎么跑。现在：
     - README（也就是两个包页面）只写上手：一句话说明、网站链接、本机三步、选模型、更新/停止、两个镜像各是什么，链接都写成绝对地址，因为包页面上相对链接解析不了；
     - 文档站（stfc.github.io/goldilocks-agent）写完整指南：Getting started（安装、选模型、第一步、常见问题）、Configuration、Tools 更新到现状；开发者内容集中到新的 `docs/development.md`；

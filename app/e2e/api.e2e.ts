@@ -27,6 +27,14 @@ test("MLIP Playground is the local version's only", async ({ request }) => {
   expect((await response.json()).detail).toContain("local version");
 });
 
+test("Materials Project isn't on the website, even by its structure ids", async ({ request }) => {
+  const response = await request.get("/api/fetch-structure", {
+    params: { source: "Materials Project", entry_id: "mp-149" },
+  });
+  expect(response.status()).toBe(503);
+  expect((await response.json()).detail).toContain("not searched on the website");
+});
+
 test("ranking goes through the job routes, not the old synchronous call", async ({ request }) => {
   expect((await request.post("/magnetic-orderings", { data: { ...fe, rank_with_mmace: true } })).status()).toBe(422);
   const submitted = await request.post("/magnetic-orderings/rank", { data: fe });

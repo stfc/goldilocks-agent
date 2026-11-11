@@ -9,6 +9,8 @@ where each one comes from, and gives you the input files.
 ## Use it in your browser
 
 Open **<https://workbench.goldilocks.ac.uk>**. There is nothing to install.
+The website searches Materials Cloud, NOMAD and JARVIS; Materials Project is
+searched by the local version, with your own free API key.
 
 Your chats and uploaded structures are kept on STFC's server and deleted 24
 hours after your last message, so don't upload confidential data. To keep
