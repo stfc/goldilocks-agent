@@ -46,6 +46,7 @@ from goldilocks_agent.config import (
     write_credential,
     write_experience_level,
 )
+from goldilocks_agent.dft_draft import DftDraftUpdate
 from goldilocks_agent.graph import build_graph, open_checkpointer, tool_status
 from goldilocks_agent.tools import (
     MLIP_PLAYGROUND_TOOLS,
@@ -395,6 +396,40 @@ async def get_chat_history(thread_id: str) -> dict:
     return {"messages": [_history_entry(message) for message in messages]}
 
 
+@app.get("/api/chat/{thread_id}/dft/draft")
+async def get_dft_draft(thread_id: str) -> dict:
+    """The chat's DFT Workbench draft (dft_draft.py), or null before anything
+    was set: the panel replays it on reload and on switching chats (#142)."""
+    return {"draft": await store.get_dft_draft(app.state.store, thread_id)}
+
+
+@app.put("/api/chat/{thread_id}/dft/draft", response_model=None)
+async def put_dft_draft(thread_id: str, update: DftDraftUpdate) -> dict | JSONResponse:
+    """Replaces the chat's DFT Workbench draft, if `base_revision` is still its
+    revision. Otherwise 409 with the draft that is there, for the caller to
+    replay before changing anything else (design doc 3.3: a stale writer
+    never overwrites newer state)."""
+    if read_shared_deployment_enabled():
+        # Panel edits are activity too: keeps the thread from being deleted
+        # as idle (chat_retention.py) while only the panel is used.
+        await store.touch_chat_activity(app.state.store, thread_id)
+    saved, draft = await store.put_dft_draft(
+        app.state.store,
+        thread_id,
+        update.draft.model_dump(),
+        update.base_revision,
+    )
+    if not saved:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"The draft changed since revision {update.base_revision}.",
+                "draft": draft,
+            },
+        )
+    return {"draft": draft}
+
+
 def _history_entry(message) -> dict:
     """`message` in OpenAI format, with the `display` text the user's chat
     bubble showed when it was sent, if it had one."""
@@ -546,6 +581,7 @@ async def delete_conversation(conversation_id: str) -> dict:
     if checkpointer is None:
         raise HTTPException(status_code=500, detail="checkpointer not configured")
     await store.delete_conversation(app.state.store, conversation_id)
+    await store.delete_dft_draft(app.state.store, conversation_id)
     await checkpointer.adelete_thread(conversation_id)
     return {"ok": True}
 

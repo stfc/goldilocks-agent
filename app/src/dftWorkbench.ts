@@ -1,6 +1,7 @@
-// DFT Workbench's chat-tool executor and reload restore: everything that
-// drives the embedded goldilocks-workbench `Workspace` on the model's or the
-// page's behalf (graph.py's CLIENT_EXECUTED_TOOLS, #18's restore). Kept out
+// DFT Workbench's chat-tool executor: everything that drives a chat's
+// goldilocks-workbench `Workspace` on the model's behalf (graph.py's
+// CLIENT_EXECUTED_TOOLS); dftDraftSync.ts keeps that Workspace in step with
+// the chat's draft on the server. Kept out
 // of App.tsx so its use of the `Workspace` and snapshot types is
 // type-checked, and so it is tested against a real `createWorkspace` with
 // recorded core responses (dftWorkbench.test.ts). The request payload types
@@ -18,7 +19,6 @@ import {
 import type {
   ArchiveDownload,
   BlockingFinding,
-  CalculationDraft,
   PipelineOutcome,
   Workspace,
   WorkspaceFailure,
@@ -454,92 +454,4 @@ export function saveBundle(
   }
   save(archive);
   return null;
-}
-
-// Rebuilds a persisted DFT Workbench draft as a `draft.patch` for the
-// capabilities core reports now (#18): code, task and HPC profile only if
-// core still offers them, and the overrides only if they were saved under the
-// same vocabulary -- override keys and values change between vocabularies,
-// and an override core rejects sticks to the draft. Fields are omitted rather
-// than set to `undefined`: `draft.patch` applies any key that is present.
-// States saved before `vocabulary` was recorded all came from vocabulary "1"
-// builds.
-export function restorableDraftPatch(
-  saved: Pick<SavedDftState, "vocabulary" | "draft">,
-  capabilities,
-) {
-  const draft = saved.draft;
-  if (!draft) return null;
-  const offered = (items: { id: string }[], id: string | null) =>
-    items.some((item) => item.id === id);
-  return {
-    type: "draft.patch" as const,
-    ...(offered(capabilities.codes, draft.code) ? { code: draft.code } : {}),
-    ...(offered(capabilities.tasks, draft.task) ? { task: draft.task } : {}),
-    ...(draft.hpc === null || offered(capabilities.hpc_profiles, draft.hpc)
-      ? { hpc: draft.hpc }
-      : {}),
-    ...((saved.vocabulary ?? "1") === capabilities.vocabulary_version
-      ? { overrides: draft.overrides }
-      : {}),
-  };
-}
-
-// What the page persists for the restore (App.tsx's save listener).
-export type SavedDftState = {
-  vocabulary?: string;
-  structureInput: unknown;
-  draft?: Pick<CalculationDraft, "code" | "task" | "hpc" | "overrides"> | null;
-};
-
-export type RestoreOutcome = "restored" | "skipped" | "kept" | "forgotten";
-
-// The /inspect refusals of the input itself: a structure core can't read, or
-// a request document it rejects. Anything else (core unreachable or failing,
-// a frontend/backend mismatch) says nothing about the saved structure.
-const PERMANENT_INSPECT_FAILURES = new Set(["invalid_structure", "invalid_request"]);
-
-// Replays a persisted DFT Workbench state into `workspace` after a reload
-// (#18) -- a real re-run of inspect/review/preview against goldilocks-core,
-// since the Workspace has no "just set the state" action. Starts core first
-// (`ensureCoreServerReady`, null once it's up): after a reload nothing else
-// may have asked for it yet. Only replays into an untouched workspace, so a
-// structure a chat DFT tool or the panel opened while this waited for core
-// is kept ("skipped"). If core refuses the saved input itself
-// (`PERMANENT_INSPECT_FAILURES`) it is forgotten (`forget`); any other
-// failure keeps it for the next reload, and is dismissed rather than left as
-// a Retry banner -- Retry would reopen the structure with default settings,
-// which the save listener would then write over the saved ones ("kept").
-export async function restoreDftWorkspace(
-  workspace: Workspace,
-  saved: SavedDftState,
-  ensureCoreServerReady: () => Promise<string | null>,
-  forget: () => void,
-): Promise<RestoreOutcome> {
-  if (await ensureCoreServerReady()) return "skipped";
-  await ensureWorkspaceStarted(workspace);
-  const before = workspace.getSnapshot();
-  if (
-    before.capabilities === null ||
-    before.structureInput !== null ||
-    before.inspectFailure !== null ||
-    before.operation !== null
-  ) return "skipped";
-  await workspace.dispatch({ type: "source.open", input: saved.structureInput });
-  const opened = workspace.getSnapshot();
-  if (opened.structureInput !== saved.structureInput) {
-    const failed = opened.inspectFailure;
-    if (failed === null || failed.input !== saved.structureInput) return "skipped";
-    if (PERMANENT_INSPECT_FAILURES.has(failed.failure.kind)) {
-      forget();
-      return "forgotten";
-    }
-    await workspace.dispatch({ type: "failure.dismiss", operation: "inspect" });
-    return "kept";
-  }
-  const patch = restorableDraftPatch(saved, before.capabilities);
-  if (patch) await workspace.dispatch(patch);
-  await workspace.dispatch({ type: "review.compute" });
-  await workspace.dispatch({ type: "review.refreshArchive" });
-  return "restored";
 }

@@ -1585,6 +1585,31 @@ Junwen 提出：面板里的每个选择框都应该能通过聊天来改，DFT 
   - magnetic 候选的下载或采用（#138）：`downloadSelected` 把"取文件"和"保存"绑在一起，浏览器会拦掉不是用户亲手点击触发的保存；"采用某个候选"面板本身也没有这个 action。要先在上游加。
   - Find in Databases 和 MLIP Playground 照这个原则补：`tool_result` 不带参数，面板跟不上 LLM 实际做的事；MLIP 工具传的是 CIF 内容而不是文件名（违反 9.1/#73）。见 #139、#140。
 
+#### ★★ 2026-11-12 补：DFT Workbench 的 draft 归 agent 服务器，每个聊天一份（#142）
+
+- **起因**：#137 让聊天能改 Workbench 的每个设置，执行方式是"在浏览器里、对全局那一个 Workspace 执行"（client-executed）。由此带来的问题：
+  - 工具必须开着页面才能执行，也没法做无头测试；
+  - 执行器要和面板的状态机周旋：等它空闲、处理静默 no-op、照抄包里没导出的规则；
+  - 所有聊天共用一份 draft，切换聊天会串（#13）；
+  - 刷新后靠 localStorage 恢复（#18）；
+  - 来源信息只存在 checkpoint 里。
+  
+  Junwen 判断这才是根因。
+- **决定（Junwen）**：
+  - draft 指打开的结构，加上 code/task/HPC profile/overrides。它挪到 agent 服务器，每个聊天一份，存在单独的 `dft_drafts` 表里（理由见 17.8 同日补记）。
+  - 服务器经 HTTP 调 core（14.3 同日补记）。
+  - #137 暂不合并，它面向 LLM 的部分带到 #142 阶段 2。（2026-11-16 改：Junwen 决定 #137 先合并，让网站上的聊天先能改设置，见 12.2 末尾 11-16 的补记；它的执行器仍按本节在阶段 2 搬到服务器。）
+- **做法：服务器只持有 draft；浏览器里的 Workbench 是它的视图兼派生缓存。**
+  - review、预览 bundle、磁序都是 core 从 draft 推出来的，不另存。
+  - 浏览器继续用包里原生的 `createWorkspace`，每个聊天一个（`app/src/dftDraftSync.ts`）。第一次用到时从服务器回放：`source.open`，再 `draft.patch`。之后每次变化（面板改值、打开结构、聊天工具）都防抖保存回服务器，写入要带上它所基于的 revision；冲突时返回 409，以服务器为准重放。
+  - 包里那套约 700 行的状态机（outcome 按 revision 打 key、单操作槽、打开新结构时清掉结构相关的 override……）**不在 Python 里重写**，面板组件也不用改。
+- **阶段 1 已完成**：`dft_drafts` 表、`GET/PUT /api/chat/{thread_id}/dft/draft`、每个聊天一个 Workspace，删掉了 localStorage 的恢复和网页版新建聊天时的 `workspace.reset`。聊天工具这时仍在浏览器里执行，但改为作用在自己那个聊天的 Workspace 上。
+- **阶段 2、3**：工具改到服务器端执行，LLM 改 draft 时经 `/api/chat` 的 SSE 推送 `dft_draft` 事件；磁序在服务器端排序，带进度和上限。
+- **已知代价**：
+  - LLM 改完 draft 后，面板会对同一份 draft 再算一次 explain（core 是确定性的，结果一致）；
+  - 聊天里排出的磁序要等 goldilocks-core#298 才会出现在面板上；
+  - 本地版里，一个从没发过消息的聊天如果用过面板，它的 draft 会留在表里没人删（这个聊天刷新后不在列表里）。
+
 ### 12.6 ★★ 已定（2026-09-15）：MODE 是会话上的可变字段，不是创建时钉死的属性
 
 十二之五刚定完"右侧常驻 Modes 列表"的实现（旧 webapp 的四个 MODE 从
@@ -1915,6 +1940,21 @@ MCP 的载荷是路径 + 设置 + provenance，**不是文件内容**。
 
 ⚠️ 连带：**core 的错误怎么冒上来。** stdio 下 core 的 `stderr` 不会自己出现在 UI 里 ——
 agent 必须**接住子进程的 stderr 并落盘**，否则 core 崩溃时用户只看到"没反应"。
+
+#### ⚠️⚠️ 2026-11-12 修订：对 core 的调用实际走 HTTP，不走 MCP
+
+本节"全部走 MCP、core 是 agent 的 stdio 子进程"一直没有落地。
+
+**实际情况**：
+- agent 自动拉起 `goldilocks serve http`（`core_server.py`，版本锁在 `core_pin.json`）；
+- 嵌入的 Workbench 用 HTTP 连它，经 agent 代理转发；
+- 线上的 mMACE 排序任务队列（core#261）也只有 HTTP 才有。
+
+**决定（Junwen，#142）**：agent 服务器自己调 core 时也走 HTTP，不走 MCP，也不走 CLI。
+- 浏览器只能用 HTTP，这样面板和服务器共用一套协议；
+- HTTP 和 MCP 在 core 里调的是同一套 `_handlers.py`。
+
+本节理由③（"走 MCP 才能发现外部 agent 会撞上的能力缺口"）改由一个对等测试来保住：agent 的工具流程也经 core 的 MCP 跑一遍，结果必须一致。MCP 继续作为 core 面向外部 agent 的接口。
 
 ### 14.4 ⚠️ 已定（2026-09-15 修正）：旧代码 `import goldilocks_core.X` 不等于"这是 core 的领域决策"——查了才算数
 
@@ -2749,6 +2789,12 @@ sub-agent 分头干活"这类编码任务，那答案会反过来——pi 的原
 这和 17.5「真相只有一处」是同一条：
 **草稿是_过程_，不是_科学产物_** —— 过程归 checkpointer，产物归自己的表。
 ★ **core 不持有任何草稿**（它无状态），每次收完整快照。
+
+> ⚠️⚠️ **2026-11-12 修订（#142）**：DFT Workbench 的 draft 不放图状态，放在单独的
+> `dft_drafts` 表里。面板每次改值都会写 draft，而 checkpointer 每写一次都会存下完整
+> 状态，连同整段聊天历史（附件最长 2 万字符）；在一个聊天回合之外改图状态，还会和正在
+> 进行的回合或暂停中的 interrupt 抢状态。draft 只存在这张表里，**仍然只有一处真相**
+> （17.5）。这张表随网页版的保留期清理（`chat_retention.py`）和本地版的删除对话一起删除。
 
 #### 时序
 
