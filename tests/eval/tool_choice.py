@@ -45,7 +45,7 @@ import litellm
 import openai
 from PIL import Image, ImageDraw
 
-from goldilocks_agent.graph import system_message
+from goldilocks_agent.graph import add_tool_call_delta, system_message
 from goldilocks_agent.tools import tool_schemas
 
 # The web deployment's tools: the eval picks and checks the web chat model.
@@ -966,7 +966,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
     start = time.monotonic()
     first: float | None = None
     content, reasoning = "", ""
-    calls: dict[int, dict] = {}
+    calls: list[dict] = []
     try:
         response = await litellm.acompletion(
             model=model, messages=messages, tools=TOOL_SCHEMAS, stream=True, **kwargs
@@ -978,11 +978,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
             content += delta.content or ""
             reasoning += getattr(delta, "reasoning_content", None) or ""
             for tc in delta.tool_calls or []:
-                slot = calls.setdefault(tc.index, {"name": None, "arguments": ""})
-                if tc.function and tc.function.name:
-                    slot["name"] = tc.function.name
-                if tc.function and tc.function.arguments:
-                    slot["arguments"] += tc.function.arguments
+                add_tool_call_delta(calls, tc)
     except openai.OpenAIError as error:  # litellm's errors: a failed step, not a crash
         return Step(
             content,
@@ -992,9 +988,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
             first,
             f"{type(error).__name__}: {error}",
         )
-    return Step(
-        content, list(calls.values()), len(reasoning), time.monotonic() - start, first
-    )
+    return Step(content, calls, len(reasoning), time.monotonic() - start, first)
 
 
 async def evaluate(
