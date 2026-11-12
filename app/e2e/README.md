@@ -43,7 +43,7 @@ HOME is a temporary directory, so:
 | `experience.e2e.ts` | request only | the onboarding level travels with each chat request; `/api/preferences` is never called |
 | `settings.e2e.ts` | no | Settings says where a visitor's chat goes (STFC's server, deleted after 24 hours) and links the local version; no API key fields, AiiDA toggle or history search |
 | `ranking.e2e.ts` | no | Run mMACE in the embedded Workbench shows the job queued or running, then a recommended ordering |
-| `chat-dft.e2e.ts` | yes | attach → open → review → generate: core's values in the review card, its button opening the full-page Workbench, the bundle under Generated Files and its download, all kept on reload |
+| `chat-dft.e2e.ts` | yes | attach → open → review → generate: core's values in the review card, its button opening the full-page Workbench, the bundle under Generated Files and its download, all kept on reload; a task ("PHONON") and a value ("walltime 24 hours") the user gives in chat reach the panel's own controls and core's next review |
 | `database.e2e.ts` | yes, network | `get_structure` → `dft_open_structure` by the fetched file's name |
 | `language.e2e.ts` | yes | an English question gets English, a Chinese one Chinese |
 

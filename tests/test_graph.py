@@ -729,6 +729,71 @@ def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
     assert extra == {"api_key": "k"}
 
 
+def test_dft_set_keeps_the_user_message_it_came_from(monkeypatch) -> None:
+    """Design doc 3.3: a value dft_set stamps `human` traces back to the user
+    message the turn answers. The runtime records that id with the tool
+    message (`artifact`); the model neither supplies it (not a parameter)
+    nor sees it (never sent back in its history)."""
+    from types import SimpleNamespace
+
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from goldilocks_agent.tools.dft_workbench import TOOL_SCHEMA
+
+    sent: list[list[dict]] = []
+
+    def chunk(content=None, tool_calls=None):
+        delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    async def acompletion(*, messages, **_):
+        sent.append(messages)
+        call = SimpleNamespace(
+            index=0,
+            id="call-1",
+            function=SimpleNamespace(
+                name="dft_set", arguments='{"values": {"walltime_h": 24}}'
+            ),
+        )
+        chunks = [chunk(tool_calls=[call])] if len(sent) == 1 else [chunk("Set.")]
+
+        async def stream():
+            for c in chunks:
+                yield c
+
+        return stream()
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "not-a-real-provider/nope")
+    monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    graph = build_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "dft-set-origin"}}
+    asyncio.run(
+        graph.ainvoke(
+            {"messages": [{"role": "user", "content": "Set walltime to 24 hours."}]},
+            config=config,
+        )
+    )
+    pending = asyncio.run(graph.aget_state(config)).tasks[0].interrupts[0].value
+    assert pending == {
+        "tool": "dft_set",
+        "args": {"values": {"walltime_h": 24}},
+        "client_execute": True,
+    }
+    asyncio.run(
+        graph.ainvoke(Command(resume={"result": {"changed": {}}}), config=config)
+    )
+
+    messages = asyncio.run(graph.aget_state(config)).values["messages"]
+    user = next(m for m in messages if isinstance(m, HumanMessage))
+    tool = next(m for m in messages if isinstance(m, ToolMessage))
+    assert user.id
+    assert tool.artifact == {"origin_message_id": user.id}
+    assert user.id not in json.dumps(sent[-1])
+    dft_set = next(t for t in TOOL_SCHEMA if t["function"]["name"] == "dft_set")
+    assert "origin" not in json.dumps(dft_set)
+
+
 def _delta(index, id=None, name=None, arguments=None):
     from types import SimpleNamespace
 

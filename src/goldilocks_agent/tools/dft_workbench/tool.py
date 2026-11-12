@@ -1,6 +1,6 @@
 """LLM-facing tool wrappers for DFT Workbench.
 
-Unlike `mlip_playground/tool.py`, these three functions never actually run
+Unlike `mlip_playground/tool.py`, these functions never actually run
 -- `CLIENT_EXECUTED` (aggregated into `graph.py`'s `CLIENT_EXECUTED_TOOLS`)
 always intercepts them in `call_tool` before `TOOL_DISPATCH` would be
 consulted. The real work happens in the browser: `app/src/dftWorkbench.ts`'s
@@ -12,11 +12,21 @@ second, parallel implementation talking to goldilocks-core's HTTP API
 and was deliberately deleted in favour of the embedded panel -- see
 `tools/__init__.py`'s module docstring history).
 
-`dft_review`/`dft_download_bundle` take no parameters: the calculation
-context (code/task/hpc/overrides) lives in the embedded Workbench's own
-`draft` state, set via the panel or a future `draft.patch`-backed tool --
-not exposed here, since valid `task`/code ids are resolved dynamically
-from goldilocks-core's `/capabilities` rather than being a fixed enum.
+The tools mirror the panel's own actions, grouped by intent (design doc
+12.5): `dft_open_structure` opens (`source.open`), `dft_settings` reads every
+setting the panel shows, `dft_set` changes any of them (`draft.patch`: the
+Calculation form's code/task/HPC profile and every override control),
+`dft_review`/`dft_download_bundle` review and generate, and
+`dft_magnetic_orderings` lists or ranks magnetic orderings. Setting keys and
+ids are free strings, not enums: the valid ones come from goldilocks-core's
+`/capabilities` at runtime and the browser refuses an unknown one with the
+closest valid keys (design doc 3.3's "an error that teaches").
+
+`dft_set` is design doc 3.3's `relay`: values the user stated, which core
+stamps `human`. The id of the user message they came from is injected by
+`graph.py`'s `call_tool` (`ORIGIN_AUDITED`), never passed by the model.
+Values the model chooses itself (`suggest`, the `llm` tier) wait on
+goldilocks-core#258 (stfc/goldilocks-agent#67).
 """
 
 from __future__ import annotations
@@ -39,25 +49,27 @@ _FILE_NAME_PARAM = {
 }
 
 
-async def dft_open_structure(**_: object) -> NoReturn:
-    raise RuntimeError(
-        "dft_open_structure is client-executed (see CLIENT_EXECUTED_TOOLS in "
-        "graph.py's call_tool) -- this stub must never be dispatched server-side."
-    )
+def _client_executed(name: str) -> Callable[..., Awaitable[NoReturn]]:
+    """A TOOL_DISPATCH entry that must never run: `call_tool` hands a
+    client-executed tool to the browser instead."""
+
+    async def stub(**_: object) -> NoReturn:
+        raise RuntimeError(
+            f"{name} is client-executed (see CLIENT_EXECUTED_TOOLS in "
+            "graph.py's call_tool) -- this stub must never be dispatched "
+            "server-side."
+        )
+
+    stub.__name__ = name
+    return stub
 
 
-async def dft_review(**_: object) -> NoReturn:
-    raise RuntimeError(
-        "dft_review is client-executed (see CLIENT_EXECUTED_TOOLS in "
-        "graph.py's call_tool) -- this stub must never be dispatched server-side."
-    )
-
-
-async def dft_download_bundle(**_: object) -> NoReturn:
-    raise RuntimeError(
-        "dft_download_bundle is client-executed (see CLIENT_EXECUTED_TOOLS in "
-        "graph.py's call_tool) -- this stub must never be dispatched server-side."
-    )
+dft_open_structure = _client_executed("dft_open_structure")
+dft_settings = _client_executed("dft_settings")
+dft_set = _client_executed("dft_set")
+dft_review = _client_executed("dft_review")
+dft_download_bundle = _client_executed("dft_download_bundle")
+dft_magnetic_orderings = _client_executed("dft_magnetic_orderings")
 
 
 TOOL_SCHEMA: list[dict] = [
@@ -68,8 +80,8 @@ TOOL_SCHEMA: list[dict] = [
             "description": (
                 "Open a structure file from this chat, by its name, in DFT "
                 "Workbench, the embedded goldilocks-core panel -- required "
-                "before dft_review or "
-                "dft_download_bundle can be called. Parses and validates the "
+                "before dft_review, dft_download_bundle or "
+                "dft_magnetic_orderings can be called. Parses and validates the "
                 "structure; no DFT parameters are chosen yet. Returns a "
                 "summary of the structure (partially occupied sites must be "
                 "ordered before goldilocks-core recommends anything), the "
@@ -89,6 +101,74 @@ TOOL_SCHEMA: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "dft_settings",
+            "description": (
+                "List the settings DFT Workbench can change for the current "
+                "calculation, as its panel shows them: the code, task and "
+                "HPC profile with their options, then every parameter "
+                "setting (functional, pseudopotentials, cutoffs, k-points, "
+                "smearing, magnetism, job resources, ...) with its key, "
+                "type, options, unit, current value and the source that "
+                "decided it, and whether the user set it. Read-only. Call "
+                "it to find the key for a setting before dft_set, or to "
+                "show the user the options."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "description": (
+                            "Only this group's settings, e.g. 'k_sampling', "
+                            "'occupations' or 'job'. Omit for all."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dft_set",
+            "description": (
+                "Change settings in DFT Workbench, exactly as the user "
+                "would in its panel: the task (e.g. band structure, "
+                "phonons, a relaxation), code, HPC profile, and any "
+                "parameter setting. Only set values the user gave or "
+                "named, never values of your own; if the user wants a "
+                "change without saying the value, show the options from "
+                "dft_settings and ask. If their goal fits several tasks "
+                "without naming one, ask which. Keys are goldilocks-core's "
+                "own (dft_settings lists them); null puts a setting back to "
+                "automatic. All values are checked first: if any is wrong, "
+                "none is set and the error says why. goldilocks-core then "
+                "re-decides the other parameters, and the result is the new "
+                "review (as dft_review returns it), shown to the user as a "
+                "card."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "object",
+                        "description": (
+                            'Setting key to value, e.g. {"task": '
+                            '"phonon"}, {"walltime_h": 24}, '
+                            '{"smearing_type": "cold"}, '
+                            '{"k_grid": [8, 8, 8]} or {"k_grid": null}.'
+                        ),
+                    },
+                },
+                "required": ["values"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "dft_review",
             "description": (
                 "Preview goldilocks-core's DFT parameter recommendation for "
@@ -98,8 +178,7 @@ TOOL_SCHEMA: list[dict] = [
                 "decided it, the warnings, and `blocking`: decisions "
                 "goldilocks-core needs before it can generate input files, "
                 "each with remedies (override patches that resolve it). "
-                "Settings are changed in the DFT Workbench panel; ask the "
-                "user before suggesting a remedy be applied."
+                "Ask the user before applying a remedy with dft_set."
             ),
             "parameters": {
                 "type": "object",
@@ -136,15 +215,53 @@ TOOL_SCHEMA: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "dft_magnetic_orderings",
+            "description": (
+                "List the magnetic orderings goldilocks-core enumerates for "
+                "the open structure (ferromagnetic and antiferromagnetic "
+                "candidates), or rank them by energy with the mMACE "
+                "machine-learned potential, as DFT Workbench's Magnetic "
+                "Orderings card does. Only for a spin-polarized calculation. "
+                "Ranking can take minutes: only rank when the user asks. "
+                "Returns each candidate's label, formula, atom count, "
+                "energy per atom once ranked, and which one is recommended."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "rank": {
+                        "type": "boolean",
+                        "description": "Rank the candidates with mMACE.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 TOOL_DISPATCH: dict[str, Callable[..., Awaitable]] = {
-    "dft_open_structure": dft_open_structure,
-    "dft_review": dft_review,
-    "dft_download_bundle": dft_download_bundle,
+    stub.__name__: stub
+    for stub in (
+        dft_open_structure,
+        dft_settings,
+        dft_set,
+        dft_review,
+        dft_download_bundle,
+        dft_magnetic_orderings,
+    )
 }
 
 CLIENT_EXECUTED: set[str] = set(TOOL_DISPATCH)
+
+# Tools that set values the user stated (design doc 3.3's `relay`): their
+# tool message keeps the id of the user message the turn answers, injected
+# by `call_tool`, so a `human` value can be traced back to what the user
+# said. Never a parameter -- the model could invent one.
+ORIGIN_AUDITED: set[str] = {"dft_set"}
 
 # No confirmation gate on any of these -- unlike MLIP Playground's real local
 # compute, nothing here is consequential *to the user's machine* until they
