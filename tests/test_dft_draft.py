@@ -5,11 +5,22 @@ with the chat."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from goldilocks_agent import chat_retention, store
+from goldilocks_agent.dft_draft import (
+    DftDraft,
+    StructureInput,
+    compute_request,
+    default_draft,
+    open_structure,
+    structure_key,
+    structure_request,
+)
 from goldilocks_agent.graph import open_checkpointer
 
 SI = {
@@ -164,3 +175,82 @@ def test_retention_deletes_an_idle_chats_draft(tmp_path, monkeypatch) -> None:
     idle, used = asyncio.run(scenario())
     assert idle is None
     assert used is not None
+
+
+# The package's draft rules, against goldilocks-core's recorded capabilities.
+
+CAPABILITIES = json.loads(
+    (
+        Path(__file__).resolve().parents[1]
+        / "app/src/__fixtures__/core/capabilities.json"
+    ).read_text()
+)
+
+
+def test_a_new_draft_is_cores_first_code_and_task() -> None:
+    draft = default_draft(CAPABILITIES)
+    assert (draft.code, draft.task) == (
+        CAPABILITIES["codes"][0]["id"],
+        CAPABILITIES["tasks"][0]["id"],
+    )
+    assert (draft.hpc, draft.overrides, draft.structure) == (None, {}, None)
+    assert draft.vocabulary == CAPABILITIES["vocabulary_version"]
+
+
+def test_opening_another_structure_keeps_method_settings_only() -> None:
+    """`walltime_h` describes the job and carries over; `ecutwfc_ry` is
+    structure-specific and `is_metal` is a fact, so both described the old
+    structure and are cleared, in draft order."""
+    before = DftDraft(
+        **{
+            **DRAFT,
+            "task": "phonon",
+            "overrides": {"ecutwfc_ry": 80, "walltime_h": 24, "is_metal": True},
+        }
+    )
+    fe = StructureInput(structure_content="data_Fe\n", structure_name="Fe.cif")
+    opened, cleared = open_structure(before, fe, CAPABILITIES)
+    assert opened.structure == fe
+    assert opened.task == "phonon"
+    assert opened.overrides == {"walltime_h": 24}
+    assert cleared == ["ecutwfc_ry", "is_metal"]
+
+
+def test_a_draft_from_another_vocabulary_starts_over() -> None:
+    old = DftDraft(**{**DRAFT, "vocabulary": "4", "task": "phonon"})
+    opened, cleared = open_structure(old, StructureInput(**SI), CAPABILITIES)
+    assert (opened.task, opened.overrides, cleared) == ("scf_single_point", {}, [])
+
+
+def test_a_request_sends_only_the_overrides_its_task_reads() -> None:
+    settings = {setting["key"]: setting for setting in CAPABILITIES["settings"]}
+    read_by_scf = next(
+        k for k, s in settings.items() if "scf_single_point" in s["tasks"]
+    )
+    not_read = next(
+        k for k, s in settings.items() if "scf_single_point" not in s["tasks"]
+    )
+    draft = DftDraft(
+        **{**DRAFT, "overrides": {read_by_scf: 1, not_read: 2, "is_metal": True}}
+    )
+    request = compute_request(draft, CAPABILITIES)
+    assert request == {
+        **SI,
+        "code": "quantum_espresso",
+        "task": "scf_single_point",
+        "hpc": None,
+        "overrides": {read_by_scf: 1, "is_metal": True},
+    }
+    assert "fetch_missing" not in request
+
+
+def test_structure_requests_and_keys() -> None:
+    no_format = StructureInput(structure_content="x", structure_name="a.cif")
+    assert structure_request(no_format) == {
+        "structure_content": "x",
+        "structure_name": "a.cif",
+    }
+    assert structure_key(StructureInput(**SI)) == structure_key(StructureInput(**SI))
+    assert structure_key(no_format) != structure_key(
+        StructureInput(structure_content="x", structure_name="b.cif")
+    )

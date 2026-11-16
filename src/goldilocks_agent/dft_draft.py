@@ -13,6 +13,7 @@ overwriting a newer one.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,3 +56,88 @@ class DftDraftUpdate(BaseModel):
 
     base_revision: int = Field(ge=0)
     draft: DftDraft
+
+
+# The package's own draft rules (goldilocks-workbench's `Workspace`), for the
+# chat's tools on the server: the panel's Workspace applies the same ones in
+# the browser. Each reads goldilocks-core's `/capabilities` rather than a
+# copied list, so a setting core adds is handled with no change here.
+
+
+def default_draft(capabilities: dict) -> DftDraft:
+    """A new chat's draft: core's first code and task, no HPC profile and
+    no overrides."""
+    codes = capabilities.get("codes") or []
+    tasks = capabilities.get("tasks") or []
+    return DftDraft(
+        vocabulary=capabilities.get("vocabulary_version"),
+        code=codes[0]["id"] if codes else "quantum_espresso",
+        task=tasks[0]["id"] if tasks else "scf_single_point",
+        hpc=None,
+        overrides={},
+    )
+
+
+def open_structure(
+    draft: DftDraft | None, structure: StructureInput, capabilities: dict
+) -> tuple[DftDraft, list[str]]:
+    """The draft with `structure` open, and the override keys cleared. The
+    code, task, HPC profile and method settings carry over; the overrides
+    that described the structure it replaces don't -- structure-specific
+    settings and facts. A draft from another vocabulary starts over."""
+    vocabulary = capabilities.get("vocabulary_version")
+    if draft is None or draft.vocabulary != vocabulary:
+        draft = default_draft(capabilities)
+    carried = {
+        setting["key"]
+        for setting in capabilities.get("settings", [])
+        if not setting.get("structure_specific")
+    }
+    kept = {key: value for key, value in draft.overrides.items() if key in carried}
+    cleared = [key for key in draft.overrides if key not in carried]
+    opened = draft.model_copy(
+        update={"structure": structure, "overrides": kept, "vocabulary": vocabulary}
+    )
+    return opened, cleared
+
+
+def structure_request(structure: StructureInput) -> dict:
+    """The structure fields core's `/inspect` and `/magnetic-orderings` take."""
+    return structure.model_dump(exclude_none=True)
+
+
+def compute_request(draft: DftDraft, capabilities: dict) -> dict:
+    """The `/explain` or `/run` body for a draft with a structure open. An
+    override that is a setting goes only when the task reads it; facts
+    always go. `fetch_missing` is left to core's default: core 0.3.3 takes
+    it false, and its removal (goldilocks-core fork #299) then needs no
+    change here."""
+    if draft.structure is None:
+        raise ValueError("compute_request needs a draft with a structure open")
+    settings = {setting["key"]: setting for setting in capabilities.get("settings", [])}
+    overrides = {
+        key: value
+        for key, value in draft.overrides.items()
+        if key not in settings or draft.task in settings[key].get("tasks", [])
+    }
+    return {
+        **structure_request(draft.structure),
+        "code": draft.code,
+        "task": draft.task,
+        "hpc": draft.hpc,
+        "overrides": overrides,
+    }
+
+
+def structure_key(structure: StructureInput) -> str:
+    """Identifies an open structure, e.g. so a magnetic-ordering ranking is
+    only used for the structure it was run on."""
+    digest = hashlib.sha256()
+    for part in (
+        structure.structure_name,
+        structure.structure_format or "",
+        structure.structure_content,
+    ):
+        digest.update(part.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
