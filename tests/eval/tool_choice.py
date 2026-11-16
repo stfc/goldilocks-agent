@@ -47,14 +47,16 @@ import litellm
 import openai
 from PIL import Image, ImageDraw
 
+from goldilocks_agent.agent_profile import LOCAL, WEB
 from goldilocks_agent.graph import add_tool_call_delta, system_message
-from goldilocks_agent.tools import tool_schemas
+from goldilocks_agent.tools import TOOL_SCHEMAS
 
-# The web deployment's tools: the eval picks and checks the web chat model.
-TOOL_SCHEMAS = tool_schemas(shared_deployment=True)
+# `--profile` picks the tools and prompt the model is sent; the default is
+# the website's, since the eval picks and checks the web chat model.
+PROFILES = {"web": WEB, "local": LOCAL}
 
 FIXTURES = Path(__file__).resolve().parents[2] / "app" / "src" / "__fixtures__" / "core"
-SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in TOOL_SCHEMAS}
+SCHEMAS = {name: t["function"]["parameters"] for name, t in TOOL_SCHEMAS.items()}
 
 
 def _fixture(name: str) -> dict:
@@ -1137,7 +1139,9 @@ def parse_model(spec: str) -> tuple[str, dict]:
     return model, kwargs
 
 
-async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
+async def next_step(
+    model: str, kwargs: dict, messages: list[dict], tools: list[dict]
+) -> Step:
     """One assistant step, accumulated the way graph.call_llm does."""
     start = time.monotonic()
     first: float | None = None
@@ -1145,7 +1149,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
     calls: list[dict] = []
     try:
         response = await litellm.acompletion(
-            model=model, messages=messages, tools=TOOL_SCHEMAS, stream=True, **kwargs
+            model=model, messages=messages, tools=tools, stream=True, **kwargs
         )
         async for chunk in response:
             delta = chunk.choices[0].delta
@@ -1168,17 +1172,23 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
 
 
 async def evaluate(
-    spec: str, case_list: list[Case], runs: int, system: dict | None, label: str, out
+    spec: str,
+    case_list: list[Case],
+    runs: int,
+    system: dict | None,
+    tools: list[dict],
+    label: str,
+    out,
 ) -> dict:
     model, kwargs = parse_model(spec)
     await next_step(
-        model, kwargs, [user("Hi")]
+        model, kwargs, [user("Hi")], tools
     )  # load the model, so latency excludes it
     rows = []
     for case in case_list:
         messages = ([system] if system else []) + case.messages
         for run in range(runs):
-            step = await next_step(model, kwargs, messages)
+            step = await next_step(model, kwargs, messages, tools)
             failure = step.error or case.check(step)
             row = {
                 "model": label,
@@ -1284,6 +1294,12 @@ async def main() -> None:
         action="store_true",
         help="send no system message, as before #72",
     )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default="web",
+        help="the agent profile whose tools and prompt the model is sent",
+    )
     parser.add_argument("--out", type=Path, default=Path("tool_choice_results.jsonl"))
     parser.add_argument(
         "--report-only",
@@ -1306,14 +1322,29 @@ async def main() -> None:
             [c for c in case_list if c.id in seen],
         )
         return
-    system = None if args.no_system_prompt else system_message(args.experience_level)
+    profile = PROFILES[args.profile]
+    system = (
+        None
+        if args.no_system_prompt
+        else system_message(profile, args.experience_level)
+    )
     variant = "no-system-prompt" if args.no_system_prompt else args.experience_level
+    if profile is not WEB:
+        variant = ", ".join(v for v in (variant, f"{profile.name} profile") if v)
     results = []
     with args.out.open("a") as out:
         for spec in args.models:
             label = f"{spec} [{variant}]" if variant else spec
             results.append(
-                await evaluate(spec, case_list, args.runs, system, label, out)
+                await evaluate(
+                    spec,
+                    case_list,
+                    args.runs,
+                    system,
+                    profile.tool_schemas(),
+                    label,
+                    out,
+                )
             )
     report(results, case_list)
 

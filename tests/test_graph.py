@@ -22,10 +22,10 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from goldilocks_agent.agent_profile import WEB
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.graph import (
     LOCAL_MODEL,
-    SYSTEM_PROMPT,
     _repair_orphaned_tool_calls,
     add_tool_call_delta,
     build_graph,
@@ -637,18 +637,18 @@ def test_dft_download_bundle_tool_call_pauses_for_client_execution() -> None:
 
 def test_system_message_without_an_experience_level_asks_for_brief_answers() -> None:
     for level in (None, "", "nonsense"):
-        assert system_message(level) == {
+        assert system_message(WEB, level) == {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\nAnswer briefly.",
+            "content": f"{WEB.prompt}\n\nAnswer briefly.",
         }
 
 
 def test_system_message_pitches_answers_at_the_experience_level() -> None:
     contents = {
-        level: system_message(level)["content"] for level in ("new", "advanced")
+        level: system_message(WEB, level)["content"] for level in ("new", "advanced")
     }
     for content in contents.values():
-        assert content.startswith(f"{SYSTEM_PROMPT}\n\n")
+        assert content.startswith(f"{WEB.prompt}\n\n")
         assert "Answer briefly." not in content
         # Design doc 12.2: the level changes how much is explained, never a
         # value -- the guardrail sentence is the mechanism for that.

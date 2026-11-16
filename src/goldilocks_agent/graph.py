@@ -64,6 +64,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
+from goldilocks_agent.agent_profile import AgentProfile, current_profile
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.tools import (
     CLIENT_EXECUTED_TOOLS,
@@ -71,7 +72,6 @@ from goldilocks_agent.tools import (
     CONFIRMATION_REQUIRED_TOOLS,
     ORIGIN_AUDITED_TOOLS,
     TOOL_DISPATCH,
-    offered_tool_schemas,
 )
 
 # design doc 16.5: one .db, shared with the six scientific-artifact tables --
@@ -159,46 +159,6 @@ def resolve_model(model_id: str | None = None) -> tuple[str, dict]:
     return LOCAL_MODEL, _self_hosted_options(LOCAL_MODEL)
 
 
-# What the assistant is for and how to use its tools (stfc/goldilocks-agent#72,
-# design doc 12.2). Without it, the #68 A/B saw small models invent
-# parameters instead of calling dft_review, print a fetched structure
-# instead of opening it, and -- Ollama's Ministral template fills in its own
-# "Le Chat" prompt when a request has none -- introduce themselves as a
-# generic assistant. The third paragraph also rules out values of the
-# model's own: Ministral 3 14B volunteered cutoffs and k-meshes that
-# contradicted core's.
-SYSTEM_PROMPT = """\
-You are the assistant in Goldilocks Workbench. You help users set up DFT \
-calculations (Quantum ESPRESSO) with goldilocks-core, which chooses the \
-calculation parameters.
-
-Tools:
-- find_in_databases, then get_structure: find an existing computed structure \
-when the user asks for one.
-- dft_open_structure, then dft_review, then dft_download_bundle: open a \
-structure, show goldilocks-core's recommended parameters, and generate the \
-input files.
-- dft_settings and dft_set: see and change any DFT Workbench setting, as the \
-user would in its panel: the task (band structure, phonons, a relaxation...), \
-code, HPC profile and every parameter. dft_set returns the new review.
-- dft_magnetic_orderings: list the magnetic orderings of a spin-polarized \
-calculation, with their ranking if the user ran one in DFT Workbench.
-
-The user sees dft_review's values and sources in a card above your reply, so \
-don't list them again or put them in a table: say what needs the user's \
-attention (warnings, anything blocking generation) and the next step. When you \
-name a value, give it and its source as the tools return them. Never invent \
-parameter values or choose values of your own, walltime and other job \
-resources included: set a value with dft_set only when the user gave it. For \
-a warning about a setting, or if the user wants a setting changed without \
-giving the value, say which setting it is and ask for the value (dft_settings \
-lists the options), never suggesting one, not even as an example. dft_review \
-shows what is set: if its task isn't the \
-calculation the user asked for, switch it with dft_set. Call \
-dft_download_bundle only when the user asks for input files. When generation \
-is blocked, explain what needs deciding and ask the user. Reply in the \
-language of the user's latest message."""
-
 # Modeled on ChatGPT/Claude's "custom instructions" -- a short, fixed blurb
 # about the user. Design doc 12.2: this must only change explanation
 # depth/register, **never** which values get reported -- the guardrail
@@ -231,18 +191,52 @@ _EXPERIENCE_LEVEL_GUARDRAIL = (
 _NO_EXPERIENCE_LEVEL = "Answer briefly."
 
 
-def system_message(experience_level: str | None) -> dict:
-    """The system message `call_llm` sends first: SYSTEM_PROMPT, then how much
-    to explain for the user's experience level. One message, not two: some
-    chat templates (vLLM serves HF ones) reject a system message that isn't
-    the first."""
+def _wrap_up_note(profile: AgentProfile) -> str:
+    return (
+        f"This turn has used its {profile.max_tool_calls_per_turn} tool calls: "
+        "reply now, without calling a tool, with what is done and what is left."
+    )
+
+
+# Said instead when a wrap-up reply comes back with no text of its own.
+def _budget_reached_reply(profile: AgentProfile) -> str:
+    return (
+        f"I stopped: this turn reached its limit of "
+        f'{profile.max_tool_calls_per_turn} tool calls. Say "continue" to go on.'
+    )
+
+
+def system_message(
+    profile: AgentProfile, experience_level: str | None, *, wrap_up: bool = False
+) -> dict:
+    """The system message `call_llm` sends first: the profile's prompt, then
+    how much to explain for the user's experience level, then, once the turn
+    has used its tool calls, the note asking the model to wrap up. One
+    message, not two: some chat templates (vLLM serves HF ones) reject a
+    system message that isn't the first."""
     level_prompt = _EXPERIENCE_LEVEL_PROMPTS.get(experience_level or "")
     pitch = (
         f"{level_prompt} {_EXPERIENCE_LEVEL_GUARDRAIL}"
         if level_prompt
         else _NO_EXPERIENCE_LEVEL
     )
-    return {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{pitch}"}
+    content = f"{profile.prompt}\n\n{pitch}"
+    if wrap_up:
+        content += f"\n\n{_wrap_up_note(profile)}"
+    return {"role": "system", "content": content}
+
+
+def turn_tool_calls(messages: list) -> int:
+    """How many tool calls this turn has answered: tool messages after the
+    last user message. A resume continues the same turn, so its calls count
+    too."""
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if isinstance(message, ToolMessage):
+            count += 1
+    return count
 
 
 def tool_status(name: str) -> dict:
@@ -348,12 +342,19 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
         convert_to_openai_messages(state["messages"])
     )
     configurable = config.get("configurable", {})
+    profile = current_profile()
+    # Past the turn's tool calls, the model is asked to wrap up. Its tools are
+    # still sent: Anthropic refuses a history with tool calls but no tools.
+    wrap_up = turn_tool_calls(state["messages"]) >= profile.max_tool_calls_per_turn
     # Built fresh every call, never written into `state["messages"]` -- the
     # experience level is a live preference (design doc 12.2), not
     # conversation content or provenance, so it doesn't belong in the
     # checkpointer's history and can change immediately if the user changes
     # the setting mid-chat; and a reworded prompt reaches old chats too.
-    messages = [system_message(configurable.get("experience_level")), *messages]
+    messages = [
+        system_message(profile, configurable.get("experience_level"), wrap_up=wrap_up),
+        *messages,
+    ]
     model_id = configurable.get("model_id")
     model, extra = resolve_model(model_id)
     writer = get_stream_writer()
@@ -362,7 +363,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     response = await litellm.acompletion(
         model=model,
         messages=messages,
-        tools=offered_tool_schemas(),
+        tools=profile.tool_schemas(),
         stream=True,
         **extra,
     )
@@ -374,6 +375,12 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
         for tool_call in delta.tool_calls or []:
             add_tool_call_delta(tool_calls_acc, tool_call)
 
+    if wrap_up:
+        # A wrap-up reply ends the turn whatever it asks for.
+        if not content:
+            content = _budget_reached_reply(profile)
+            writer(content)
+        return {"messages": [{"role": "assistant", "content": content}]}
     if not tool_calls_acc:
         return {"messages": [{"role": "assistant", "content": content}]}
 
@@ -392,27 +399,28 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     }
 
 
-def _find_next_tool_call(state: MessagesState) -> dict | None:
-    """The most recent AIMessage's first tool call that doesn't have a
-    matching ToolMessage in state yet, or None if every call on it is
-    already answered. Scans backward for the nearest AIMessage rather than
-    assuming `state["messages"][-1]` is it -- once `call_tool` starts
-    appending ToolMessages one at a time (c7bfc57), the tool-calling AIMessage
-    is no longer the last element."""
+def _unanswered_tool_calls(state: MessagesState) -> list[dict]:
+    """The most recent AIMessage's tool calls that don't have a matching
+    ToolMessage in state yet, in order. Scans backward for the nearest
+    AIMessage rather than assuming `state["messages"][-1]` is it -- once
+    `call_tool` starts appending ToolMessages one at a time (c7bfc57), the
+    tool-calling AIMessage is no longer the last element."""
     messages = state["messages"]
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
         if isinstance(msg, AIMessage):
-            if not msg.tool_calls:
-                return None
             answered_ids = {
                 m.tool_call_id for m in messages[i + 1 :] if isinstance(m, ToolMessage)
             }
-            for call in msg.tool_calls:
-                if call["id"] not in answered_ids:
-                    return call
-            return None
-    return None
+            return [call for call in msg.tool_calls if call["id"] not in answered_ids]
+    return []
+
+
+def _find_next_tool_call(state: MessagesState) -> dict | None:
+    """The most recent AIMessage's first unanswered tool call, or None if
+    every call on it is already answered."""
+    unanswered = _unanswered_tool_calls(state)
+    return unanswered[0] if unanswered else None
 
 
 def _tool_message(state: MessagesState, call: dict, output: Any) -> dict:
@@ -460,11 +468,27 @@ async def call_tool(state: MessagesState) -> dict:
         raise RuntimeError("tool node reached with no unanswered tool call")
     name = call["name"]
     writer = get_stream_writer()
+    profile = current_profile()
+    # Past the turn's tool calls, every call still unanswered gets an error
+    # at once, in this one step, so the model wraps up (`call_llm`) instead
+    # of going round again.
+    if turn_tool_calls(state["messages"]) >= profile.max_tool_calls_per_turn:
+        refused = {
+            "error": (
+                f"This turn's tool limit ({profile.max_tool_calls_per_turn}) is "
+                "reached: reply with what is done and what is left."
+            )
+        }
+        return {
+            "messages": [
+                _tool_message(state, unanswered, refused)
+                for unanswered in _unanswered_tool_calls(state)
+            ]
+        }
     # A tool this deployment doesn't offer (MLIP Playground's on the shared
     # web deployment) is unknown here, whatever the model calls: no
     # confirmation card, no dispatch.
-    offered = {schema["function"]["name"] for schema in offered_tool_schemas()}
-    if name not in offered:
+    if not profile.offers(name):
         output = {"error": f"Unknown tool: {name!r}"}
         writer({"type": "tool_result", "tool": name, "result": output})
         return {"messages": [_tool_message(state, call, output)]}

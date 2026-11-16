@@ -31,10 +31,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
+from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from pydantic import BaseModel
 
 from goldilocks_agent import chat_retention, core_server, store
+from goldilocks_agent.agent_profile import current_profile
 from goldilocks_agent.config import (
     ExperienceLevel,
     configured_providers,
@@ -46,8 +48,8 @@ from goldilocks_agent.config import (
 )
 from goldilocks_agent.graph import build_graph, open_checkpointer, tool_status
 from goldilocks_agent.tools import (
+    MLIP_PLAYGROUND_TOOLS,
     mlip_playground,
-    mlip_playground_offered,
     structure_search,
 )
 from goldilocks_agent.tools.structure_search import jarvis_cache
@@ -275,7 +277,10 @@ async def _stream_reply(
             "thread_id": thread_id,
             "model_id": model_id,
             "experience_level": experience_level,
-        }
+        },
+        # A backstop for the profile's tool calls per turn (`graph.call_tool`),
+        # which normally ends the turn first.
+        "recursion_limit": current_profile().recursion_limit,
     }
     # A resume answers a pending interrupt (see ChatRequest) -- the graph is
     # already paused mid-turn, so there's no new message to feed in, only
@@ -319,6 +324,9 @@ async def _stream_reply(
         # so this catches bad/missing API keys, unknown models, timeouts, etc.
         # uniformly, whichever provider the caller was routed to.
         yield f"data: {json.dumps(f'⚠️ {exc}')}\n\n"
+    except GraphRecursionError:
+        stopped = "⚠️ This turn took too many steps and was stopped."
+        yield f"data: {json.dumps(stopped)}\n\n"
     finally:
         _active_chat_requests -= 1
     yield "data: [DONE]\n\n"
@@ -590,11 +598,11 @@ async def fetch_structure(
 
 
 def _reject_mlip_in_shared_deployment() -> None:
-    """MLIP Playground is offered by the local version only
-    (`tools.mlip_playground_offered()`): on the shared web deployment the UI
+    """MLIP Playground is offered by the local version only (its tools are in
+    `agent_profile.LOCAL`, not `WEB`): on the shared web deployment the UI
     can't reach these routes, and a stray direct call mustn't start real
     MACE compute there, whatever `GOLDILOCKS_AGENT_MLIP_ENABLED` says."""
-    if not mlip_playground_offered():
+    if not current_profile().offers(*MLIP_PLAYGROUND_TOOLS):
         raise HTTPException(
             status_code=404,
             detail="MLIP Playground is available in the local version only.",
