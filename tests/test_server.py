@@ -9,15 +9,50 @@ about getting a real model reply (that's test_graph.py's job).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 from fastapi.testclient import TestClient
+
+from goldilocks_agent.core_api import CoreApi
+
+FIXTURES = Path(__file__).resolve().parents[1] / "app" / "src" / "__fixtures__" / "core"
+
+
+def _fixture(name: str) -> dict:
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def _recorded_core(request: httpx.Request) -> httpx.Response:
+    """goldilocks-core answering from its recorded responses, so no test
+    reaches a real core."""
+    route = f"{request.method} {request.url.path}"
+    answers = {
+        "GET /capabilities": "capabilities",
+        "POST /inspect": "inspect",
+        "POST /explain": "explain",
+    }
+    if route in answers:
+        return httpx.Response(200, json=_fixture(answers[route]))
+    if route == "POST /run":
+        return httpx.Response(
+            200, content=b"PK\x03\x04", headers={"content-type": "application/zip"}
+        )
+    return httpx.Response(404, json={"error": {"kind": "not_found", "message": route}})
 
 
 def _make_client(tmp_path, monkeypatch):
     monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "not-a-real-provider/nope")
-    monkeypatch.setattr("goldilocks_agent.graph.DB_PATH", tmp_path / "goldilocks.db")
     monkeypatch.setattr("goldilocks_agent.store.DB_PATH", tmp_path / "goldilocks.db")
+    monkeypatch.setattr(
+        "goldilocks_agent.server.CoreApi",
+        lambda: CoreApi(
+            "http://core.test",
+            transport=httpx.MockTransport(_recorded_core),
+            ensure_running=lambda: {"status": "ready"},
+        ),
+    )
     from goldilocks_agent.server import app
 
     return TestClient(app)
@@ -69,11 +104,11 @@ def _stub_litellm(
     return calls
 
 
-def _client_tool_turn(client, model_id: str, **fields) -> None:
-    """Sends a turn that pauses on the client-executed `dft_review`, then
-    resumes it with a result, both with `model_id` and any other request
-    `fields` -- what the browser sends."""
-    first = client.post(
+def _tool_turn(client, model_id: str, **fields) -> None:
+    """Sends a turn that calls `dft_review`, which runs on the server, then
+    gets the model's reply: two model calls, with `model_id` and any other
+    request `fields` -- what the browser sends."""
+    reply = client.post(
         "/api/chat",
         json={
             "thread_id": "t",
@@ -82,17 +117,7 @@ def _client_tool_turn(client, model_id: str, **fields) -> None:
             **fields,
         },
     )
-    assert "event: client_tool_call" in first.text
-    resumed = client.post(
-        "/api/chat",
-        json={
-            "thread_id": "t",
-            "resume": {"result": {}},
-            "model_id": model_id,
-            **fields,
-        },
-    )
-    assert "Reviewed." in resumed.text
+    assert "Reviewed." in reply.text
 
 
 def _system_prompts(calls: list[dict]) -> list[str]:
@@ -116,11 +141,11 @@ def _events(stream: str) -> list[tuple[str, dict | str]]:
 
 
 def test_each_tool_call_gets_its_status_when_it_starts(tmp_path, monkeypatch) -> None:
-    """#19: one turn calling a server-dispatched tool and two client-executed
-    ones shows one status line per call, each right before that call runs
-    (not the whole batch up front, which left "Calling dft_review..." on
-    screen while the structure was still opening). Each server tool runs
-    once across the resumes (c7bfc57's duplicate-execution fix)."""
+    """#19: one turn calling several tools shows one status line per call,
+    each right before that call runs (not the whole batch up front, which
+    left "Calling dft_review..." on screen while the structure was still
+    opening). Each tool runs once (c7bfc57's duplicate-execution fix), and
+    opening a structure tells the browser of the chat's new draft (#142)."""
     runs = []
 
     async def find_in_databases(**kwargs):
@@ -130,71 +155,94 @@ def test_each_tool_call_gets_its_status_when_it_starts(tmp_path, monkeypatch) ->
     from goldilocks_agent.tools import TOOL_DISPATCH
 
     monkeypatch.setitem(TOOL_DISPATCH, "find_in_databases", find_in_databases)
+    structure = _fixture("structure")
+    attached = (
+        f"[Attached file: {structure['structure_name']}]\n"
+        f"```cif\n{structure['structure_content']}```"
+    )
     with _make_client(tmp_path, monkeypatch) as client:
         _stub_litellm(
             monkeypatch,
             batch=[
                 ("find_in_databases", '{"formula": "Si"}'),
-                ("dft_open_structure", '{"file_name": "Si.cif"}'),
+                (
+                    "dft_open_structure",
+                    json.dumps({"file_name": structure["structure_name"]}),
+                ),
                 ("dft_review", "{}"),
             ],
         )
-        message = {"role": "user", "content": "Find Si, open it and review it."}
-        first = _events(
+        message = {
+            "role": "user",
+            "content": f"Find Si, open it and review it.\n\n{attached}",
+        }
+        frames = _events(
             client.post("/api/chat", json={"thread_id": "t", "message": message}).text
         )
-        second = _events(
-            client.post(
-                "/api/chat", json={"thread_id": "t", "resume": {"result": {}}}
-            ).text
-        )
-        third = _events(
-            client.post(
-                "/api/chat", json={"thread_id": "t", "resume": {"result": {}}}
-            ).text
-        )
 
-    def shape(frames):
-        return [(event, data.get("tool")) for event, data in frames if event != "text"]
-
-    assert shape(first) == [
+    shape = [(event, data.get("tool")) for event, data in frames if event != "text"]
+    assert shape == [
         ("tool_status", "find_in_databases"),
         ("tool_result", "find_in_databases"),
         ("tool_status", "dft_open_structure"),
-        ("client_tool_call", "dft_open_structure"),
-    ]
-    assert shape(second) == [
+        ("dft_draft", None),
         ("tool_result", "dft_open_structure"),
         ("tool_status", "dft_review"),
-        ("client_tool_call", "dft_review"),
+        ("tool_result", "dft_review"),
     ]
-    assert shape(third) == [("tool_result", "dft_review")]
-    assert ("text", "Reviewed.") in third
+    review = next(
+        data
+        for event, data in frames
+        if event == "tool_result" and data["tool"] == "dft_review"
+    )
+    assert "records" in review["result"]
+    assert ("text", "Reviewed.") in frames
     assert runs == [{"formula": "Si"}]
 
 
 def test_local_build_resume_runs_on_the_selected_model(tmp_path, monkeypatch) -> None:
-    """#14: a local build has no model override, so a resume after a client
-    tool call runs on the `model_id` it carries, not the local fallback."""
+    """#14: a local build has no model override, so a resume after a
+    confirmation card runs on the `model_id` it carries, not the local
+    fallback."""
+    arguments = json.dumps({"structure_content": "data_x", "structure_name": "x.cif"})
     with _make_client(tmp_path, monkeypatch) as client:
         monkeypatch.delenv("GOLDILOCKS_AGENT_MODEL")
-        calls = _stub_litellm(monkeypatch)
-        _client_tool_turn(client, "anthropic-claude")
+        calls = _stub_litellm(
+            monkeypatch, tool="run_mlip_singlepoint", arguments=arguments
+        )
+        first = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "t",
+                "message": {"role": "user", "content": "Run a single point."},
+                "model_id": "anthropic-claude",
+            },
+        )
+        assert "event: confirmation_needed" in first.text
+        resumed = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "t",
+                "resume": {"approved": False},
+                "model_id": "anthropic-claude",
+            },
+        )
+        assert "Reviewed." in resumed.text
     assert [c["model"] for c in calls] == [
         "anthropic/claude-sonnet-5",
         "anthropic/claude-sonnet-5",
     ]
 
 
-def test_web_build_resume_stays_on_the_pinned_model(tmp_path, monkeypatch) -> None:
+def test_web_build_stays_on_the_pinned_model(tmp_path, monkeypatch) -> None:
     """The shared web build answers with its pinned local model only
     (`GOLDILOCKS_AGENT_MODEL` in deploy/stfc-cloud/docker-compose.yml),
-    whatever `model_id` a request names -- resumes included."""
+    whatever `model_id` a request names -- every call of a turn included."""
     monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
     with _make_client(tmp_path, monkeypatch) as client:
         monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "ollama_chat/qwen3.8:27b")
         calls = _stub_litellm(monkeypatch)
-        _client_tool_turn(client, "anthropic-claude")
+        _tool_turn(client, "anthropic-claude")
     assert [c["model"] for c in calls] == [
         "ollama_chat/qwen3.8:27b",
         "ollama_chat/qwen3.8:27b",
@@ -213,7 +261,7 @@ def test_every_model_call_starts_with_the_system_prompt_and_never_stores_it(
     monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: None)
     with _make_client(tmp_path, monkeypatch) as client:
         calls = _stub_litellm(monkeypatch)
-        _client_tool_turn(client, "local")
+        _tool_turn(client, "local")
         history = client.get("/api/chat/t").json()["messages"]
     assert _system_prompts(calls) == [system_message(LOCAL, None)["content"]] * 2
     assert [m["role"] for m in history] == ["user", "assistant", "tool", "assistant"]
@@ -230,7 +278,7 @@ def test_local_build_pitches_the_prompt_at_the_saved_experience_level(
     monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: "new")
     with _make_client(tmp_path, monkeypatch) as client:
         calls = _stub_litellm(monkeypatch)
-        _client_tool_turn(client, "local", experience_level="advanced")
+        _tool_turn(client, "local", experience_level="advanced")
     assert _system_prompts(calls) == [system_message(LOCAL, "new")["content"]] * 2
 
 
@@ -247,7 +295,7 @@ def test_web_build_pitches_the_prompt_at_the_level_the_tab_sends(
     monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: "new")
     with _make_client(tmp_path, monkeypatch) as client:
         calls = _stub_litellm(monkeypatch)
-        _client_tool_turn(client, "local", experience_level="advanced")
+        _tool_turn(client, "local", experience_level="advanced")
         assert client.get("/api/preferences").status_code == 404
         saved = client.post("/api/preferences", json={"experience_level": "new"})
         assert saved.status_code == 404
@@ -633,19 +681,6 @@ def test_conversation_reassign_and_delete_clears_checkpointer(
         assert history["messages"] == []
 
 
-def test_pending_interrupt_event_distinguishes_client_execute() -> None:
-    from goldilocks_agent.server import _pending_interrupt_event
-
-    confirmation = {"tool": "dft_download_bundle", "args": {}, "label": "y"}
-    assert _pending_interrupt_event(confirmation) == "confirmation_needed"
-    assert (
-        _pending_interrupt_event(
-            {"tool": "dft_review", "args": {}, "client_execute": True}
-        )
-        == "client_tool_call"
-    )
-
-
 def test_core_proxy_forwards_every_registered_path(tmp_path, monkeypatch) -> None:
     """Without this route, every one of these calls 404s/405s against
     goldilocks-agent's own SPA instead of ever reaching goldilocks-core --
@@ -859,3 +894,46 @@ def test_the_recursion_limit_is_a_backstop_reported_as_a_warning(
         _stub_tool_loop(monkeypatch)
         text = _send(client)
     assert ("text", "⚠️ This turn took too many steps and was stopped.") in _events(text)
+
+
+def test_a_generated_bundle_downloads_from_the_chat_until_it_is_deleted(
+    tmp_path, monkeypatch
+) -> None:
+    """#142: dft_download_bundle keeps the bundle on the server and the
+    chat's Download card links to it, so it survives a reload; deleting the
+    conversation deletes it. A path outside the chat's bundles is refused."""
+    structure = _fixture("structure")
+    attached = (
+        f"[Attached file: {structure['structure_name']}]\n"
+        f"```cif\n{structure['structure_content']}```"
+    )
+    with _make_client(tmp_path, monkeypatch) as client:
+        _stub_litellm(
+            monkeypatch,
+            batch=[
+                (
+                    "dft_open_structure",
+                    json.dumps({"file_name": structure["structure_name"]}),
+                ),
+                ("dft_download_bundle", "{}"),
+            ],
+        )
+        message = {"role": "user", "content": f"Input files please.\n\n{attached}"}
+        frames = _events(
+            client.post("/api/chat", json={"thread_id": "t-1", "message": message}).text
+        )
+        bundle = next(
+            data["result"]
+            for event, data in frames
+            if event == "tool_result" and data["tool"] == "dft_download_bundle"
+        )
+        downloaded = client.get(bundle["download_url"])
+        assert downloaded.status_code == 200
+        assert downloaded.content == b"PK\x03\x04"
+        assert (
+            client.get("/api/chat/t-1/dft/bundles/..%2Fgoldilocks.db").status_code
+            == 404
+        )
+        assert client.get("/api/chat/..%2F..%2Fx/dft/bundles/a.zip").status_code == 404
+        assert client.delete("/api/conversations/t-1").status_code == 200
+        assert client.get(bundle["download_url"]).status_code == 404

@@ -39,7 +39,6 @@ DRAFT = {
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setattr("goldilocks_agent.graph.DB_PATH", tmp_path / "goldilocks.db")
     monkeypatch.setattr("goldilocks_agent.store.DB_PATH", tmp_path / "goldilocks.db")
     from goldilocks_agent.server import app
 
@@ -151,7 +150,6 @@ def test_on_the_website_saving_a_draft_keeps_the_chat_alive(
 
 def test_retention_deletes_an_idle_chats_draft(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "goldilocks.db"
-    monkeypatch.setattr("goldilocks_agent.graph.DB_PATH", db_path)
     monkeypatch.setattr("goldilocks_agent.store.DB_PATH", db_path)
     now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
 

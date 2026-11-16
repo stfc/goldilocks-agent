@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 import openai
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
 from langgraph.errors import GraphRecursionError
@@ -46,13 +46,16 @@ from goldilocks_agent.config import (
     write_credential,
     write_experience_level,
 )
+from goldilocks_agent.core_api import CoreApi
 from goldilocks_agent.dft_draft import DftDraftUpdate
-from goldilocks_agent.graph import build_graph, open_checkpointer, tool_status
+from goldilocks_agent.graph import build_graph, open_checkpointer
 from goldilocks_agent.tools import (
     MLIP_PLAYGROUND_TOOLS,
     mlip_playground,
     structure_search,
 )
+from goldilocks_agent.tools.context import AgentServices
+from goldilocks_agent.tools.dft_workbench import bundles
 from goldilocks_agent.tools.structure_search import jarvis_cache
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,8 @@ async def lifespan(app: FastAPI):
     async with open_checkpointer() as checkpointer, store.open_store() as db:
         app.state.graph = build_graph(checkpointer)
         app.state.store = db
+        # The chat's DFT Workbench tools call goldilocks-core themselves (#142).
+        app.state.core = CoreApi()
         # The shared deployment keeps no chat longer than it's used
         # (chat_retention.py); a local build keeps its user's chats.
         retention = None
@@ -90,6 +95,7 @@ async def lifespan(app: FastAPI):
         yield
         if retention is not None:
             retention.cancel()
+        await app.state.core.aclose()
     # Belt and suspenders alongside `core_server`'s own `atexit` hook (see
     # its docstring) -- covers the graceful-shutdown path explicitly too.
     core_server.shutdown()
@@ -117,11 +123,8 @@ class ChatRequest(BaseModel):
     # Exactly one of `message`/`resume` is set. `message` is the normal
     # "user sent a new turn" case. `resume` answers a pending interrupt and
     # carries no new message of its own; the graph was already paused
-    # mid-turn waiting for exactly this. Two shapes, depending on which SSE
-    # event asked for it: `{"approved": true}` for a `confirmation_needed`
-    # card (design doc 17.10), or `{"result": {...}}`/`{"error": "..."}`
-    # for a `client_tool_call` (graph.py's CLIENT_EXECUTED_TOOLS) -- the
-    # browser reporting back what it actually did.
+    # mid-turn waiting for exactly this: `{"approved": true}` (or false) for
+    # a `confirmation_needed` card (design doc 17.10).
     message: ChatMessage | None = None
     resume: dict | None = None
     model_id: str | None = None
@@ -215,18 +218,6 @@ class StructureMatchRequest(BaseModel):
     structure_name: str | None = None
 
 
-def _pending_interrupt_event(pending: dict) -> str:
-    """Same paused-interrupt plumbing (design doc 17.10) serves two
-    different purposes, distinguished by `graph.py`'s `call_tool`: a plain
-    confirmation gate (show a card, wait for a human click) vs. a
-    `CLIENT_EXECUTED_TOOLS` handoff (run this in the browser via
-    `coreWorkspace.dispatch(...)`, report the real result back). The
-    frontend needs a different `event:` name to tell which one it got."""
-    if pending.get("client_execute"):
-        return "client_tool_call"
-    return "confirmation_needed"
-
-
 _active_chat_requests = 0
 
 
@@ -293,7 +284,11 @@ async def _stream_reply(
     _active_chat_requests += 1
     try:
         async for chunk in graph.astream(
-            graph_input, config=config, stream_mode="custom"
+            graph_input,
+            config=config,
+            stream_mode="custom",
+            # What the chat's DFT Workbench tools change and call (#142).
+            context=AgentServices(store=app.state.store, core=app.state.core),
         ):
             # Plain text deltas (the common case) are un-typed strings from
             # `writer(delta.content)`; `call_tool` also emits typed
@@ -312,14 +307,7 @@ async def _stream_reply(
         snapshot = await graph.aget_state(config)
         if snapshot.next:
             pending = snapshot.tasks[0].interrupts[0].value
-            event = _pending_interrupt_event(pending)
-            if event == "client_tool_call":
-                # A client-executed call runs in the browser from here on:
-                # its status line goes out now, outside any graph node, so
-                # a resume's replay of `call_tool` can't repeat it (#19).
-                status = tool_status(pending["tool"])
-                yield f"event: tool_status\ndata: {json.dumps(status)}\n\n"
-            yield f"event: {event}\ndata: {json.dumps(pending)}\n\n"
+            yield f"event: confirmation_needed\ndata: {json.dumps(pending)}\n\n"
     except openai.OpenAIError as exc:
         # litellm normalizes every provider's errors onto the openai-sdk hierarchy,
         # so this catches bad/missing API keys, unknown models, timeouts, etc.
@@ -428,6 +416,19 @@ async def put_dft_draft(thread_id: str, update: DftDraftUpdate) -> dict | JSONRe
             },
         )
     return {"draft": draft}
+
+
+@app.get("/api/chat/{thread_id}/dft/bundles/{filename}")
+async def download_dft_bundle(thread_id: str, filename: str) -> FileResponse:
+    """A bundle the chat's dft_download_bundle generated (#142): its Download
+    card links here, so the file is still there after a reload."""
+    try:
+        path = bundles.bundle_path(thread_id, filename)
+    except ValueError:
+        path = None
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such bundle in this chat.")
+    return FileResponse(path, media_type="application/zip", filename=filename)
 
 
 def _history_entry(message) -> dict:
@@ -582,6 +583,7 @@ async def delete_conversation(conversation_id: str) -> dict:
         raise HTTPException(status_code=500, detail="checkpointer not configured")
     await store.delete_conversation(app.state.store, conversation_id)
     await store.delete_dft_draft(app.state.store, conversation_id)
+    bundles.delete_bundles(conversation_id)
     await checkpointer.adelete_thread(conversation_id)
     return {"ok": True}
 
