@@ -377,7 +377,7 @@ describe("dispatchDftTool", () => {
     });
   });
 
-  it("dft_magnetic_orderings lists the candidates, then ranks them when asked", async () => {
+  it("dft_magnetic_orderings lists the candidates, and returns a ranking the panel ran, never ranking itself", async () => {
     const magnetic = { ...explanation.records.magnetic, value: { ...explanation.records.magnetic.value, spin_polarized: true } };
     const candidate = (label: string, energy: number | null, recommended = false) => ({
       label, formula: "Si8", natoms: 8, energy_per_atom_ev: energy, status: energy === null ? null : "ok",
@@ -396,7 +396,10 @@ describe("dispatchDftTool", () => {
     await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
 
     const listed = await dispatch(workspace, coreUp, "dft_magnetic_orderings", {}) as { result: any };
-    const ranked = await dispatch(workspace, coreUp, "dft_magnetic_orderings", { rank: true }) as { result: any };
+    const pathsAfterListing = paths().filter((path) => path.startsWith("POST /magnetic-orderings"));
+    // The user presses the card's Run mMACE button.
+    await workspace.dispatch({ type: "magneticOrderings.rank" });
+    const ranked = await dispatch(workspace, coreUp, "dft_magnetic_orderings", {}) as { result: any };
 
     expect(listed.result).toEqual({
       ranked: false,
@@ -408,6 +411,9 @@ describe("dispatchDftTool", () => {
     });
     // The candidates' override values stay with the panel, not the model.
     expect(JSON.stringify(listed.result)).not.toContain("magnetic_ordering");
+    // Listing never submits a ranking job...
+    expect(pathsAfterListing).toEqual(["POST /magnetic-orderings"]);
+    // ...and the panel's ranking comes back on the next call, without a second request.
     expect(ranked.result.ranked).toBe(true);
     expect(ranked.result.candidates[0]).toMatchObject({ label: "afm1", energy_per_atom_ev: -5.4, is_recommended: true });
     expect(paths().filter((path) => path.startsWith("POST /magnetic-orderings"))).toEqual([

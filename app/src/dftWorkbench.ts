@@ -364,8 +364,11 @@ export async function dispatchDftTool(
     }
     await waitForOrderingsIdle(workspace, signal);
     const listing = currentOrderings(workspace.getSnapshot());
-    if (args.rank === true || listing?.result == null) {
-      await untilAborted(workspace.dispatch({ type: args.rank === true ? "magneticOrderings.rank" : "magneticOrderings.list" }), signal);
+    // Listed once if the panel hasn't yet; a ranking the user ran in the
+    // panel's card is already in the snapshot and comes back as it is. The
+    // chat never ranks (Junwen, 2026-11-16).
+    if (listing?.result == null) {
+      await untilAborted(workspace.dispatch({ type: "magneticOrderings.list" }), signal);
     }
     const done = currentOrderings(workspace.getSnapshot());
     if (done?.error) return { error: done.error };

@@ -1369,6 +1369,7 @@ goldilocks 的形状正好是它：
 - **e2e**：`app/e2e/chat-dft.e2e.ts` 两例，跑在真实 core 和 qwen 上：
   - "PHONON" 之后，`/explain` 的 task 变成 phonon 系列，review 卡片和全页 Workbench 的 Task 下拉框也跟着变；
   - "Set the walltime to 24 hours." 之后，`/explain` 的 `overrides.walltime_h` 是 24，面板 Job 组的 walltime 输入框也显示 24。
+- **2026-11-16 补（Junwen）**：#137 先于 #142 合并，网站上的聊天先能改设置。执行器仍在浏览器里，#142 第 2 阶段再搬到服务器。合并前做了一处改动：`dft_magnetic_orderings` 只列构型，不排序，`rank` 参数去掉。用户在面板卡片里点 Run mMACE 排出的结果，会随下一次列出一起返回；用户选定的构型，用 `dft_set({"magnetic_ordering": <label>})` 设置。原因有三：排序不是改参数；排序会占用共享 GPU 好几分钟；网站上的聊天本来就不该跑长循环。本地版由服务器提交、轮询排序任务，放在 #142 第 3 阶段，作为本地 agent 的第一个闭环（#138）。整体方向见 11-16 的计划：网站是能改参数的聊天机器人，本地版才是带循环的 agent。
 
 ### 12.3 ★★ 已定（2026-09-15）：聊天区与右侧面板怎么分工
 

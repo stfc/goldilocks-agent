@@ -17,7 +17,8 @@ The tools mirror the panel's own actions, grouped by intent (design doc
 setting the panel shows, `dft_set` changes any of them (`draft.patch`: the
 Calculation form's code/task/HPC profile and every override control),
 `dft_review`/`dft_download_bundle` review and generate, and
-`dft_magnetic_orderings` lists or ranks magnetic orderings. Setting keys and
+`dft_magnetic_orderings` lists magnetic orderings, with a ranking the user ran
+in the panel (the chat doesn't rank: Junwen, 2026-11-16). Setting keys and
 ids are free strings, not enums: the valid ones come from goldilocks-core's
 `/capabilities` at runtime and the browser refuses an unknown one with the
 closest valid keys (design doc 3.3's "an error that teaches").
@@ -222,21 +223,18 @@ TOOL_SCHEMA: list[dict] = [
             "description": (
                 "List the magnetic orderings goldilocks-core enumerates for "
                 "the open structure (ferromagnetic and antiferromagnetic "
-                "candidates), or rank them by energy with the mMACE "
-                "machine-learned potential, as DFT Workbench's Magnetic "
-                "Orderings card does. Only for a spin-polarized calculation. "
-                "Ranking can take minutes: only rank when the user asks. "
-                "Returns each candidate's label, formula, atom count, "
-                "energy per atom once ranked, and which one is recommended."
+                "candidates), as DFT Workbench's Magnetic Orderings card "
+                "shows them. Only for a spin-polarized calculation. Returns "
+                "each candidate's label, formula and atom count, and, once "
+                "the user has ranked them with the card's Run mMACE button, "
+                "their energy per atom and which one is recommended. The "
+                "chat doesn't rank them: to compare energies, tell the user "
+                "to run mMACE in the card. To use a candidate the user "
+                "chose, set its label as magnetic_ordering with dft_set."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "rank": {
-                        "type": "boolean",
-                        "description": "Rank the candidates with mMACE.",
-                    },
-                },
+                "properties": {},
                 "additionalProperties": False,
             },
         },

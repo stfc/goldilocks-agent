@@ -92,10 +92,14 @@ def test_set_is_the_only_tool_that_records_the_user_message() -> None:
         assert "origin" not in str(entry["function"]["parameters"])
 
 
-def test_settings_and_orderings_take_only_optional_narrowing() -> None:
+def test_settings_take_only_optional_narrowing() -> None:
     assert set(_parameters("dft_settings")["properties"]) == {"group"}
     assert "required" not in _parameters("dft_settings")
-    assert set(_parameters("dft_magnetic_orderings")["properties"]) == {"rank"}
+
+
+def test_orderings_only_list_never_rank() -> None:
+    # Ranking stays the panel's Run mMACE button (Junwen, 2026-11-16).
+    assert _parameters("dft_magnetic_orderings")["properties"] == {}
     assert "required" not in _parameters("dft_magnetic_orderings")
 
 

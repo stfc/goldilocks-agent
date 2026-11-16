@@ -181,8 +181,8 @@ input files.
 - dft_settings and dft_set: see and change any DFT Workbench setting, as the \
 user would in its panel: the task (band structure, phonons, a relaxation...), \
 code, HPC profile and every parameter. dft_set returns the new review.
-- dft_magnetic_orderings: list or rank the magnetic orderings of a \
-spin-polarized calculation.
+- dft_magnetic_orderings: list the magnetic orderings of a spin-polarized \
+calculation, with their ranking if the user ran one in DFT Workbench.
 
 The user sees dft_review's values and sources in a card above your reply, so \
 don't list them again or put them in a table: say what needs the user's \

@@ -33,7 +33,8 @@ chat or uploaded in the panel, and pick a calculation:
 The chat can do the same steps for you: open a structure, change any
 setting in the panel (say "phonons", "walltime 24 hours" or "cold smearing";
 it can also list the options), review the recommendation (shown as a card in
-the chat), rank magnetic orderings and generate the input files. It only sets
+the chat), list magnetic orderings (with their ranking once you've run mMACE
+in the card) and generate the input files. It only sets
 values you give it: the rest always come from goldilocks-core, never from the
 chat model.
 
