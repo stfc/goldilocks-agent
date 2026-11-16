@@ -15,7 +15,7 @@ import {
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
 import { ChatWorkspaces, httpDraftApi } from "./dftDraftSync";
-import { dispatchDftTool, keepBundle, saveBundle, structureInputFor } from "./dftWorkbench";
+import { structureInputFor } from "./dftWorkbench";
 import { DftReviewCard } from "./components/DftReviewCard";
 import { isDftReview } from "./dftReview";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
@@ -183,7 +183,7 @@ function rehydrateMessages(rawMessages) {
         try {
           const parsed = JSON.parse(m.content);
           if (toolName === "dft_download_bundle" && parsed?.filename) {
-            messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
+            messages.push({ role: "dft-bundle-ready", filename: parsed.filename, downloadUrl: parsed.download_url });
           }
           if (REVIEW_TOOLS.has(toolName) && isDftReview(parsed)) {
             messages.push({ role: "dft-review", review: parsed });
@@ -1675,26 +1675,38 @@ function StructureUploadControl({
 // Chat card for a bundle a `dft_download_bundle` call generated. `onDownload`
 // returns why nothing could be saved right now (shown under the button), or
 // null once the save is handed to the browser.
-function DftBundleCard({ filename, onDownload }: { filename: string; onDownload: () => string | null }) {
-  const [note, setNote] = useState<string | null>(null);
+function DftBundleCard({ filename, downloadUrl }: { filename: string; downloadUrl?: string }) {
   return (
     <div className="confirmation-card">
       <div className="confirmation-card-label">{filename} is ready</div>
       <div className="confirmation-card-actions">
-        <button className="primary-btn compact" onClick={() => setNote(onDownload())}>
-          Download
-        </button>
+        <BundleDownload filename={filename} downloadUrl={downloadUrl} primary />
       </div>
-      {note && <div className="confirmation-card-note" role="status">{note}</div>}
     </div>
   );
 }
 
+// A DFT input bundle the server kept for the chat (#142): a plain link, so
+// it still downloads after a reload. A card from before bundles were kept
+// has none, and says so.
+function BundleDownload({ filename, downloadUrl, primary = false }: { filename: string; downloadUrl?: string; primary?: boolean }) {
+  if (!downloadUrl) {
+    return (
+      <span className="confirmation-card-note" role="status">
+        This bundle wasn't kept; ask for the input files again.
+      </span>
+    );
+  }
+  return (
+    <a className={`${primary ? "primary-btn" : "secondary-btn"} compact`} href={downloadUrl} download={filename}>
+      Download
+    </a>
+  );
+}
+
 // One DFT input bundle in the Files panel's Generated Files tab: the same
-// save as the chat's Download card (`saveBundle`), including its note when
-// the archive is no longer held after a reload.
-function GeneratedBundleRow({ filename, onDownload }: { filename: string; onDownload: () => string | null }) {
-  const [note, setNote] = useState<string | null>(null);
+// download as the chat's Download card.
+function GeneratedBundleRow({ filename, downloadUrl }: { filename: string; downloadUrl?: string }) {
   return (
     <div className="files-row">
       <span className="files-row-icon" aria-hidden>📦</span>
@@ -1703,12 +1715,9 @@ function GeneratedBundleRow({ filename, onDownload }: { filename: string; onDown
           <span className="files-row-name">{filename}</span>
           <span className="files-row-format">DFT INPUTS</span>
         </div>
-        {note && <div className="confirmation-card-note" role="status">{note}</div>}
       </div>
       <div className="files-row-actions">
-        <button className="secondary-btn compact" onClick={() => setNote(onDownload())}>
-          Download
-        </button>
+        <BundleDownload filename={filename} downloadUrl={downloadUrl} />
       </div>
     </div>
   );
@@ -2089,9 +2098,6 @@ export default function App() {
     // Created once: ensureCoreServerReady only uses fetch and a state setter.
     [],
   );
-  // The archive a successful dft_download_bundle just kept (`keepBundle`),
-  // until that call's `tool_result` event creates its Download card.
-  const pendingBundleIdRef = useRef<string | null>(null);
   // goldilocks-agent's own /api/core-server/ensure readiness state for the
   // goldilocks-core HTTP backend the embedded Workbench above needs --
   // null until the first poll response lands. Deliberately NOT reset when
@@ -2112,13 +2118,6 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [projectTab, setProjectTab] = useState("chats");
   const [sessions, setSessions] = useState<Session[]>([]);
-  // The committed `sessions`, for code that runs inside a chat stream's
-  // reader loop, whose closure holds the render the stream started in
-  // (runClientToolCall reads the calling chat's structure files from it).
-  const sessionsRef = useRef<Session[]>([]);
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
   const [activeId, setActiveId] = useState(null);
   // Captured once, on the very first render (`useRef`'s argument is only
   // ever used the first time) -- both restore paths below need the id that
@@ -3486,7 +3485,7 @@ export default function App() {
       });
 
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, targetSession.id, controller.signal, modelId);
+      await readChatStream(response, targetSession.id);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
@@ -3532,88 +3531,21 @@ export default function App() {
     }
   }
 
-  // Automatic counterpart to `respondToConfirmation` -- no user click
-  // involved, the resume value is the tool's real result. Adds no
-  // transcript message of its own -- the `tool_result` SSE handler's own
-  // `dft-bundle-ready` card (for dft_download_bundle) and the LLM's own
-  // narrated reply are what's user-visible for these tools. `modelId` is the
-  // turn's model: the server keeps none per thread, so a resume without it
-  // falls back to the local model (#14).
-  async function runClientToolCall(sessionId, payload, signal, modelId) {
-    let outcome;
-    // The workspace of the chat this call belongs to, holding that chat's
-    // draft, not whichever chat is active now.
-    const workspace = chatWorkspaces.workspaceFor(sessionId);
-    try {
-      await chatWorkspaces.ready(sessionId);
-      // The structure files of the chat this call belongs to, not of
-      // whichever chat is active now (dft_open_structure picks one by name).
-      const target = sessionsRef.current.find((item) => item.id === sessionId);
-      outcome = await dispatchDftTool(
-        workspace,
-        (readySignal) => ensureCoreServerReady(undefined, readySignal),
-        payload.tool,
-        payload.args ?? {},
-        target ? collectChatStructures(target.modeState?.sessionFiles ?? [], target.messages) : [],
-        signal,
-      );
-    } catch (err) {
-      outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
-    }
-    pendingBundleIdRef.current =
-      payload.tool === "dft_download_bundle" && "result" in outcome ? keepBundle(workspace) : null;
-    // Stopped mid-chain: don't resume. Resuming would start the very model
-    // turn the user just stopped; the still-paused tool call is closed by
-    // graph.py's _repair_orphaned_tool_calls on their next message instead.
-    if (signal?.aborted) return;
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          thread_id: sessionId,
-          resume: outcome,
-          model_id: modelId,
-          experience_level: experienceLevelForChat(),
-        }),
-        signal,
-      });
-      if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, signal, modelId);
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      console.error("LLM error:", err);
-      const errMsg = chatErrorMessage(err);
-      replaceSession(sessionId, (current) => ({
-        ...current,
-        messages: [...current.messages, { role: "assistant", content: errMsg, display: errMsg }],
-      }));
-    }
-  }
-
   // Shared by `send()` and `respondToConfirmation()` -- both POST to
   // /api/chat and get back the same SSE contract (plain text deltas, typed
-  // `tool_status`/`tool_result`/`confirmation_needed`/`client_tool_call`
-  // events), so both read it the same way.
+  // `tool_status`/`tool_result`/`dft_draft`/`confirmation_needed` events),
+  // so both read it the same way.
   //
   // The streaming assistant bubble is found by its `streamId` in the live
   // `current.messages` on each delta, not rebuilt from a snapshot taken
-  // once at the start of the call (cc5f0dc, 2026-09-28): a `tool_result`/
-  // `client_tool_call` handler earlier in this same stream may already have
+  // once at the start of the call (cc5f0dc, 2026-09-28): a `tool_result`
+  // handler earlier in this same stream may already have
   // appended something (a `dft-bundle-ready` card, a confirmation card) via
   // `current.messages` -- reconstructing from a frozen snapshot on every
   // text delta silently dropped those. Finding-and-replacing by id means
   // the bubble updates in place wherever it actually is, and never
   // clobbers anything appended around it.
   //
-  // `signal` is the whole turn's AbortSignal (send()/respondToConfirmation()
-  // own its controller, which the Stop button aborts). It is threaded into
-  // every client_tool_call hop -- core readiness polling, the resume POST,
-  // and that POST's own nested stream -- since the stream that delivered
-  // the client_tool_call has already ended by then; aborting only that one
-  // used to leave Stop doing nothing for the rest of the chain (2026-10-09).
-  // `modelId` travels the same way, so every hop's resume names the model
-  // the turn started on (#14).
   //
   // The updater must stay pure (2026-10-09): the first version of this
   // tracked the bubble by object reference, reassigned *inside* the
@@ -3621,7 +3553,7 @@ export default function App() {
   // discards one result (as can any interrupted concurrent render), which
   // left that reference pointing at an object no committed state contained,
   // so every delta appended a new bubble instead of updating the existing one.
-  async function readChatStream(response, targetSessionId, signal, modelId) {
+  async function readChatStream(response, targetSessionId) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const streamId = createId();
@@ -3698,14 +3630,12 @@ export default function App() {
               // point in the transcript where it was generated is more
               // discoverable than "go look at the right-side panel"
               // (2026-09-25, requested after exactly that friction was
-              // flagged in real use). It saves the archive this call
-              // produced (`saveBundle`), even after a settings change.
-              const bundleId = pendingBundleIdRef.current;
-              pendingBundleIdRef.current = null;
+              // flagged in real use). It links to the bundle the server kept
+              // for this call (#142), so it still downloads after a reload.
               replaceSession(targetSessionId, (current) => ({
                 ...current,
                 messages: [...current.messages, {
-                  role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
+                  role: "dft-bundle-ready", filename: payload.result.filename, downloadUrl: payload.result.download_url,
                 }],
               }));
             } else if (REVIEW_TOOLS.has(payload.tool) && isDftReview(payload.result)) {
@@ -3782,14 +3712,12 @@ export default function App() {
           currentEventType = null;
           continue;
         }
-        if (currentEventType === "client_tool_call") {
-          // graph.py's CLIENT_EXECUTED_TOOLS: the graph is paused waiting
-          // for the browser to actually run this (on its chat's workspace), not
-          // for a human click -- no transcript message, just execute and
-          // resume automatically.
+        if (currentEventType === "dft_draft") {
+          // A chat tool changed this chat's DFT Workbench draft on the server
+          // (#142): its panel replays it, as it would any newer server draft.
           try {
             const payload = JSON.parse(data);
-            await runClientToolCall(targetSessionId, payload, signal, modelId);
+            if (payload.draft) void chatWorkspaces.applyServerDraft(targetSessionId, payload.draft);
           } catch { /* malformed chunk -- skip */ }
           currentEventType = null;
           continue;
@@ -3844,7 +3772,7 @@ export default function App() {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
-      await readChatStream(response, sessionId, controller.signal, modelId);
+      await readChatStream(response, sessionId);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("LLM error:", err);
@@ -9934,7 +9862,7 @@ export default function App() {
                               <LogoImage alt="Goldilocks logo" />
                             </div>
                             <div className="message-content">
-                              <DftBundleCard filename={message.filename} onDownload={() => saveBundle(message.bundleId ?? undefined)} />
+                              <DftBundleCard filename={message.filename} downloadUrl={message.downloadUrl} />
                             </div>
                           </div>
                         );
@@ -10355,7 +10283,7 @@ export default function App() {
                                     <GeneratedBundleRow
                                       key={`${file.filename}-${index}`}
                                       filename={file.filename}
-                                      onDownload={() => saveBundle(file.bundleId ?? undefined)}
+                                      downloadUrl={file.downloadUrl}
                                     />
                                   ))}
                                 </div>

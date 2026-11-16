@@ -292,6 +292,37 @@ describe("ChatWorkspaces", () => {
     expect(server.puts).toEqual([]);
   });
 
+  it("replays a draft a chat tool committed on the server, without saving it back", async () => {
+    const server = fakeServer({ a: siDraft(4) });
+    const workspaces = chats(server);
+    const workspace = workspaces.workspaceFor("a");
+    await workspaces.ready("a");
+
+    // The server committed revision 5 (a dft_set) and sent it as `dft_draft`.
+    const committed = siDraft(5, { task: "phonon", overrides: { walltime_h: 24, q_grid: [4, 4, 4] } });
+    server.drafts.set("a", committed);
+    await workspaces.applyServerDraft("a", committed);
+    await workspaces.flush("a");
+
+    expect(draftFields(workspace.getSnapshot())).toMatchObject({ task: "phonon", overrides: { q_grid: [4, 4, 4] } });
+    expect(server.puts).toEqual([]);
+    // A later panel edit saves from the committed revision.
+    await workspace.dispatch({ type: "draft.patch", task: "band" });
+    await workspaces.flush("a");
+    expect(server.puts[0]).toMatchObject({ chatId: "a", baseRevision: 5 });
+  });
+
+  it("leaves alone a server draft it already has", async () => {
+    const server = fakeServer({ a: siDraft(4) });
+    const workspaces = chats(server);
+    const workspace = workspaces.workspaceFor("a");
+    await workspaces.ready("a");
+
+    await workspaces.applyServerDraft("a", siDraft(4, { task: "band" }));
+
+    expect(draftFields(workspace.getSnapshot())).toMatchObject({ task: "relax" });
+  });
+
   it("drops a deleted chat's workspace", async () => {
     const server = fakeServer({ a: siDraft(4) });
     const workspaces = chats(server);

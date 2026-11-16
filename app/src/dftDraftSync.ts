@@ -225,6 +225,24 @@ export class ChatWorkspaces {
     await entry.saving;
   }
 
+  // A draft the server committed -- a chat tool's change, sent as the chat
+  // stream's `dft_draft` event -- replayed into `chatId`'s workspace, which
+  // then counts it as synced, so it isn't saved back. One this tab already
+  // has (its revision isn't newer) is left alone. An unsaved panel edit
+  // meanwhile gives way to it, as it does to any newer server draft.
+  async applyServerDraft(chatId: string, draft: ServerDraft): Promise<void> {
+    const entry = this.entry(chatId);
+    await entry.ready;
+    if (draft.revision <= entry.revision) return;
+    entry.revision = draft.revision;
+    if (entry.timer !== null) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    if (await this.options.ensureCoreServerReady()) return;
+    await this.replay(entry, () => applyDraft(entry.workspace, draft));
+  }
+
   // Drops a deleted chat's workspace.
   forget(chatId: string): void {
     const entry = this.entries.get(chatId);
