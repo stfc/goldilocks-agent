@@ -114,6 +114,10 @@ def test_formats_are_inferred_from_the_name_else_the_text() -> None:
     assert infer_extension("POSCAR", "") == ".poscar"
     assert infer_extension("structure", SI) == ".cif"
     assert infer_extension("structure", poscar) == ".poscar"
+    poscar_file = chat_structures(
+        [HumanMessage(content=_attached("POSCAR", poscar, "text"))]
+    )
+    assert structure_input(poscar_file[0]).structure_format == "poscar"
     assert infer_extension("notes.txt", "hello") == ".txt"
 
 
@@ -164,6 +168,10 @@ def test_a_failure_reads_its_findings_with_remedies_else_its_kind() -> None:
     assert (
         failure_text(blocked) == "advice_incomplete: No table covers Pu. "
         '(resolved by setting {"pseudo_table_id": "x"})'
+    )
+    missing = CoreFailure("asset_not_installed", "no table", status=424)
+    assert "`goldilocks assets install workbench` reinstalls them" in failure_text(
+        missing
     )
     internal = CoreFailure("internal_error", "boom", status=500)
     assert failure_text(internal).startswith(

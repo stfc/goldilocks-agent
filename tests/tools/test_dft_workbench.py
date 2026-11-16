@@ -385,3 +385,29 @@ def test_magnetic_orderings_need_a_spin_polarized_calculation(
     assert result["candidates"][0]["label"] == "fm"
     # The candidates' override values stay with core and the panel.
     assert "magnetic_ordering" not in json.dumps(result)
+
+
+def test_a_structure_core_refuses_leaves_the_draft_as_it_was(
+    tmp_path, monkeypatch
+) -> None:
+    """The structure is inspected before anything is committed: one core
+    can't read is the tool's error, and the open one stays open."""
+    broken = HumanMessage(
+        content="[Attached file: broken.cif]\n```cif\ndata_broken\n```"
+    )
+    core = FakeCore()
+
+    async def scenario(call, events, db):
+        await call("dft_open_structure", file_name=STRUCTURE["structure_name"])
+        core.answers["POST /inspect"] = lambda body: httpx.Response(
+            422, json={"error": {"kind": "invalid_structure", "message": "no atoms"}}
+        )
+        with pytest.raises(ValueError, match="invalid_structure: no atoms"):
+            await call("dft_open_structure", file_name="broken.cif")
+        return await store.get_dft_draft(db, "t1"), events
+
+    saved, events = _chat(tmp_path, monkeypatch, core, messages=(ATTACHED, broken))(
+        scenario
+    )
+    assert saved["structure"]["structure_name"] == STRUCTURE["structure_name"]
+    assert len(_drafts(events)) == 1
