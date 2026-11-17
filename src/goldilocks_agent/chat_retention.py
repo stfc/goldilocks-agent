@@ -5,7 +5,8 @@ structure files included: the server keeps the history so each request
 carries only the new message, and a reloaded tab reads its chat back by
 thread id. Closing the tab forgets the id but not the chat, so a thread with
 no chat request for longer than the retention period
-(`config.read_chat_retention()`) is deleted, checkpoints and all.
+(`config.read_chat_retention()`) is deleted, checkpoints, DFT Workbench draft
+and all.
 
 The local build never runs this: its chats are its user's own, on their own
 machine, listed in the sidebar until they delete them.
@@ -57,6 +58,7 @@ async def delete_idle_threads(
     ]
     for thread_id in idle:
         await checkpointer.adelete_thread(thread_id)
+        await store.delete_dft_draft(db, thread_id)
         await store.forget_chat_activity(db, thread_id)
     return idle
 

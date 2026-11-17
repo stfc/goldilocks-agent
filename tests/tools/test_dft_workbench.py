@@ -17,11 +17,15 @@ from goldilocks_agent.tools.dft_workbench import (
     CLIENT_EXECUTED,
     CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED,
+    ORIGIN_AUDITED,
     TOOL_DISPATCH,
     TOOL_SCHEMA,
     dft_download_bundle,
+    dft_magnetic_orderings,
     dft_open_structure,
     dft_review,
+    dft_set,
+    dft_settings,
 )
 
 
@@ -30,7 +34,7 @@ def test_client_executed_covers_every_tool() -> None:
 
 
 def test_nothing_needs_a_confirmation_card() -> None:
-    # Unlike MLIP Playground's real local compute, none of these three are
+    # Unlike MLIP Playground's real local compute, none of these are
     # consequential *to the user's machine* on their own -- the browser
     # already forces a genuine click on the Bundle card's own Download
     # button before anything lands on disk, so a chat-level confirmation
@@ -46,9 +50,8 @@ def test_schema_names_match_dispatch_and_client_executed() -> None:
 
 
 def test_review_and_download_bundle_take_no_parameters() -> None:
-    # Deliberate v1 scope: code/task/hpc/overrides live in the embedded
-    # Workbench's own `draft` state, not exposed here -- see tool.py's
-    # module docstring for why (no fixed enum to validate against).
+    # They act on the embedded Workbench's own `draft` state, which dft_set
+    # and the panel change -- see tool.py's module docstring.
     by_name = {entry["function"]["name"]: entry for entry in TOOL_SCHEMA}
     assert by_name["dft_review"]["function"]["parameters"]["properties"] == {}
     assert by_name["dft_download_bundle"]["function"]["parameters"]["properties"] == {}
@@ -65,9 +68,51 @@ def test_open_structure_takes_a_file_name_not_file_content() -> None:
     assert parameters["additionalProperties"] is False
 
 
+def _parameters(name: str) -> dict:
+    by_name = {entry["function"]["name"]: entry for entry in TOOL_SCHEMA}
+    return by_name[name]["function"]["parameters"]
+
+
+def test_set_takes_any_setting_keyed_by_cores_own_key() -> None:
+    # One map for every panel control -- task, code, HPC profile and every
+    # override -- keyed by core's override keys, not an enum: the browser
+    # checks them against core's capabilities (design 3.3).
+    parameters = _parameters("dft_set")
+    assert parameters["required"] == ["values"]
+    assert parameters["properties"]["values"]["type"] == "object"
+    assert "properties" not in parameters["properties"]["values"]
+    assert parameters["additionalProperties"] is False
+
+
+def test_set_is_the_only_tool_that_records_the_user_message() -> None:
+    # design 3.3: relay traces back to what the user said. The runtime
+    # injects the id; no tool takes it as a parameter.
+    assert ORIGIN_AUDITED == {"dft_set"} <= CLIENT_EXECUTED
+    for entry in TOOL_SCHEMA:
+        assert "origin" not in str(entry["function"]["parameters"])
+
+
+def test_settings_take_only_optional_narrowing() -> None:
+    assert set(_parameters("dft_settings")["properties"]) == {"group"}
+    assert "required" not in _parameters("dft_settings")
+
+
+def test_orderings_only_list_never_rank() -> None:
+    # Ranking stays the panel's Run mMACE button (Junwen, 2026-11-16).
+    assert _parameters("dft_magnetic_orderings")["properties"] == {}
+    assert "required" not in _parameters("dft_magnetic_orderings")
+
+
 @pytest.mark.parametrize(
     "stub",
-    [dft_open_structure, dft_review, dft_download_bundle],
+    [
+        dft_open_structure,
+        dft_settings,
+        dft_set,
+        dft_review,
+        dft_download_bundle,
+        dft_magnetic_orderings,
+    ],
 )
 def test_stub_raises_if_ever_actually_dispatched(stub) -> None:
     # Defensive contract: graph.py's CLIENT_EXECUTED_TOOLS check must

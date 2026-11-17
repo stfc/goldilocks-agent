@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from goldilocks_agent.agent_profile import LOCAL, WEB
 from goldilocks_agent.tools import (
     CONFIRMATION_REQUIRED_TOOLS,
     TOOL_DISPATCH,
-    tool_schemas,
 )
 from goldilocks_agent.tools.mlip_playground import (
     EosResult,
@@ -159,11 +159,8 @@ def test_only_the_local_version_offers_mlip_tools_to_the_llm() -> None:
     refuses a tool the deployment didn't offer before reaching them."""
     mlip_names = set(MLIP_TOOL_DISPATCH)
 
-    def offered(shared: bool) -> set[str]:
-        return {s["function"]["name"] for s in tool_schemas(shared_deployment=shared)}
-
-    assert offered(False) >= mlip_names
-    assert offered(True) & mlip_names == set()
+    assert set(LOCAL.tools) >= mlip_names
+    assert set(WEB.tools) & mlip_names == set()
     assert set(TOOL_DISPATCH) >= mlip_names
     assert mlip_names <= CONFIRMATION_REQUIRED_TOOLS
 

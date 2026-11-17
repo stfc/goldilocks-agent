@@ -31,10 +31,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import convert_to_openai_messages
+from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from pydantic import BaseModel
 
 from goldilocks_agent import chat_retention, core_server, store
+from goldilocks_agent.agent_profile import current_profile
 from goldilocks_agent.config import (
     ExperienceLevel,
     configured_providers,
@@ -44,10 +46,11 @@ from goldilocks_agent.config import (
     write_credential,
     write_experience_level,
 )
+from goldilocks_agent.dft_draft import DftDraftUpdate
 from goldilocks_agent.graph import build_graph, open_checkpointer, tool_status
 from goldilocks_agent.tools import (
+    MLIP_PLAYGROUND_TOOLS,
     mlip_playground,
-    mlip_playground_offered,
     structure_search,
 )
 from goldilocks_agent.tools.structure_search import jarvis_cache
@@ -275,7 +278,10 @@ async def _stream_reply(
             "thread_id": thread_id,
             "model_id": model_id,
             "experience_level": experience_level,
-        }
+        },
+        # A backstop for the profile's tool calls per turn (`graph.call_tool`),
+        # which normally ends the turn first.
+        "recursion_limit": current_profile().recursion_limit,
     }
     # A resume answers a pending interrupt (see ChatRequest) -- the graph is
     # already paused mid-turn, so there's no new message to feed in, only
@@ -319,6 +325,9 @@ async def _stream_reply(
         # so this catches bad/missing API keys, unknown models, timeouts, etc.
         # uniformly, whichever provider the caller was routed to.
         yield f"data: {json.dumps(f'⚠️ {exc}')}\n\n"
+    except GraphRecursionError:
+        stopped = "⚠️ This turn took too many steps and was stopped."
+        yield f"data: {json.dumps(stopped)}\n\n"
     finally:
         _active_chat_requests -= 1
     yield "data: [DONE]\n\n"
@@ -385,6 +394,40 @@ async def get_chat_history(thread_id: str) -> dict:
     snapshot = await app.state.graph.aget_state(config)
     messages = snapshot.values.get("messages", []) if snapshot.values else []
     return {"messages": [_history_entry(message) for message in messages]}
+
+
+@app.get("/api/chat/{thread_id}/dft/draft")
+async def get_dft_draft(thread_id: str) -> dict:
+    """The chat's DFT Workbench draft (dft_draft.py), or null before anything
+    was set: the panel replays it on reload and on switching chats (#142)."""
+    return {"draft": await store.get_dft_draft(app.state.store, thread_id)}
+
+
+@app.put("/api/chat/{thread_id}/dft/draft", response_model=None)
+async def put_dft_draft(thread_id: str, update: DftDraftUpdate) -> dict | JSONResponse:
+    """Replaces the chat's DFT Workbench draft, if `base_revision` is still its
+    revision. Otherwise 409 with the draft that is there, for the caller to
+    replay before changing anything else (design doc 3.3: a stale writer
+    never overwrites newer state)."""
+    if read_shared_deployment_enabled():
+        # Panel edits are activity too: keeps the thread from being deleted
+        # as idle (chat_retention.py) while only the panel is used.
+        await store.touch_chat_activity(app.state.store, thread_id)
+    saved, draft = await store.put_dft_draft(
+        app.state.store,
+        thread_id,
+        update.draft.model_dump(),
+        update.base_revision,
+    )
+    if not saved:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"The draft changed since revision {update.base_revision}.",
+                "draft": draft,
+            },
+        )
+    return {"draft": draft}
 
 
 def _history_entry(message) -> dict:
@@ -538,6 +581,7 @@ async def delete_conversation(conversation_id: str) -> dict:
     if checkpointer is None:
         raise HTTPException(status_code=500, detail="checkpointer not configured")
     await store.delete_conversation(app.state.store, conversation_id)
+    await store.delete_dft_draft(app.state.store, conversation_id)
     await checkpointer.adelete_thread(conversation_id)
     return {"ok": True}
 
@@ -590,11 +634,11 @@ async def fetch_structure(
 
 
 def _reject_mlip_in_shared_deployment() -> None:
-    """MLIP Playground is offered by the local version only
-    (`tools.mlip_playground_offered()`): on the shared web deployment the UI
+    """MLIP Playground is offered by the local version only (its tools are in
+    `agent_profile.LOCAL`, not `WEB`): on the shared web deployment the UI
     can't reach these routes, and a stray direct call mustn't start real
     MACE compute there, whatever `GOLDILOCKS_AGENT_MLIP_ENABLED` says."""
-    if not mlip_playground_offered():
+    if not current_profile().offers(*MLIP_PLAYGROUND_TOOLS):
         raise HTTPException(
             status_code=404,
             detail="MLIP Playground is available in the local version only.",

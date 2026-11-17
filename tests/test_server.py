@@ -207,6 +207,7 @@ def test_every_model_call_starts_with_the_system_prompt_and_never_stores_it(
     """#72: the system prompt goes first on every call, the resume after a
     client tool call included, and never into the checkpointer -- a
     reworded prompt reaches old chats too."""
+    from goldilocks_agent.agent_profile import LOCAL
     from goldilocks_agent.graph import system_message
 
     monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: None)
@@ -214,7 +215,7 @@ def test_every_model_call_starts_with_the_system_prompt_and_never_stores_it(
         calls = _stub_litellm(monkeypatch)
         _client_tool_turn(client, "local")
         history = client.get("/api/chat/t").json()["messages"]
-    assert _system_prompts(calls) == [system_message(None)["content"]] * 2
+    assert _system_prompts(calls) == [system_message(LOCAL, None)["content"]] * 2
     assert [m["role"] for m in history] == ["user", "assistant", "tool", "assistant"]
 
 
@@ -223,13 +224,14 @@ def test_local_build_pitches_the_prompt_at_the_saved_experience_level(
 ) -> None:
     """A local build reads its own saved preference (design doc 12.2), not
     a level a request names."""
+    from goldilocks_agent.agent_profile import LOCAL
     from goldilocks_agent.graph import system_message
 
     monkeypatch.setattr("goldilocks_agent.server.read_experience_level", lambda: "new")
     with _make_client(tmp_path, monkeypatch) as client:
         calls = _stub_litellm(monkeypatch)
         _client_tool_turn(client, "local", experience_level="advanced")
-    assert _system_prompts(calls) == [system_message("new")["content"]] * 2
+    assert _system_prompts(calls) == [system_message(LOCAL, "new")["content"]] * 2
 
 
 def test_web_build_pitches_the_prompt_at_the_level_the_tab_sends(
@@ -238,6 +240,7 @@ def test_web_build_pitches_the_prompt_at_the_level_the_tab_sends(
     """The shared deployment has no per-user place to keep the setting, so
     each tab sends its own (§19.2); the one server-side file is never read
     there, and its routes are refused."""
+    from goldilocks_agent.agent_profile import WEB
     from goldilocks_agent.graph import system_message
 
     monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
@@ -248,7 +251,7 @@ def test_web_build_pitches_the_prompt_at_the_level_the_tab_sends(
         assert client.get("/api/preferences").status_code == 404
         saved = client.post("/api/preferences", json={"experience_level": "new"})
         assert saved.status_code == 404
-    assert _system_prompts(calls) == [system_message("advanced")["content"]] * 2
+    assert _system_prompts(calls) == [system_message(WEB, "advanced")["content"]] * 2
 
 
 def test_chat_rejects_an_unknown_experience_level(tmp_path, monkeypatch) -> None:
@@ -714,3 +717,145 @@ def test_core_proxy_returns_a_clean_503_while_core_is_still_starting(
         error = response.json()["error"]
         assert error["kind"] == "core_unavailable"
         assert "still be starting" in error["message"]
+
+
+def _stub_tool_loop(
+    monkeypatch, *, per_reply: int = 1, wrap_up_text: str = "Done so far."
+) -> list[dict]:
+    """Replaces `litellm.acompletion` with a model that calls
+    find_in_databases `per_reply` times in every reply, never stopping on
+    its own. Asked to wrap up, it replies `wrap_up_text` and still asks for
+    the calls, which the graph must drop. Returns the calls it gets."""
+    calls: list[dict] = []
+
+    def chunk(content=None, tool_calls=None):
+        delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    async def acompletion(*, model, messages, tools, **_):
+        calls.append({"messages": messages, "tools": tools})
+        wrapping_up = "reply now, without calling a tool" in messages[0]["content"]
+        chunks = [chunk(content=wrap_up_text)] if wrapping_up and wrap_up_text else []
+        chunks += [
+            chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=i,
+                        id=f"call-{len(calls)}-{i}",
+                        function=SimpleNamespace(
+                            name="find_in_databases", arguments='{"formula": "Si"}'
+                        ),
+                    )
+                ]
+            )
+            for i in range(per_reply)
+        ]
+
+        async def stream():
+            for c in chunks:
+                yield c
+
+        return stream()
+
+    monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    return calls
+
+
+def _count_dispatches(monkeypatch) -> list[dict]:
+    from goldilocks_agent.tools import TOOL_DISPATCH
+
+    dispatched: list[dict] = []
+
+    async def find_in_databases(**kwargs):
+        dispatched.append(kwargs)
+        return {"groups": []}
+
+    monkeypatch.setitem(TOOL_DISPATCH, "find_in_databases", find_in_databases)
+    return dispatched
+
+
+def _send(client, content: str = "Find Si.") -> str:
+    reply = client.post(
+        "/api/chat",
+        json={"thread_id": "t", "message": {"role": "user", "content": content}},
+    )
+    return reply.text
+
+
+def test_a_web_turn_stops_at_its_tool_budget_and_wraps_up(
+    tmp_path, monkeypatch
+) -> None:
+    """Junwen, 2026-11-16: the website is a chatbot, not a long loop. A model
+    that never stops calling tools gets its profile's budget, then is asked
+    to wrap up; the turn ends on that reply, its tool calls dropped."""
+    from goldilocks_agent.agent_profile import WEB
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    dispatched = _count_dispatches(monkeypatch)
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_tool_loop(monkeypatch)
+        text = _send(client)
+        history = client.get("/api/chat/t").json()["messages"]
+    assert len(dispatched) == WEB.max_tool_calls_per_turn
+    assert len(calls) == WEB.max_tool_calls_per_turn + 1
+    assert "reply now, without calling a tool" in calls[-1]["messages"][0]["content"]
+    assert "reply now" not in calls[0]["messages"][0]["content"]
+    assert history[-1] == {"role": "assistant", "content": "Done so far."}
+    assert "⚠️" not in text
+
+
+def test_calls_past_the_budget_are_refused_together(tmp_path, monkeypatch) -> None:
+    """A reply asking for more calls than the budget has left: the ones
+    within it run, the rest get an error in one step, and the model wraps
+    up on its next call."""
+    from goldilocks_agent.agent_profile import WEB
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    dispatched = _count_dispatches(monkeypatch)
+    with _make_client(tmp_path, monkeypatch) as client:
+        calls = _stub_tool_loop(monkeypatch, per_reply=WEB.max_tool_calls_per_turn + 2)
+        _send(client)
+        history = client.get("/api/chat/t").json()["messages"]
+    tool_messages = [m for m in history if m["role"] == "tool"]
+    assert len(dispatched) == WEB.max_tool_calls_per_turn
+    assert len(tool_messages) == WEB.max_tool_calls_per_turn + 2
+    assert all("tool limit" in m["content"] for m in tool_messages[-2:])
+    assert len(calls) == 2
+
+
+def test_a_wrap_up_with_no_text_says_why_the_turn_stopped(
+    tmp_path, monkeypatch
+) -> None:
+    from goldilocks_agent.agent_profile import WEB
+    from goldilocks_agent.graph import _budget_reached_reply
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_SHARED_DEPLOYMENT", "1")
+    _count_dispatches(monkeypatch)
+    with _make_client(tmp_path, monkeypatch) as client:
+        _stub_tool_loop(monkeypatch, wrap_up_text="")
+        text = _send(client)
+        history = client.get("/api/chat/t").json()["messages"]
+    assert history[-1] == {"role": "assistant", "content": _budget_reached_reply(WEB)}
+    assert _budget_reached_reply(WEB) in "".join(
+        data for event, data in _events(text) if event == "text"
+    )
+
+
+def test_the_recursion_limit_is_a_backstop_reported_as_a_warning(
+    tmp_path, monkeypatch
+) -> None:
+    """With a budget the model never reaches, LangGraph's recursion limit
+    from the profile still ends the turn, as a warning line, not a 500."""
+    from dataclasses import replace
+
+    from goldilocks_agent.agent_profile import WEB
+
+    looping = replace(WEB, max_tool_calls_per_turn=100, recursion_limit=4)
+    monkeypatch.setattr("goldilocks_agent.server.current_profile", lambda: looping)
+    monkeypatch.setattr("goldilocks_agent.graph.current_profile", lambda: looping)
+    _count_dispatches(monkeypatch)
+    with _make_client(tmp_path, monkeypatch) as client:
+        _stub_tool_loop(monkeypatch)
+        text = _send(client)
+    assert ("text", "⚠️ This turn took too many steps and was stopped.") in _events(text)

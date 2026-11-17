@@ -8,7 +8,9 @@ is the expected one: which tool, with valid arguments, or no tool. Free-form
 answers are not judged, except that an answer comes in the question's language,
 the image case names a number, a summary of tool results states no parameter
 values or walltime of its own and doesn't repeat the review card, and the
-open-goal cases (G) name the task to switch or the task the review actually ran.
+open-goal cases (G) switch the task the user asked for with dft_set, and the
+setting cases (S) set exactly the values the user gave, and none of the model's
+own.
 
 Tool results in the multi-step cases are built from goldilocks-core 0.3.0's
 recorded responses in app/src/__fixtures__/core, trimmed the way
@@ -45,14 +47,16 @@ import litellm
 import openai
 from PIL import Image, ImageDraw
 
-from goldilocks_agent.graph import system_message
-from goldilocks_agent.tools import tool_schemas
+from goldilocks_agent.agent_profile import LOCAL, WEB
+from goldilocks_agent.graph import add_tool_call_delta, system_message
+from goldilocks_agent.tools import TOOL_SCHEMAS
 
-# The web deployment's tools: the eval picks and checks the web chat model.
-TOOL_SCHEMAS = tool_schemas(shared_deployment=True)
+# `--profile` picks the tools and prompt the model is sent; the default is
+# the website's, since the eval picks and checks the web chat model.
+PROFILES = {"web": WEB, "local": LOCAL}
 
 FIXTURES = Path(__file__).resolve().parents[2] / "app" / "src" / "__fixtures__" / "core"
-SCHEMAS = {t["function"]["name"]: t["function"]["parameters"] for t in TOOL_SCHEMAS}
+SCHEMAS = {name: t["function"]["parameters"] for name, t in TOOL_SCHEMAS.items()}
 
 
 def _fixture(name: str) -> dict:
@@ -150,13 +154,21 @@ def _attached(name: str, lang: str, content: str, text: str) -> str:
     return f"{text}\n\n[Attached file: {name}]\n```{lang}\n{content}```"
 
 
-def _calculation() -> dict:
+def _calculation(task: str = "scf_single_point") -> dict:
     return {
         "code": "quantum_espresso",
-        "task": "scf_single_point",
+        "task": task,
         "hpc": None,
         "overrides": {},
     }
+
+
+def _set_result(changed: dict) -> dict:
+    """dftWorkbench.ts's dft_set result: what it changed and the new review
+    (the recorded one, with the task it set)."""
+    review = _review_result("explain")
+    review["calculation"] = _calculation(changed.get("task", "scf_single_point"))
+    return {"changed": changed, **review}
 
 
 def _open_result() -> dict:
@@ -557,6 +569,38 @@ def _formula(expected: str) -> Callable[[dict], bool]:
     return lambda a: a.get("formula", "").replace(" ", "") == expected
 
 
+PHONON_TASKS = ("phonon", "relax-phonon", "vc-relax-phonon")
+
+
+def _values(
+    expected: dict[str, Callable[[Any], bool] | Any],
+    optional: dict[str, Callable[[Any], bool] | Any] | None = None,
+) -> Callable[[dict], bool]:
+    """Whether dft_set sets exactly ``expected`` (each a value, or a check
+    of one), plus any of ``optional``, and nothing the user didn't ask for."""
+    optional = optional or {}
+
+    def ok(check, value) -> bool:
+        return check(value) if callable(check) else value == check
+
+    def args_ok(a: dict) -> bool:
+        values = a.get("values")
+        if not isinstance(values, dict) or not set(expected) <= set(values):
+            return False
+        return all(
+            ok(expected[k] if k in expected else optional.get(k, object()), v)
+            for k, v in values.items()
+        )
+
+    return args_ok
+
+
+def _task(*expected: str) -> Callable[[dict], bool]:
+    """Whether dft_set switches the task to one of ``expected`` and sets
+    nothing else."""
+    return _values({"task": lambda t: t in expected})
+
+
 @dataclass
 class Case:
     id: str
@@ -887,15 +931,16 @@ def cases() -> list[Case]:
                 expect_answer(lang="zh"),
             ),
         ),
-        # No tool sets the task: the user switches it in DFT Workbench. Telling
-        # them straight away is best; reviewing the open SCF first is fine if
-        # the answer after it does (G5).
+        # dft_set switches the task the user names. Switching straight away
+        # is best; reviewing the open SCF first is fine if the step after it
+        # switches (G5).
         Case(
             "G3",
             "goal",
             band_open,
             expect_one_of(
-                expect_answer(mentions=("band", "task")), expect_tool("dft_review")
+                expect_tool("dft_set", _task("band")),
+                expect_tool("dft_review"),
             ),
         ),
         Case(
@@ -906,24 +951,157 @@ def cases() -> list[Case]:
                 call("dft_review", {}, "c2"),
                 result("c2", _review_result("explain")),
             ],
-            expect_answer(mentions=("band", "task")),
+            expect_tool("dft_set", _task("band")),
         ),
-        # The user says it's switched; the review shows it isn't.
+        # Switched: dft_set returned the new review. Say what needs
+        # attention; don't generate files unasked (#81).
         Case(
             "G4",
             "goal",
             [
                 *band_open,
-                assistant(
-                    "The structure is open with the task scf_single_point. For a "
-                    "band structure, switch the Task to band in DFT Workbench, "
-                    "then tell me and I'll review the parameters."
-                ),
-                user("Done, I switched it."),
-                call("dft_review", {}, "c2"),
-                result("c2", _review_result("explain")),
+                call("dft_set", {"values": {"task": "band"}}, "c2"),
+                result("c2", _set_result({"task": "band"})),
             ],
-            expect_answer(mentions=("scf",)),
+            expect_one_of(expect_answer(lang="en"), expect_tool("dft_review")),
+        ),
+        # 2026-11-12 on the web: after an SCF review the user typed "PHONON",
+        # and the model told them to switch the task in the panel themselves.
+        Case(
+            "G6",
+            "goal",
+            [
+                *review_turn,
+                assistant(
+                    "Nothing blocks generation; the k-point mesh comes from an ML "
+                    "model that hasn't been externally validated. The task is a "
+                    "single-point SCF. Should I generate the input files, or "
+                    "switch to another calculation (band structure, DOS, relax)?"
+                ),
+                user("PHONON"),
+            ],
+            expect_tool("dft_set", _task(*PHONON_TASKS)),
+        ),
+        Case(
+            "G7",
+            "goal",
+            [
+                user(_attached("Si.cif", "cif", SI_CIF, "我想算这个结构的声子谱。")),
+                call("dft_open_structure", si_open_args, "c1"),
+                result("c1", _open_result()),
+            ],
+            expect_tool("dft_set", _task(*PHONON_TASKS)),
+        ),
+        # settings the user gives (dft_set) -- or looks up first
+        # (dft_settings), since the key isn't always guessable
+        Case(
+            "S1",
+            "set",
+            [*review_turn, user("Change the k-point mesh to 10x10x10.")],
+            expect_one_of(
+                expect_tool("dft_set", _values({"k_grid": [10, 10, 10]})),
+                expect_tool("dft_settings"),
+            ),
+        ),
+        Case(
+            "S2",
+            "set",
+            [*review_turn, user("Set the walltime to 24 hours.")],
+            expect_one_of(
+                expect_tool("dft_set", _values({"walltime_h": 24})),
+                expect_tool("dft_settings"),
+            ),
+        ),
+        Case(
+            "S3",
+            "set",
+            [*review_turn, user("Use cold smearing.")],
+            expect_one_of(
+                expect_tool(
+                    "dft_set",
+                    _values({"smearing_type": "cold"}, {"occupations": "smearing"}),
+                ),
+                expect_tool("dft_settings"),
+            ),
+        ),
+        Case(
+            "S4",
+            "set",
+            [*review_turn_zh, user("把波函数截断能设成 80 Ry。")],
+            expect_one_of(
+                expect_tool("dft_set", _values({"ecutwfc_ry": 80})),
+                expect_tool("dft_settings"),
+            ),
+        ),
+        Case(
+            "S5",
+            "set",
+            [
+                *review_turn,
+                user("Change the k-point mesh to 10x10x10."),
+                call("dft_set", {"values": {"k_grid": [10, 10, 10]}}, "c3"),
+                result("c3", _set_result({"k_grid": [10, 10, 10]})),
+                assistant("The k-point mesh is now 10x10x10 (your setting)."),
+                user("Actually, put the k-points back to automatic."),
+            ],
+            expect_tool("dft_set", _values({"k_grid": None})),
+        ),
+        Case(
+            "S6",
+            "set",
+            [*review_turn, user("Use PBE instead.")],
+            expect_tool("dft_set", _values({"functional": "PBE"})),
+        ),
+        # A task and a setting in one call, the setting checked against it.
+        Case(
+            "S7",
+            "set",
+            [
+                user(
+                    _attached(
+                        "Si.cif",
+                        "cif",
+                        SI_CIF,
+                        "Set up phonons for this with a 4x4x4 q-point mesh.",
+                    )
+                ),
+                call("dft_open_structure", si_open_args, "c1"),
+                result("c1", _open_result()),
+            ],
+            expect_tool(
+                "dft_set",
+                _values({"task": lambda t: t in PHONON_TASKS, "q_grid": [4, 4, 4]}),
+            ),
+        ),
+        # ...or the task first: then the setting, now that it applies.
+        Case(
+            "S7b",
+            "set",
+            [
+                user(
+                    _attached(
+                        "Si.cif",
+                        "cif",
+                        SI_CIF,
+                        "Set up phonons for this with a 4x4x4 q-point mesh.",
+                    )
+                ),
+                call("dft_open_structure", si_open_args, "c1"),
+                result("c1", _open_result()),
+                call("dft_set", {"values": {"task": "phonon"}}, "c2"),
+                result("c2", _set_result({"task": "phonon"})),
+            ],
+            expect_one_of(
+                expect_tool("dft_set", _values({"q_grid": [4, 4, 4]})),
+                expect_tool("dft_settings"),
+            ),
+        ),
+        # No value given: the model mustn't choose one (design 3.1, suggest).
+        Case(
+            "S8",
+            "set",
+            [*review_turn, user("Make the calculation more accurate.")],
+            expect_one_of(expect_answer(lang="en"), expect_tool("dft_settings")),
         ),
         # image attached in the composer (App.tsx sends it as an image_url part)
         Case(
@@ -961,15 +1139,17 @@ def parse_model(spec: str) -> tuple[str, dict]:
     return model, kwargs
 
 
-async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
+async def next_step(
+    model: str, kwargs: dict, messages: list[dict], tools: list[dict]
+) -> Step:
     """One assistant step, accumulated the way graph.call_llm does."""
     start = time.monotonic()
     first: float | None = None
     content, reasoning = "", ""
-    calls: dict[int, dict] = {}
+    calls: list[dict] = []
     try:
         response = await litellm.acompletion(
-            model=model, messages=messages, tools=TOOL_SCHEMAS, stream=True, **kwargs
+            model=model, messages=messages, tools=tools, stream=True, **kwargs
         )
         async for chunk in response:
             delta = chunk.choices[0].delta
@@ -978,11 +1158,7 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
             content += delta.content or ""
             reasoning += getattr(delta, "reasoning_content", None) or ""
             for tc in delta.tool_calls or []:
-                slot = calls.setdefault(tc.index, {"name": None, "arguments": ""})
-                if tc.function and tc.function.name:
-                    slot["name"] = tc.function.name
-                if tc.function and tc.function.arguments:
-                    slot["arguments"] += tc.function.arguments
+                add_tool_call_delta(calls, tc)
     except openai.OpenAIError as error:  # litellm's errors: a failed step, not a crash
         return Step(
             content,
@@ -992,23 +1168,27 @@ async def next_step(model: str, kwargs: dict, messages: list[dict]) -> Step:
             first,
             f"{type(error).__name__}: {error}",
         )
-    return Step(
-        content, list(calls.values()), len(reasoning), time.monotonic() - start, first
-    )
+    return Step(content, calls, len(reasoning), time.monotonic() - start, first)
 
 
 async def evaluate(
-    spec: str, case_list: list[Case], runs: int, system: dict | None, label: str, out
+    spec: str,
+    case_list: list[Case],
+    runs: int,
+    system: dict | None,
+    tools: list[dict],
+    label: str,
+    out,
 ) -> dict:
     model, kwargs = parse_model(spec)
     await next_step(
-        model, kwargs, [user("Hi")]
+        model, kwargs, [user("Hi")], tools
     )  # load the model, so latency excludes it
     rows = []
     for case in case_list:
         messages = ([system] if system else []) + case.messages
         for run in range(runs):
-            step = await next_step(model, kwargs, messages)
+            step = await next_step(model, kwargs, messages, tools)
             failure = step.error or case.check(step)
             row = {
                 "model": label,
@@ -1114,6 +1294,12 @@ async def main() -> None:
         action="store_true",
         help="send no system message, as before #72",
     )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default="web",
+        help="the agent profile whose tools and prompt the model is sent",
+    )
     parser.add_argument("--out", type=Path, default=Path("tool_choice_results.jsonl"))
     parser.add_argument(
         "--report-only",
@@ -1136,14 +1322,29 @@ async def main() -> None:
             [c for c in case_list if c.id in seen],
         )
         return
-    system = None if args.no_system_prompt else system_message(args.experience_level)
+    profile = PROFILES[args.profile]
+    system = (
+        None
+        if args.no_system_prompt
+        else system_message(profile, args.experience_level)
+    )
     variant = "no-system-prompt" if args.no_system_prompt else args.experience_level
+    if profile is not WEB:
+        variant = ", ".join(v for v in (variant, f"{profile.name} profile") if v)
     results = []
     with args.out.open("a") as out:
         for spec in args.models:
             label = f"{spec} [{variant}]" if variant else spec
             results.append(
-                await evaluate(spec, case_list, args.runs, system, label, out)
+                await evaluate(
+                    spec,
+                    case_list,
+                    args.runs,
+                    system,
+                    profile.tool_schemas(),
+                    label,
+                    out,
+                )
             )
     report(results, case_list)
 

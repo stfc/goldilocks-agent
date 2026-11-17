@@ -14,7 +14,8 @@ import {
   workbenchTheme,
 } from "goldilocks-workbench";
 import "goldilocks-workbench/style.css";
-import { dispatchDftTool, keepBundle, restoreDftWorkspace, saveBundle, structureInputFor } from "./dftWorkbench";
+import { ChatWorkspaces, httpDraftApi } from "./dftDraftSync";
+import { dispatchDftTool, keepBundle, saveBundle, structureInputFor } from "./dftWorkbench";
 import { DftReviewCard } from "./components/DftReviewCard";
 import { isDftReview } from "./dftReview";
 import BugReportDialog, { type BugReportContext } from "./components/BugReportDialog";
@@ -79,9 +80,9 @@ export interface Project {
 // DEFAULT_MLIP_STATE/DEFAULT_STRUCTURE_SEARCH_STATE/etc. above and below --
 // deliberately untyped here (`Record<string, any>`) rather than a union of
 // all of them, since each Tool only ever reads its own key. DFT Workbench
-// doesn't have an entry any more (2026-09-24): its real setup/results live
-// entirely inside the embedded goldilocks-core Workbench's own workspace
-// object (`coreWorkspace`), not in `modeState`.
+// doesn't have an entry any more (2026-09-24): its setup is the chat's draft
+// on the agent server, shown by the chat's own embedded goldilocks-core
+// Workbench workspace (dftDraftSync.ts, #142), not in `modeState`.
 export interface Session {
   id: string;
   title: string;
@@ -147,13 +148,17 @@ function findModelById(id) {
   return null;
 }
 
+// The DFT Workbench tools whose result is a review, shown as a `dft-review`
+// card (#74): dft_set returns the review of the settings it set.
+const REVIEW_TOOLS = new Set(["dft_review", "dft_set"]);
+
 // Rehydrates one conversation's raw OpenAI-format history (from GET
 // /api/chat/{id}) into the same shape the live SSE path builds `messages`
 // in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
 // content-less assistant turns -- design doc 12.3: chat never shows raw
 // tool args/results) but also recognizes a past `dft_download_bundle` result
-// and re-inserts its `dft-bundle-ready` card (cc5f0dc), a past `dft_review`
-// result as its `dft-review` card (#74), and a past
+// and re-inserts its `dft-bundle-ready` card (cc5f0dc), a past review
+// (`REVIEW_TOOLS`) as its `dft-review` card (#74), and a past
 // `get_structure` result as its `fetched-structure` entry (#73: the chat's
 // structure files must survive a reload, since dft_open_structure names
 // them) -- the checkpointer has no concept of either, only the raw tool
@@ -174,13 +179,13 @@ function rehydrateMessages(rawMessages) {
   for (const m of rawMessages) {
     if (m.role === "tool") {
       const toolName = toolNameByCallId.get(m.tool_call_id);
-      if (toolName === "dft_download_bundle" || toolName === "dft_review" || toolName === "get_structure") {
+      if (toolName === "dft_download_bundle" || REVIEW_TOOLS.has(toolName) || toolName === "get_structure") {
         try {
           const parsed = JSON.parse(m.content);
           if (toolName === "dft_download_bundle" && parsed?.filename) {
             messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
           }
-          if (toolName === "dft_review" && isDftReview(parsed)) {
+          if (REVIEW_TOOLS.has(toolName) && isDftReview(parsed)) {
             messages.push({ role: "dft-review", review: parsed });
           }
           const fetched = toolName === "get_structure" ? fetchedStructureMessage(parsed) : null;
@@ -262,8 +267,11 @@ const TOOL_CALL_TO_UI_TOOL = {
   run_mlip_neb: "ml-analysis",
   run_mlip_phonons: "ml-analysis",
   dft_open_structure: "dft-workbench",
+  dft_settings: "dft-workbench",
+  dft_set: "dft-workbench",
   dft_review: "dft-workbench",
   dft_download_bundle: "dft-workbench",
+  dft_magnetic_orderings: "dft-workbench",
 };
 
 // Only MACE is actually wired up (janus-core supports more, but exposing a
@@ -359,7 +367,7 @@ const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#run-it-on-yo
 // the web · in the local version now" group (Junwen, 2026-11-09; heading
 // reworded 2026-11-11). MLIP
 // Playground runs MACE on the user's own machine (the server side is gated
-// the same way: goldilocks_agent.tools.mlip_playground_offered());
+// the same way: its tools are in goldilocks_agent.agent_profile.LOCAL only);
 // AiiDAlab-QE works against the user's own AiiDA profile.
 const TOOLS = [
   {
@@ -551,7 +559,6 @@ const STORAGE_KEYS = {
   toolsWidth: "goldilocks-tools-width",
   activeChatId: "goldilocks-active-chat-id",
   selectedModelId: "goldilocks-selected-model-id",
-  dftWorkspaceState: "goldilocks-dft-workspace-state",
 };
 
 const TRANSLATIONS = {
@@ -1709,9 +1716,9 @@ function GeneratedBundleRow({ filename, onDownload }: { filename: string; onDown
 
 // The real embedded goldilocks-core Workbench tree -- shared verbatim by
 // both DFT Workbench's full-page detail view (unmodified) and its inline
-// side panel (wrapped in CoreWorkbenchTabs below). Always the same
-// `workspace` instance (App()'s own `coreWorkspace`, created once) so
-// switching between inline and full-page never drops or duplicates state.
+// side panel (wrapped in CoreWorkbenchTabs below). Always the active chat's
+// `workspace` (App()'s `dftWorkspace`), so switching between inline and
+// full-page never drops or duplicates state.
 function CoreWorkbenchTree({ workspace }: { workspace: any }) {
   return (
     <MantineProvider
@@ -2002,9 +2009,9 @@ function CoreWorkbenchTabs({
   );
 }
 
-// How long the reload restore waits for goldilocks-core to come up: longer
-// than core_server.py's own startup cap (`_STARTUP_TIMEOUT`, an hour), which
-// reports an error itself when that runs out.
+// How long replaying a chat's DFT Workbench draft waits for goldilocks-core to
+// come up: longer than core_server.py's own startup cap (`_STARTUP_TIMEOUT`,
+// an hour), which reports an error itself when that runs out.
 const CORE_SERVER_RESTORE_WAIT_MS = 65 * 60 * 1000;
 
 // A plain status message for whenever the embedded Workbench isn't safe to
@@ -2067,12 +2074,21 @@ export default function App() {
   // separate elements, so hover state is lifted here and applied via a
   // shared class.
   const [hoveredHandle, setHoveredHandle] = useState(null);
-  // One workspace/client instance per app lifetime -- recreating it every
-  // time DFT Workbench's detail page is opened would drop in-progress state
-  // (see design doc §13 -- this is the embedded
-  // goldilocks-workbench package DFT Workbench's full-page detail and inline
-  // panel both reuse, see CoreWorkbenchTree/CoreWorkbenchTabs).
-  const coreWorkspace = useMemo(() => createCoreWorkspace(new HttpCoreClient()), []);
+  // One embedded goldilocks-workbench workspace per chat, each kept in step
+  // with the chat's DFT Workbench draft on the agent server (#142): replayed
+  // from it when first shown, saved back on every change. The full-page
+  // detail and the inline panel show the active chat's (CoreWorkbenchTree,
+  // CoreWorkbenchTabs); a chat tool acts on its own chat's.
+  const chatWorkspaces = useMemo(
+    () =>
+      new ChatWorkspaces({
+        createWorkspace: () => createCoreWorkspace(new HttpCoreClient()),
+        api: httpDraftApi(),
+        ensureCoreServerReady: () => ensureCoreServerReady(CORE_SERVER_RESTORE_WAIT_MS),
+      }),
+    // Created once: ensureCoreServerReady only uses fetch and a state setter.
+    [],
+  );
   // The archive a successful dft_download_bundle just kept (`keepBundle`),
   // until that call's `tool_result` event creates its Download card.
   const pendingBundleIdRef = useRef<string | null>(null);
@@ -2222,6 +2238,7 @@ export default function App() {
   const resolvedTheme = themeChoice;
   const currentActiveId = activeId ?? null;
   const session = activeId ? (sessions.find((item) => item.id === activeId) ?? null) : null;
+  const dftWorkspace = chatWorkspaces.workspaceFor(session?.id ?? null);
   useLayoutEffect(() => {
     activeSessionRef.current = session;
   }, [session]);
@@ -2487,72 +2504,6 @@ export default function App() {
     writeStorage(STORAGE_KEYS.selectedModelId, selectedModel.id);
   }, [selectedModel]);
 
-  // Persists `coreWorkspace`'s structure + calc settings on every real change
-  // (cc5f0dc -- previously a reload silently dropped all of it, since `coreWorkspace`
-  // itself is recreated empty by the `useMemo` above), with the vocabulary
-  // they're written in (see `restorableDraftPatch`). Only ever writes a loaded
-  // structure: the workspace starts empty on every page load, and clearing the
-  // key on "empty" used to erase the saved state before the restore below
-  // could use it (#18). Leaves out the generated archive (`preview`): it's a
-  // real `Blob`, not JSON-serializable, and the restore effect below
-  // regenerates it via `review.refreshArchive` instead of trying to freeze the
-  // exact old bytes.
-  useEffect(() => {
-    return coreWorkspace.subscribe(() => {
-      const snapshot = coreWorkspace.getSnapshot();
-      if (!snapshot.structureInput || !snapshot.capabilities) return;
-      writeStorage(
-        STORAGE_KEYS.dftWorkspaceState,
-        JSON.stringify({
-          vocabulary: snapshot.capabilities.vocabulary_version,
-          structureInput: snapshot.structureInput,
-          draft: snapshot.draft,
-        }),
-      );
-    });
-  }, [coreWorkspace]);
-
-  // Replays the persisted structure/settings back into `coreWorkspace` once,
-  // on mount (cc5f0dc). A real re-run of inspect/review/preview against
-  // goldilocks-core's backend, not a cheap local restore -- there's no
-  // "just set the state" action in goldilocks-workbench's `Workspace`
-  // interface, only real actions -- so this deliberately trades c7bfc57's
-  // no-silent-duplicate-real-execution principle for a seamless reload here
-  // (explicit call, 2026-09-28, after weighing that tradeoff against the
-  // cheaper alternatives). Best-effort: a structure goldilocks-core can no
-  // longer reproduce just falls back to an empty panel instead of surfacing a
-  // startup error. See `restoreDftWorkspace` for the sequence (#18); it waits
-  // as long as a first-ever core start can take (core_server.py caps the
-  // startup itself, and reports a failure before it retries).
-  useEffect(() => {
-    const raw = readStorage(STORAGE_KEYS.dftWorkspaceState, "");
-    if (!raw) return;
-    let saved;
-    try {
-      saved = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!saved?.structureInput) return;
-    (async () => {
-      try {
-        await restoreDftWorkspace(
-          coreWorkspace,
-          saved,
-          () => ensureCoreServerReady(CORE_SERVER_RESTORE_WAIT_MS),
-          () => writeStorage(STORAGE_KEYS.dftWorkspaceState, ""),
-        );
-      } catch {
-        // Best-effort restore -- leave the panel at whatever state the
-        // failed replay stopped on, same as any other real backend error.
-      }
-    })();
-    // Deliberately once-only: `coreWorkspace` is a stable useMemo instance
-    // for the app's whole lifetime, so listing it would add nothing except
-    // a lint-satisfying no-op re-run.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   useEffect(() => {
     if (session && !session.messagesLoaded) loadMessagesForSession(session.id);
     // Deps intentionally narrowed to the two fields that matter: `session` is
@@ -2663,11 +2614,6 @@ export default function App() {
     setShowStructureViewer(false);
     setShowFilesPanel(false);
     setPlusOpen(false);
-    // One DFT Workbench serves every chat in a tab (#13). On the web build a
-    // left chat can't be reopened, so a new chat starts with an empty
-    // Workbench: its DFT tools can't act on the last chat's structure. The
-    // local build keeps it until each chat gets its own workspace.
-    if (SHARED_DEPLOYMENT) coreWorkspace.dispatch({ type: "workspace.reset" });
   }
 
   async function createProject() {
@@ -2818,6 +2764,7 @@ export default function App() {
       return remaining;
     });
     fetch(`/api/conversations/${id}`, { method: "DELETE" }).catch(() => {});
+    chatWorkspaces.forget(id);
   }
 
   async function readFile(file) {
@@ -3562,7 +3509,7 @@ export default function App() {
   }
 
   // Ensures goldilocks-core's HTTP backend is up before a chat-driven DFT
-  // Workbench tool dispatches into `coreWorkspace` -- the polling effect
+  // Workbench tool dispatches into its chat's workspace -- the polling effect
   // above only starts once DFT Workbench is the *active* panel, but a chat
   // tool call can arrive before the user has ever opened it. Reuses the
   // same endpoint and keeps `coreServerStatus` in sync so the panel (once
@@ -3594,12 +3541,16 @@ export default function App() {
   // falls back to the local model (#14).
   async function runClientToolCall(sessionId, payload, signal, modelId) {
     let outcome;
+    // The workspace of the chat this call belongs to, holding that chat's
+    // draft, not whichever chat is active now.
+    const workspace = chatWorkspaces.workspaceFor(sessionId);
     try {
+      await chatWorkspaces.ready(sessionId);
       // The structure files of the chat this call belongs to, not of
       // whichever chat is active now (dft_open_structure picks one by name).
       const target = sessionsRef.current.find((item) => item.id === sessionId);
       outcome = await dispatchDftTool(
-        coreWorkspace,
+        workspace,
         (readySignal) => ensureCoreServerReady(undefined, readySignal),
         payload.tool,
         payload.args ?? {},
@@ -3610,7 +3561,7 @@ export default function App() {
       outcome = { error: err?.message ?? "DFT Workbench action failed unexpectedly." };
     }
     pendingBundleIdRef.current =
-      payload.tool === "dft_download_bundle" && "result" in outcome ? keepBundle(coreWorkspace) : null;
+      payload.tool === "dft_download_bundle" && "result" in outcome ? keepBundle(workspace) : null;
     // Stopped mid-chain: don't resume. Resuming would start the very model
     // turn the user just stopped; the still-paused tool call is closed by
     // graph.py's _repair_orphaned_tool_calls on their next message instead.
@@ -3757,7 +3708,7 @@ export default function App() {
                   role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
                 }],
               }));
-            } else if (payload.tool === "dft_review" && isDftReview(payload.result)) {
+            } else if (REVIEW_TOOLS.has(payload.tool) && isDftReview(payload.result)) {
               // The review's key values go into the transcript as a card
               // rendered from core's result (#74), so the user reads core's
               // numbers, not the model's retelling of them.
@@ -3833,7 +3784,7 @@ export default function App() {
         }
         if (currentEventType === "client_tool_call") {
           // graph.py's CLIENT_EXECUTED_TOOLS: the graph is paused waiting
-          // for the browser to actually run this (via coreWorkspace), not
+          // for the browser to actually run this (on its chat's workspace), not
           // for a human click -- no transcript message, just execute and
           // resume automatically.
           try {
@@ -4379,9 +4330,9 @@ export default function App() {
       // Workbench UI here too -- the exact same content the full-page
       // detail view renders (renderToolDetailPage), just presented as
       // one-card-at-a-time tabs instead of a side-by-side grid (see
-      // CoreWorkbenchTabs). Same shared `coreWorkspace` instance either
-      // way, so switching between inline and full-page never drops or
-      // duplicates state.
+      // CoreWorkbenchTabs). The active chat's workspace either way, so
+      // switching between inline and full-page never drops or duplicates
+      // state.
       return (
         <div className="workspace-content">
           <div className="workspace-tool-header" style={{ "--tool-color": activeTool.color } as CSSPropertiesWithVars}>
@@ -4410,7 +4361,7 @@ export default function App() {
           </div>
           {coreServerStatus?.status === "ready" ? (
             <CoreWorkbenchTabs
-              workspace={coreWorkspace}
+              workspace={dftWorkspace}
               chatStructures={chatStructures}
               onFileUpload={readFile}
             />
@@ -4992,7 +4943,7 @@ export default function App() {
                 Plots a phonon band structure from a phonopy{" "}
                 <code>band.yaml</code>, from this chat or from your own
                 calculation
-                {/* MLIP Playground is the local version's only (mlip_playground_offered()). */}
+                {/* MLIP Playground is the local version's only (agent_profile.LOCAL). */}
                 {SHARED_DEPLOYMENT ? "." : ", in the same viewer MLIP Playground's Phonons calculation opens."}
               </div>
               {phononResultsInChat.length > 0 && (
@@ -5125,7 +5076,7 @@ export default function App() {
           </div>
         );
       }
-      return <CoreWorkbenchTree workspace={coreWorkspace} />;
+      return <CoreWorkbenchTree workspace={dftWorkspace} />;
     }
     return <div className="tool-detail-content">{workspaceContent}</div>;
   }
