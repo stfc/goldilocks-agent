@@ -27,6 +27,7 @@ from goldilocks_agent.graph import (
     LOCAL_MODEL,
     SYSTEM_PROMPT,
     _repair_orphaned_tool_calls,
+    add_tool_call_delta,
     build_graph,
     resolve_model,
     system_message,
@@ -726,3 +727,49 @@ def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
     model, extra = resolve_model("anthropic-claude")
     assert model == "anthropic/claude-sonnet-5"
     assert extra == {"api_key": "k"}
+
+
+def _delta(index, id=None, name=None, arguments=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        index=index, id=id, function=SimpleNamespace(name=name, arguments=arguments)
+    )
+
+
+@pytest.mark.parametrize(
+    ("deltas", "expected"),
+    [
+        # OpenAI: the id and name first, the arguments in pieces after.
+        (
+            [_delta(0, "a", "dft_set", '{"values": '), _delta(0, None, None, "{}}")],
+            [("a", "dft_set", '{"values": {}}')],
+        ),
+        # litellm's ollama_chat: parallel calls whole, all at index 0.
+        (
+            [
+                _delta(0, "a", "dft_settings", '{"group": "job"}'),
+                _delta(0, "b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+            [
+                ("a", "dft_settings", '{"group": "job"}'),
+                ("b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+        ),
+        # Parallel calls at their own indexes, interleaved.
+        (
+            [
+                _delta(0, "a", "dft_review", ""),
+                _delta(1, "b", "dft_settings", '{"gr'),
+                _delta(0, None, None, "{}"),
+                _delta(1, None, None, 'oup": "job"}'),
+            ],
+            [("a", "dft_review", "{}"), ("b", "dft_settings", '{"group": "job"}')],
+        ),
+    ],
+)
+def test_streamed_tool_calls_are_split_by_index_and_id(deltas, expected) -> None:
+    calls: list[dict] = []
+    for delta in deltas:
+        add_tool_call_delta(calls, delta)
+    assert [(c["id"], c["name"], c["arguments"]) for c in calls] == expected
