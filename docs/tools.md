@@ -30,9 +30,13 @@ chat or uploaded in the panel, and pick a calculation:
   smearing, pseudopotentials, ...), each with where it came from.
 - **Bundles**: the Quantum ESPRESSO input files, to download.
 
-The chat can do the same steps for you: open a structure, review the
-recommendation (shown as a card in the chat) and generate the input files.
-The values always come from goldilocks-core, never from the chat model.
+The chat can do the same steps for you: open a structure, change any
+setting in the panel (say "phonons", "walltime 24 hours" or "cold smearing";
+it can also list the options), review the recommendation (shown as a card in
+the chat), list magnetic orderings (rank them with Run mMACE in the card) and
+generate the input files. It only sets
+values you give it: the rest always come from goldilocks-core, never from the
+chat model.
 
 In the Tools panel the cards are tabs; full-page they sit side by side.
 

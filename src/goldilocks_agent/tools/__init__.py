@@ -23,40 +23,40 @@ result, produced by `app/src/App.tsx` calling the exact same
 `coreWorkspace.dispatch(...)` the embedded panel's own buttons call. This
 keeps one state object shared between chat and the panel instead of
 reintroducing the second, parallel implementation that was just deleted.
+On 2026-11-12 `dft_settings`/`dft_set`/`dft_magnetic_orderings` joined
+them, so the chat can read and change every setting the panel shows. On
+2026-11-16 all six moved to the server (#142): they change the chat's own
+draft there and call goldilocks-core over HTTP, and the panel replays the
+draft -- still one state, now kept by the server, testable without a page.
 
-This module is the single place `graph.py` reads from -- it never reaches
-into a specific Tool's internals, so adding a new Tool later is "add one
-import + spread it into these collections," not a `graph.py` edit. That
-includes:
+This module is the single place `graph.py` reads tools from -- it never
+reaches into a specific Tool's internals, so adding a new Tool later is "add
+one import + spread it into these collections, and name it in the profiles
+that offer it (`agent_profile.py`)," not a `graph.py` edit. That includes:
 - `CONFIRMATION_REQUIRED_TOOLS`/`CONFIRMATION_LABELS` (design doc 17.3's
   interrupt mechanism, first wired up for MLIP Playground): any tool name in
   that set gets gated through a confirmation card in `graph.py`'s
   `call_tool` before it ever runs, generic to whichever Tool declares it.
-- `CLIENT_EXECUTED_TOOLS` (first wired up for DFT Workbench): any tool name
-  in that set gets its result from a second `interrupt()`'s resume value
-  instead of from `TOOL_DISPATCH`, generic to whichever Tool declares it. A
-  tool can be in both sets, chaining two interrupts in one `call_tool` pass
-  (confirm, then client-execute) -- `dft_download_bundle` did this briefly,
-  but the confirmation card was removed 2026-09-25: it gated nothing real,
-  since the browser already forces a genuine, unavoidable click on the
-  Bundle card's own Download button before anything lands on the user's
-  machine (see `dft_workbench/tool.py`'s `CONFIRMATION_REQUIRED` comment).
+- `CONTEXT_TOOLS` (first wired up for DFT Workbench): any tool name in that
+  set is called with a `tools.context.ToolContext` first -- its chat's id
+  and messages, a way to send the browser an event, the chat database and
+  the goldilocks-core client -- generic to whichever Tool declares it.
 
 A shipped Tool can also be parked as "Coming soon" without deleting it
-(2026-10-09, MLIP Playground): its subpackage and tests stay intact, but a
-`<TOOL>_RELEASED = False` flag below keeps it out of every collection here,
-so the LLM is never offered a tool whose UI panel can't be opened.
+(2026-10-09, MLIP Playground): its subpackage, tests and registry entries
+stay intact, and leaving it out of every profile in `agent_profile.py`
+keeps the LLM from being offered a tool whose UI panel can't be opened.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from goldilocks_agent.config import read_shared_deployment_enabled
 from goldilocks_agent.tools.dft_workbench.tool import (
-    CLIENT_EXECUTED as _DFT_CLIENT_EXECUTED,
     CONFIRMATION_LABELS as _DFT_CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED as _DFT_CONFIRMATION_REQUIRED,
+    CONTEXT_TOOLS as _DFT_CONTEXT_TOOLS,
+    ORIGIN_AUDITED as _DFT_ORIGIN_AUDITED,
     TOOL_DISPATCH as _DFT_DISPATCH,
     TOOL_SCHEMA as _DFT_SCHEMA,
 )
@@ -72,31 +72,22 @@ from goldilocks_agent.tools.structure_search.tool import (
 )
 
 
-# MLIP Playground runs MACE on the user's own machine, so only the local
-# version offers it; the shared web deployment lists it as coming soon,
-# "available in the local version" (Junwen, 2026-11-09; App.tsx's
-# `localOnly`). Whether a local install may actually run it is the separate
-# opt-in, `config.read_mlip_enabled()`. Its dispatch and confirmation entries
-# stay registered everywhere: `graph.call_tool` refuses any tool the
-# deployment didn't offer before reaching them.
-def tool_schemas(*, shared_deployment: bool) -> list[dict]:
-    """The tools the chat model is offered on a local or shared deployment."""
-    return [
-        *_STRUCTURE_SEARCH_SCHEMA,
-        *([] if shared_deployment else _MLIP_SCHEMA),
-        *_DFT_SCHEMA,
-    ]
+def _names(schemas: list[dict]) -> tuple[str, ...]:
+    return tuple(schema["function"]["name"] for schema in schemas)
 
 
-def offered_tool_schemas() -> list[dict]:
-    """The tools the chat model is offered on this deployment."""
-    return tool_schemas(shared_deployment=read_shared_deployment_enabled())
+# Each Tool's chat tools, in schema order. Which a deployment offers is
+# `agent_profile.py`'s choice, not this registry's: every tool stays
+# registered here, and `graph.call_tool` refuses one the profile didn't
+# offer before reaching its dispatch or confirmation entries.
+STRUCTURE_SEARCH_TOOLS = _names(_STRUCTURE_SEARCH_SCHEMA)
+MLIP_PLAYGROUND_TOOLS = _names(_MLIP_SCHEMA)
+DFT_WORKBENCH_TOOLS = _names(_DFT_SCHEMA)
 
-
-def mlip_playground_offered() -> bool:
-    """Whether this deployment offers MLIP Playground (its panel and routes)."""
-    return not read_shared_deployment_enabled()
-
+TOOL_SCHEMAS: dict[str, dict] = {
+    schema["function"]["name"]: schema
+    for schema in (*_STRUCTURE_SEARCH_SCHEMA, *_MLIP_SCHEMA, *_DFT_SCHEMA)
+}
 
 TOOL_DISPATCH: dict[str, Callable[..., Awaitable]] = {
     **_STRUCTURE_SEARCH_DISPATCH,
@@ -113,6 +104,9 @@ CONFIRMATION_LABELS: dict[str, Callable[[dict], str]] = {
     **_MLIP_CONFIRMATION_LABELS,
     **_DFT_CONFIRMATION_LABELS,
 }
-# Only DFT Workbench's tools are client-executed so far -- MLIP Playground
-# and structure_search both run server-side via plain TOOL_DISPATCH.
-CLIENT_EXECUTED_TOOLS: set[str] = {*_DFT_CLIENT_EXECUTED}
+# Only DFT Workbench's tools work on the chat itself so far -- MLIP Playground
+# and structure_search take their arguments alone.
+CONTEXT_TOOLS: set[str] = {*_DFT_CONTEXT_TOOLS}
+# Tools whose tool message records the user message the turn answers
+# (design doc 3.3's `origin_message_id`), injected by `call_tool`.
+ORIGIN_AUDITED_TOOLS: set[str] = {*_DFT_ORIGIN_AUDITED}

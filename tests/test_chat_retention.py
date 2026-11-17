@@ -18,7 +18,6 @@ DAY = timedelta(hours=24)
 
 def _use_db(tmp_path, monkeypatch):
     db_path = tmp_path / "goldilocks.db"
-    monkeypatch.setattr("goldilocks_agent.graph.DB_PATH", db_path)
     monkeypatch.setattr("goldilocks_agent.store.DB_PATH", db_path)
     return db_path
 

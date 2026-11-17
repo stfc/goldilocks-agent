@@ -22,11 +22,12 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from goldilocks_agent.agent_profile import WEB
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.graph import (
     LOCAL_MODEL,
-    SYSTEM_PROMPT,
     _repair_orphaned_tool_calls,
+    add_tool_call_delta,
     build_graph,
     resolve_model,
     system_message,
@@ -414,32 +415,29 @@ def test_new_message_while_tool_interrupt_pending_self_heals_instead_of_crashing
     orphaned tool_calls message is permanent once checkpointed) -- this
     proves the graph now stays usable instead.
 
-    The incident itself was an unanswered MLIP confirmation card; this runs
-    through DFT Workbench's client-executed interrupt instead, which leaves
-    the same orphaned shape (e.g. the tab reloads before the browser
-    resumes) and stays live while MLIP Playground is unreleased.
+    The incident itself was an unanswered MLIP confirmation card, which is
+    what this leaves paused (MLIP Playground is offered locally again).
     """
     graph = build_graph(InMemorySaver())
     config = {
         "configurable": {
-            "thread_id": "dft-typed-ahead",
+            "thread_id": "mlip-typed-ahead",
             "model_id": "anthropic-claude",
         }
     }
     message = {
         "role": "user",
         "content": (
-            "A structure is already open in DFT Workbench. Call the "
-            "dft_review tool right now (it takes no arguments) to preview "
-            "the DFT parameter recommendation."
+            "Call the run_mlip_singlepoint tool right now on this structure, "
+            "named NaCl.cif, with its default model:\n" + _TEST_NACL_CIF
         ),
     }
     asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
     paused = asyncio.run(graph.aget_state(config))
-    assert paused.next, "expected the graph to pause for client execution"
-    assert paused.tasks[0].interrupts[0].value["client_execute"] is True
+    assert paused.next, "expected the graph to pause at the confirmation card"
+    assert paused.tasks[0].interrupts[0].value["tool"] == "run_mlip_singlepoint"
 
-    # The browser never resumes it -- the user asks something unrelated instead.
+    # The card is never answered -- the user asks something unrelated instead.
     follow_up = {
         "role": "user",
         "content": "Never mind, what's the melting point of NaCl?",
@@ -542,112 +540,20 @@ def test_mlip_neb_tool_call_runs_for_real_and_llm_reports_the_real_barrier() -> 
     )
 
 
-@pytest.mark.integration
-@requires_anthropic_key
-def test_dft_review_tool_call_pauses_for_client_execution() -> None:
-    """First real exercise of `call_tool`'s CLIENT_EXECUTED_TOOLS branch
-    (graph.py, 2026-09-25): `dft_review` has no confirmation gate, so the
-    *first* pause must already be the client-execute interrupt, not a
-    confirmation card -- and resuming with a `{"result": ...}` payload
-    (standing in for what the browser's `coreWorkspace.dispatch(...)`
-    would report) must land in the checkpointed tool message verbatim,
-    since TOOL_DISPATCH is never consulted for these.
-    """
-    graph = build_graph(InMemorySaver())
-    config = {
-        "configurable": {
-            "thread_id": "dft-review-client-exec",
-            "model_id": "anthropic-claude",
-        }
-    }
-    message = {
-        "role": "user",
-        "content": (
-            "A structure is already open in DFT Workbench. Call the "
-            "dft_review tool right now (it takes no arguments) to preview "
-            "the DFT parameter recommendation."
-        ),
-    }
-    asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
-
-    paused = asyncio.run(graph.aget_state(config))
-    assert paused.next, "expected the graph to pause for client execution"
-    pending = paused.tasks[0].interrupts[0].value
-    assert pending["tool"] == "dft_review"
-    assert pending["client_execute"] is True
-    assert "label" not in pending  # not a confirmation card
-
-    fake_result = {"records": {"ecutwfc_ry": {"status": "resolved", "value": 60}}}
-    final = asyncio.run(
-        graph.ainvoke(Command(resume={"result": fake_result}), config=config)
-    )
-    tool_messages = [m for m in final["messages"] if m.type == "tool"]
-    assert tool_messages
-    assert json.loads(tool_messages[-1].content) == fake_result
-
-    resumed_state = asyncio.run(graph.aget_state(config))
-    assert not resumed_state.next
-
-
-@pytest.mark.integration
-@requires_anthropic_key
-def test_dft_download_bundle_tool_call_pauses_for_client_execution() -> None:
-    """`dft_download_bundle` has no confirmation gate (2026-09-25, removed:
-    it protected nothing real, since the browser already forces a genuine
-    click on the Bundle card's own Download button before anything lands
-    on disk) -- like `dft_review`, the *first* pause must already be the
-    client-execute interrupt.
-    """
-    graph = build_graph(InMemorySaver())
-    config = {
-        "configurable": {
-            "thread_id": "dft-download-client-exec",
-            "model_id": "anthropic-claude",
-        }
-    }
-    message = {
-        "role": "user",
-        "content": (
-            "A structure has already been opened and reviewed in DFT "
-            "Workbench. Call the dft_download_bundle tool right now (it "
-            "takes no arguments) to generate the DFT input bundle."
-        ),
-    }
-    asyncio.run(graph.ainvoke({"messages": [message]}, config=config))
-
-    paused = asyncio.run(graph.aget_state(config))
-    assert paused.next, "expected the graph to pause for client execution"
-    pending = paused.tasks[0].interrupts[0].value
-    assert pending["tool"] == "dft_download_bundle"
-    assert pending["client_execute"] is True
-    assert "label" not in pending  # not a confirmation card
-
-    fake_result = {"filename": "NaCl-scf.zip"}
-    final = asyncio.run(
-        graph.ainvoke(Command(resume={"result": fake_result}), config=config)
-    )
-    tool_messages = [m for m in final["messages"] if m.type == "tool"]
-    assert tool_messages
-    assert json.loads(tool_messages[-1].content) == fake_result
-
-    resumed_state = asyncio.run(graph.aget_state(config))
-    assert not resumed_state.next
-
-
 def test_system_message_without_an_experience_level_asks_for_brief_answers() -> None:
     for level in (None, "", "nonsense"):
-        assert system_message(level) == {
+        assert system_message(WEB, level) == {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\nAnswer briefly.",
+            "content": f"{WEB.prompt}\n\nAnswer briefly.",
         }
 
 
 def test_system_message_pitches_answers_at_the_experience_level() -> None:
     contents = {
-        level: system_message(level)["content"] for level in ("new", "advanced")
+        level: system_message(WEB, level)["content"] for level in ("new", "advanced")
     }
     for content in contents.values():
-        assert content.startswith(f"{SYSTEM_PROMPT}\n\n")
+        assert content.startswith(f"{WEB.prompt}\n\n")
         assert "Answer briefly." not in content
         # Design doc 12.2: the level changes how much is explained, never a
         # value -- the guardrail sentence is the mechanism for that.
@@ -726,3 +632,112 @@ def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
     model, extra = resolve_model("anthropic-claude")
     assert model == "anthropic/claude-sonnet-5"
     assert extra == {"api_key": "k"}
+
+
+def test_dft_set_keeps_the_user_message_it_came_from(monkeypatch) -> None:
+    """Design doc 3.3: a value dft_set stamps `human` traces back to the user
+    message the turn answers. The runtime records that id with the tool
+    message (`artifact`); the model neither supplies it (not a parameter)
+    nor sees it (never sent back in its history)."""
+    from types import SimpleNamespace
+
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from goldilocks_agent.tools import TOOL_DISPATCH
+    from goldilocks_agent.tools.context import AgentServices
+    from goldilocks_agent.tools.dft_workbench import TOOL_SCHEMA
+
+    sent: list[list[dict]] = []
+
+    def chunk(content=None, tool_calls=None):
+        delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    async def acompletion(*, messages, **_):
+        sent.append(messages)
+        call = SimpleNamespace(
+            index=0,
+            id="call-1",
+            function=SimpleNamespace(
+                name="dft_set", arguments='{"values": {"walltime_h": 24}}'
+            ),
+        )
+        chunks = [chunk(tool_calls=[call])] if len(sent) == 1 else [chunk("Set.")]
+
+        async def stream():
+            for c in chunks:
+                yield c
+
+        return stream()
+
+    async def dft_set(context, **args):
+        return {"changed": args["values"]}
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "not-a-real-provider/nope")
+    monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    monkeypatch.setitem(TOOL_DISPATCH, "dft_set", dft_set)
+    graph = build_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "dft-set-origin"}}
+    asyncio.run(
+        graph.ainvoke(
+            {"messages": [{"role": "user", "content": "Set walltime to 24 hours."}]},
+            config=config,
+            context=AgentServices(store=None, core=None),
+        )
+    )
+
+    messages = asyncio.run(graph.aget_state(config)).values["messages"]
+    user = next(m for m in messages if isinstance(m, HumanMessage))
+    tool = next(m for m in messages if isinstance(m, ToolMessage))
+    assert user.id
+    assert tool.artifact == {"origin_message_id": user.id}
+    assert user.id not in json.dumps(sent[-1])
+    dft_set = next(t for t in TOOL_SCHEMA if t["function"]["name"] == "dft_set")
+    assert "origin" not in json.dumps(dft_set)
+
+
+def _delta(index, id=None, name=None, arguments=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        index=index, id=id, function=SimpleNamespace(name=name, arguments=arguments)
+    )
+
+
+@pytest.mark.parametrize(
+    ("deltas", "expected"),
+    [
+        # OpenAI: the id and name first, the arguments in pieces after.
+        (
+            [_delta(0, "a", "dft_set", '{"values": '), _delta(0, None, None, "{}}")],
+            [("a", "dft_set", '{"values": {}}')],
+        ),
+        # litellm's ollama_chat: parallel calls whole, all at index 0.
+        (
+            [
+                _delta(0, "a", "dft_settings", '{"group": "job"}'),
+                _delta(0, "b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+            [
+                ("a", "dft_settings", '{"group": "job"}'),
+                ("b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+        ),
+        # Parallel calls at their own indexes, interleaved.
+        (
+            [
+                _delta(0, "a", "dft_review", ""),
+                _delta(1, "b", "dft_settings", '{"gr'),
+                _delta(0, None, None, "{}"),
+                _delta(1, None, None, 'oup": "job"}'),
+            ],
+            [("a", "dft_review", "{}"), ("b", "dft_settings", '{"group": "job"}')],
+        ),
+    ],
+)
+def test_streamed_tool_calls_are_split_by_index_and_id(deltas, expected) -> None:
+    calls: list[dict] = []
+    for delta in deltas:
+        add_tool_call_delta(calls, delta)
+    assert [(c["id"], c["name"], c["arguments"]) for c in calls] == expected
