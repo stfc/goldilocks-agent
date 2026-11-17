@@ -50,7 +50,12 @@ from pathlib import Path
 from typing import Any
 
 import litellm
-from langchain_core.messages import AIMessage, ToolMessage, convert_to_openai_messages
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    ToolMessage,
+    convert_to_openai_messages,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -64,6 +69,7 @@ from goldilocks_agent.tools import (
     CLIENT_EXECUTED_TOOLS,
     CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED_TOOLS,
+    ORIGIN_AUDITED_TOOLS,
     TOOL_DISPATCH,
     offered_tool_schemas,
 )
@@ -172,19 +178,26 @@ when the user asks for one.
 - dft_open_structure, then dft_review, then dft_download_bundle: open a \
 structure, show goldilocks-core's recommended parameters, and generate the \
 input files.
+- dft_settings and dft_set: see and change any DFT Workbench setting, as the \
+user would in its panel: the task (band structure, phonons, a relaxation...), \
+code, HPC profile and every parameter. dft_set returns the new review.
+- dft_magnetic_orderings: list the magnetic orderings of a spin-polarized \
+calculation, with their ranking if the user ran one in DFT Workbench.
 
 The user sees dft_review's values and sources in a card above your reply, so \
 don't list them again or put them in a table: say what needs the user's \
 attention (warnings, anything blocking generation) and the next step. When you \
 name a value, give it and its source as the tools return them. Never invent \
-parameter values or suggest values of your own, walltime and other job \
-resources included: for a warning about a setting, or if the user wants \
-different settings, say which setting to change in DFT Workbench, not what to \
-set it to. Settings, the task included, are changed by \
-the user in DFT Workbench, not by you; dft_review shows what is set. Call \
-dft_download_bundle only when the user asks for input files. When generation is \
-blocked, explain what needs deciding and ask the user. Reply in the language \
-of the user's latest message."""
+parameter values or choose values of your own, walltime and other job \
+resources included: set a value with dft_set only when the user gave it. For \
+a warning about a setting, or if the user wants a setting changed without \
+giving the value, say which setting it is and ask for the value (dft_settings \
+lists the options), never suggesting one, not even as an example. dft_review \
+shows what is set: if its task isn't the \
+calculation the user asked for, switch it with dft_set. Call \
+dft_download_bundle only when the user asks for input files. When generation \
+is blocked, explain what needs deciding and ask the user. Reply in the \
+language of the user's latest message."""
 
 # Modeled on ChatGPT/Claude's "custom instructions" -- a short, fixed blurb
 # about the user. Design doc 12.2: this must only change explanation
@@ -308,6 +321,25 @@ async def open_checkpointer() -> AsyncIterator[AsyncSqliteSaver]:
         yield saver
 
 
+def add_tool_call_delta(calls: list[dict[str, Any]], delta: Any) -> None:
+    """Folds one streamed tool-call delta into `calls`, the turn's tool calls
+    so far, in order. A call's `arguments` arrive split across deltas that
+    share its `index`, to be concatenated; a delta with another id starts a
+    new call even at the same index -- litellm's `ollama_chat` streams
+    parallel calls whole, each with its own id, all at index 0, which keyed
+    by index alone ran together into one call with invalid JSON arguments."""
+    call = next((c for c in reversed(calls) if c["index"] == delta.index), None)
+    if call is None or (delta.id and call["id"] and delta.id != call["id"]):
+        call = {"index": delta.index, "id": None, "name": None, "arguments": ""}
+        calls.append(call)
+    if delta.id:
+        call["id"] = delta.id
+    if delta.function and delta.function.name:
+        call["name"] = delta.function.name
+    if delta.function and delta.function.arguments:
+        call["arguments"] += delta.function.arguments
+
+
 async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     # litellm wants plain OpenAI-style dicts, not LangChain message objects --
     # passing BaseMessage instances through silently mangles the role (observed:
@@ -326,10 +358,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     model, extra = resolve_model(model_id)
     writer = get_stream_writer()
     content = ""
-    # Keyed by the provider's own per-call-in-progress index -- a streamed
-    # tool call's `arguments` arrives split across many chunks and must be
-    # concatenated in order before it's valid JSON.
-    tool_calls_acc: dict[int, dict[str, Any]] = {}
+    tool_calls_acc: list[dict[str, Any]] = []
     response = await litellm.acompletion(
         model=model,
         messages=messages,
@@ -343,15 +372,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
             content += delta.content
             writer(delta.content)
         for tool_call in delta.tool_calls or []:
-            slot = tool_calls_acc.setdefault(
-                tool_call.index, {"id": None, "name": None, "arguments": ""}
-            )
-            if tool_call.id:
-                slot["id"] = tool_call.id
-            if tool_call.function and tool_call.function.name:
-                slot["name"] = tool_call.function.name
-            if tool_call.function and tool_call.function.arguments:
-                slot["arguments"] += tool_call.function.arguments
+            add_tool_call_delta(tool_calls_acc, tool_call)
 
     if not tool_calls_acc:
         return {"messages": [{"role": "assistant", "content": content}]}
@@ -362,7 +383,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
             "type": "function",
             "function": {"name": slot["name"], "arguments": slot["arguments"]},
         }
-        for slot in tool_calls_acc.values()
+        for slot in tool_calls_acc
     ]
     return {
         "messages": [
@@ -392,6 +413,27 @@ def _find_next_tool_call(state: MessagesState) -> dict | None:
                     return call
             return None
     return None
+
+
+def _tool_message(state: MessagesState, call: dict, output: Any) -> dict:
+    """The tool message answering `call` with `output`. For a tool in
+    ORIGIN_AUDITED_TOOLS (design doc 3.3's `relay`), its `artifact` keeps the
+    id of the user message the turn answers -- the thread's last user
+    message, so a real one of this thread by construction. The model never
+    supplies it and never sees it: `artifact` isn't sent to the model, only
+    checkpointed with the call."""
+    message = {
+        "role": "tool",
+        "tool_call_id": call["id"],
+        "content": json.dumps(output),
+    }
+    if call["name"] in ORIGIN_AUDITED_TOOLS:
+        origin = next(
+            (m.id for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            None,
+        )
+        message["artifact"] = {"origin_message_id": origin}
+    return message
 
 
 async def call_tool(state: MessagesState) -> dict:
@@ -425,15 +467,7 @@ async def call_tool(state: MessagesState) -> dict:
     if name not in offered:
         output = {"error": f"Unknown tool: {name!r}"}
         writer({"type": "tool_result", "tool": name, "result": output})
-        return {
-            "messages": [
-                {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": json.dumps(output),
-                }
-            ]
-        }
+        return {"messages": [_tool_message(state, call, output)]}
     if name in CONFIRMATION_REQUIRED_TOOLS:
         decision = interrupt(
             {
@@ -445,18 +479,10 @@ async def call_tool(state: MessagesState) -> dict:
         if not decision.get("approved"):
             output: Any = {"error": "User declined to run this calculation."}
             writer({"type": "tool_result", "tool": name, "result": output})
-            return {
-                "messages": [
-                    {
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "content": json.dumps(output),
-                    }
-                ]
-            }
+            return {"messages": [_tool_message(state, call, output)]}
     if name in CLIENT_EXECUTED_TOOLS:
         # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
-        # three all just raise) never runs: the real work happens in
+        # all just raise) never runs: the real work happens in
         # the browser, via app/src/dftWorkbench.ts's dispatchDftTool calling
         # the embedded goldilocks-workbench panel's own
         # `coreWorkspace.dispatch(...)`. A second interrupt hands
@@ -471,15 +497,7 @@ async def call_tool(state: MessagesState) -> dict:
             else outcome.get("result", {})
         )
         writer({"type": "tool_result", "tool": name, "result": output})
-        return {
-            "messages": [
-                {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": json.dumps(output),
-                }
-            ]
-        }
+        return {"messages": [_tool_message(state, call, output)]}
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
         output = {"error": f"Unknown tool: {name!r}"}
@@ -507,15 +525,7 @@ async def call_tool(state: MessagesState) -> dict:
     else:
         llm_output = panel_output
     writer({"type": "tool_result", "tool": name, "result": panel_output})
-    return {
-        "messages": [
-            {
-                "role": "tool",
-                "tool_call_id": call["id"],
-                "content": json.dumps(llm_output),
-            }
-        ]
-    }
+    return {"messages": [_tool_message(state, call, llm_output)]}
 
 
 def route_after_llm(state: MessagesState) -> str:

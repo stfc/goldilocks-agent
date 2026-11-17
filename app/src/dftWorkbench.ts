@@ -10,6 +10,7 @@
 import {
   currentArchive,
   currentExplain,
+  currentOrderings,
   currentPreview,
   findingsOf,
   saveArchiveToBrowser,
@@ -23,6 +24,7 @@ import type {
   WorkspaceFailure,
   WorkspaceSnapshot,
 } from "goldilocks-workbench";
+import { describeChanges, holds, revertChanges, settingChanges, settingsCatalogue } from "./dftSettings";
 import type { ChatStructure } from "./utils/structureFiles";
 
 // The goldilocks-workbench types its public surface uses without exporting.
@@ -56,6 +58,20 @@ export function waitForWorkspaceIdle(workspace: Workspace, signal?: AbortSignal)
   return untilAborted(new Promise<void>((resolve) => {
     const unsubscribe = workspace.subscribe(() => {
       if (workspace.getSnapshot().operation !== null) return;
+      unsubscribe();
+      resolve();
+    });
+  }), signal);
+}
+
+// Resolves once no magnetic-ordering request (a listing, a ranking or a
+// download) is in flight: the Workspace silently drops another meanwhile.
+function waitForOrderingsIdle(workspace: Workspace, signal?: AbortSignal): Promise<void> {
+  const idle = () => (currentOrderings(workspace.getSnapshot())?.operation ?? null) === null;
+  if (idle()) return Promise.resolve();
+  return untilAborted(new Promise<void>((resolve) => {
+    const unsubscribe = workspace.subscribe(() => {
+      if (!idle()) return;
       unsubscribe();
       resolve();
     });
@@ -284,6 +300,88 @@ export async function dispatchDftTool(
         // method settings carry over.
         cleared_overrides: snapshot.clearedOverrides,
         tasks_available: started.capabilities.tasks.map((task) => task.id),
+      },
+    };
+  }
+
+  if (tool === "dft_settings") {
+    // With a structure open, the current values come from a review of the
+    // current draft; without one there are none yet.
+    let explain: ExplainResult | null = null;
+    if (workspace.getSnapshot().structureInput !== null) {
+      const outcome = await explainCurrentDraft(workspace, signal);
+      if (outcome?.status === "result") explain = outcome.value;
+    }
+    return settingsCatalogue(workspace.getSnapshot(), explain, args.group);
+  }
+
+  if (tool === "dft_set") {
+    // The draft is set together with the capabilities, so it is there now.
+    const before = workspace.getSnapshot().draft!;
+    const planned = settingChanges(args.values, workspace.getSnapshot());
+    if ("error" in planned) return planned;
+    const { changes } = planned;
+    if (Object.keys(changes).length > 0) {
+      await untilAborted(workspace.dispatch({ type: "draft.patch", ...changes }), signal);
+      const now = workspace.getSnapshot().draft;
+      // `draft.patch` returns silently while a structure is being opened.
+      if (now === null || !holds(changes, now)) return { error: UNSETTLED };
+    }
+    const changed = describeChanges(changes);
+    if (workspace.getSnapshot().structureInput === null) {
+      return { result: { changed, calculation: calculationOf(workspace.getSnapshot()) } };
+    }
+    const explain = await explainCurrentDraft(workspace, signal);
+    if (explain === null) return { error: UNSETTLED };
+    if (explain.status === "failure") {
+      if (worthRetrying(explain.failure)) {
+        return { error: `The settings were changed, but goldilocks-core couldn't review them: ${failureText(explain.failure)}` };
+      }
+      // Core refuses the draft itself: undo what this call set, so the
+      // panel isn't left with a draft core won't take.
+      const now = workspace.getSnapshot().draft;
+      const revert = now === null ? {} : revertChanges(changes, before, now);
+      if (Object.keys(revert).length > 0) {
+        await untilAborted(workspace.dispatch({ type: "draft.patch", ...revert }), signal);
+      }
+      return { error: `Nothing was set, goldilocks-core refused it: ${failureText(explain.failure)}` };
+    }
+    return { result: { changed, ...reviewForModel(workspace.getSnapshot(), explain.value) } };
+  }
+
+  if (tool === "dft_magnetic_orderings") {
+    if (workspace.getSnapshot().structureInput === null) return { error: NO_STRUCTURE };
+    const explain = await explainCurrentDraft(workspace, signal);
+    if (explain === null) return { error: UNSETTLED };
+    if (explain.status === "failure") return { error: failureText(explain.failure) };
+    // The panel's Magnetic Orderings card shows only for a spin-polarized
+    // calculation.
+    const magnetic = explain.value.records.magnetic;
+    if (magnetic?.status !== "resolved" || (magnetic.value as { spin_polarized?: boolean })?.spin_polarized !== true) {
+      return {
+        error: "This calculation isn't spin-polarized, so DFT Workbench has no magnetic orderings for it.",
+      };
+    }
+    await waitForOrderingsIdle(workspace, signal);
+    const listing = currentOrderings(workspace.getSnapshot());
+    // Listed once if the panel hasn't yet; a ranking the user ran in the
+    // panel's card is already in the snapshot and comes back as it is. The
+    // chat never ranks (Junwen, 2026-11-16).
+    if (listing?.result == null) {
+      await untilAborted(workspace.dispatch({ type: "magneticOrderings.list" }), signal);
+    }
+    const done = currentOrderings(workspace.getSnapshot());
+    if (done?.error) return { error: done.error };
+    if (done?.result == null) return { error: UNSETTLED };
+    return {
+      result: {
+        ranked: done.result.ranked,
+        candidates: done.result.candidates.map(
+          ({ label, formula, natoms, energy_per_atom_ev, status, is_recommended }) => ({
+            label, formula, natoms, energy_per_atom_ev, status, is_recommended,
+          }),
+        ),
+        warnings: done.result.warnings.map(({ message }) => message),
       },
     };
   }

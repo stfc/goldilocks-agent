@@ -54,3 +54,44 @@ test("open, review and generate from chat, all kept on reload", async ({ page })
   await openGeneratedFiles(page);
   await expect(page.locator(".files-list .files-row").first()).toContainText("Si.cif-scf_single_point.zip");
 });
+
+// 2026-11-12 on the web: after an SCF review the user typed "PHONON" and the
+// model, with no tool to switch the task, told them to do it in the panel.
+// dft_set switches the panel's own Task, and its review runs the new task.
+test("the chat switches the task the user asks for, in the panel too", async ({ page }) => {
+  const explained: { task: string }[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/explain") explained.push(request.postDataJSON());
+  });
+  await openApp(page);
+  await send(page, "Open this structure in DFT Workbench and review it.", [fixture("Si.cif")]);
+  await expect(page.locator(".review-card").first()).toContainText("scf_single_point");
+
+  await send(page, "PHONON");
+
+  const phonon = /^(vc-)?(relax-)?phonon$/;
+  expect(explained.at(-1)?.task).toMatch(phonon);
+  const card = page.locator(".review-card").last();
+  await expect(card).toContainText("phonon");
+  await card.getByRole("button", { name: "Open in DFT Workbench" }).click();
+  await expect(page.locator(".tools-fullpage").getByLabel("Task")).toHaveValue(phonon);
+});
+
+// Any panel setting, not just the task: a value the user gives in chat lands
+// in the panel's own control, as their override, and in core's next review.
+test("the chat sets a value the user gives, in the panel too", async ({ page }) => {
+  const explained: { overrides: Record<string, unknown> }[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/explain") explained.push(request.postDataJSON());
+  });
+  await openApp(page);
+  await send(page, "Open this structure in DFT Workbench and review it.", [fixture("Si.cif")]);
+
+  await send(page, "Set the walltime to 24 hours.");
+
+  expect(explained.at(-1)?.overrides).toMatchObject({ walltime_h: 24 });
+  await page.locator(".review-card").last().getByRole("button", { name: "Open in DFT Workbench" }).click();
+  const workbench = page.locator(".tools-fullpage");
+  await workbench.getByRole("button", { name: /^Job/ }).click();
+  await expect(workbench.getByLabel(/walltime/i)).toHaveValue("24");
+});
