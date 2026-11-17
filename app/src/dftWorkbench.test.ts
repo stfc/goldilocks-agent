@@ -163,6 +163,264 @@ describe("dispatchDftTool", () => {
     expect(workspace.getSnapshot().structureInput).toBe(open);
   });
 
+  it("dft_set switches the task the way the panel's Task select does, and returns the new review", async () => {
+    const { workspace, requests } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const outcome = await dispatch(workspace, coreUp, "dft_set", { values: { task: "phonon" } }) as { result: any };
+
+    expect(outcome.result.changed).toEqual({ task: "phonon" });
+    expect(outcome.result.calculation.task).toBe("phonon");
+    // The panel and core read the same draft.
+    expect(workspace.getSnapshot().draft?.task).toBe("phonon");
+    expect(requests.at(-1)).toMatchObject({ path: "/explain", body: { task: "phonon" } });
+    // The chat shows it as a review card (#74), as it does dft_review's.
+    expect(isDftReview(outcome.result)).toBe(true);
+  });
+
+  it("dft_set sets any panel setting as an override, and null puts it back to automatic", async () => {
+    const { workspace, requests } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const set = await dispatch(workspace, coreUp, "dft_set", {
+      values: { walltime_h: 24, smearing_type: "cold", k_grid: [8, 8, 8], is_metal: "metal", use_vdw: true },
+    }) as { result: any };
+
+    const overrides = { walltime_h: 24, smearing_type: "cold", k_grid: [8, 8, 8], is_metal: "metal", use_vdw: true };
+    expect(set.result.changed).toEqual(overrides);
+    expect(workspace.getSnapshot().draft?.overrides).toEqual(overrides);
+    expect(requests.at(-1)?.body.overrides).toEqual(overrides);
+
+    const reset = await dispatch(workspace, coreUp, "dft_set", { values: { k_grid: null } }) as { result: any };
+
+    expect(reset.result.changed).toEqual({ k_grid: "automatic" });
+    // Cleared, not sent as null: the panel's own draft.patch would keep null.
+    expect(workspace.getSnapshot().draft?.overrides).not.toHaveProperty("k_grid");
+    expect(requests.at(-1)?.body.overrides).not.toHaveProperty("k_grid");
+  });
+
+  it("dft_set checks settings against the task the same call sets", async () => {
+    const { workspace } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+
+    // q_grid is a phonon setting: refused on SCF, taken with the switch.
+    expect(await dispatch(workspace, coreUp, "dft_set", { values: { q_grid: [4, 4, 4] } })).toEqual({
+      error: expect.stringContaining("q_grid doesn't apply to the scf_single_point task (it applies to phonon, relax-phonon, vc-relax-phonon)"),
+    });
+    const outcome = await dispatch(workspace, coreUp, "dft_set", { values: { task: "phonon", q_grid: [4, 4, 4] } });
+
+    expect(outcome).toHaveProperty("result");
+    expect(workspace.getSnapshot().draft).toMatchObject({ task: "phonon", overrides: { q_grid: [4, 4, 4] } });
+  });
+
+  it("dft_set refuses every wrong value at once, names the closest keys, and changes nothing", async () => {
+    const { workspace, paths } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    const before = workspace.getSnapshot().draft;
+    const explains = paths().filter((path) => path === "POST /explain").length;
+
+    const outcome = await dispatch(workspace, coreUp, "dft_set", {
+      values: { walltime: 24, smearing_type: "marzari", k_grid: [8, 8], nstep: 10, use_vdw: "yes", needs_soc: true },
+    }) as { error: string };
+
+    expect(outcome.error).toMatch(/^Nothing was set: /);
+    expect(outcome.error).toContain('"walltime" isn\'t a setting (closest: walltime_h');
+    expect(outcome.error).toContain("smearing_type must be one of cold, fd, gaussian, mp");
+    expect(outcome.error).toContain("k_grid must be a list of 3 integers");
+    expect(outcome.error).toContain("nstep doesn't apply to the scf_single_point task");
+    expect(outcome.error).toContain("use_vdw must be true or false");
+    expect(outcome.error).toContain("needs_soc is advice only");
+    expect(workspace.getSnapshot().draft).toBe(before);
+    expect(paths().filter((path) => path === "POST /explain")).toHaveLength(explains);
+  });
+
+  it("dft_set refuses an unknown task or HPC profile with the ones core offers", async () => {
+    const { workspace } = fakeCore();
+    expect(await dispatch(workspace, coreUp, "dft_set", { values: { task: "phonons", hpc: "archer2" } })).toEqual({
+      error: expect.stringMatching(/"phonons" isn't a task goldilocks-core offers: .*phonon \(Phonon \(no relaxation\)\).*"archer2" isn't a HPC profile goldilocks-core offers: scarf \(scarf\)/),
+    });
+  });
+
+  it("dft_set refuses a task the code doesn't run", async () => {
+    const { workspace } = fakeCore({
+      "GET /capabilities": () => json(200, {
+        ...capabilities,
+        codes: [...capabilities.codes, { id: "vasp", name: "VASP", tasks: ["scf_single_point"] }],
+        tasks: capabilities.tasks.map((task) =>
+          task.id === "scf_single_point" ? { ...task, codes: [...task.codes, "vasp"] } : task),
+      }),
+    });
+
+    expect(await dispatch(workspace, coreUp, "dft_set", { values: { code: "vasp", task: "band" } })).toEqual({
+      error: expect.stringContaining("the band task can't run with vasp (codes that run it: quantum_espresso)"),
+    });
+    expect(workspace.getSnapshot().draft?.code).toBe("quantum_espresso");
+  });
+
+  it("dft_set changes the functional the way the panel's select does", async () => {
+    const { workspace } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_set", { values: { pseudo_table_id: "sssp-pbesol-precision-sr" } });
+
+    // A table of another functional than the one set is refused...
+    expect(await dispatch(workspace, coreUp, "dft_set", {
+      values: { functional: "PBE", pseudo_table_id: "sssp-pbesol-precision-sr" },
+    })).toEqual({ error: expect.stringContaining("pseudo_table_id must be a table covering this structure for PBE") });
+    // ...and changing the functional alone puts the table back to automatic.
+    const outcome = await dispatch(workspace, coreUp, "dft_set", { values: { functional: "PBE" } }) as { result: any };
+
+    expect(outcome.result.changed).toEqual({ functional: "PBE", pseudo_table_id: "automatic" });
+    expect(workspace.getSnapshot().draft?.overrides).toEqual({ functional: "PBE" });
+    expect(await dispatch(workspace, coreUp, "dft_set", { values: { functional: "B3LYP" } })).toEqual({
+      error: expect.stringContaining("functional must be one of PBEsol, PBE, LDA"),
+    });
+  });
+
+  it("dft_set keeps structure settings until a structure is open, and the next one opens into the task", async () => {
+    const { workspace } = fakeCore();
+    expect(await dispatch(workspace, coreUp, "dft_set", { values: { k_grid: [4, 4, 4], is_metal: "metal" } })).toEqual({
+      error: expect.stringContaining("k_grid describes the structure, so it can only be set once one is open"),
+    });
+
+    const outcome = await dispatch(workspace, coreUp, "dft_set", { values: { task: "band", walltime_h: 12 } });
+    const opened = await dispatch(workspace, coreUp, "dft_open_structure", openArgs) as { result: any };
+
+    expect(outcome).toEqual({ result: { changed: { task: "band", walltime_h: 12 }, calculation: expect.objectContaining({ task: "band" }) } });
+    expect(opened.result.calculation).toMatchObject({ task: "band", overrides: { walltime_h: 12 } });
+  });
+
+  it("dft_set undoes what it set when core refuses it, keeping a change made in the panel meanwhile", async () => {
+    let refuse = false;
+    const { workspace } = fakeCore({
+      "POST /explain": () => (refuse ? refusal(422, "invalid_setting", "degauss must be positive") : json(200, explanation)),
+    });
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_set", { values: { walltime_h: 24 } });
+    refuse = true;
+
+    const outcome = await dispatch(workspace, coreUp, "dft_set", { values: { degauss: -0.01, walltime_h: 6 } });
+
+    expect(outcome).toEqual({ error: "Nothing was set, goldilocks-core refused it: invalid_setting: degauss must be positive" });
+    expect(workspace.getSnapshot().draft?.overrides).toEqual({ walltime_h: 24 });
+  });
+
+  it("dft_set sends nothing again for what is already set", async () => {
+    const { workspace, paths } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_set", { values: { walltime_h: 24 } });
+    const revision = workspace.getSnapshot().revision;
+
+    const outcome = await dispatch(workspace, coreUp, "dft_set", {
+      values: { task: capabilities.tasks[0].id, walltime_h: 24, k_index: null },
+    }) as { result: any };
+
+    expect(outcome.result.changed).toEqual({});
+    expect(workspace.getSnapshot().revision).toBe(revision);
+    // Only the first dft_set's review: the second reads it back.
+    expect(paths().filter((path) => path === "POST /explain")).toHaveLength(1);
+  });
+
+  it("dft_set asks for values when given none", async () => {
+    const { workspace } = fakeCore();
+    expect(await dispatch(workspace, coreUp, "dft_set", {})).toEqual({
+      error: expect.stringContaining("Nothing to set"),
+    });
+  });
+
+  it("dft_settings lists what the panel shows for the task, with current values and who set them", async () => {
+    const { workspace } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    await dispatch(workspace, coreUp, "dft_set", { values: { walltime_h: 24 } });
+
+    const outcome = await dispatch(workspace, coreUp, "dft_settings", {}) as { result: any };
+
+    const { calculation, settings } = outcome.result;
+    expect(calculation.task).toEqual({
+      value: "scf_single_point",
+      options: capabilities.tasks.map((task) => `${task.id} (${task.name})`),
+    });
+    const byKey = Object.fromEntries(settings.map((entry: any) => [entry.key, entry]));
+    // Every setting of the task and every overridable fact; no other task's.
+    const scfKeys = capabilities.settings.filter((s) => s.tasks.includes("scf_single_point")).map((s) => s.key);
+    expect(Object.keys(byKey)).toEqual([...scfKeys, "is_metal", "is_magnetic", "needs_correlation"]);
+    expect(byKey.k_grid).toEqual({
+      key: "k_grid", group: "k_sampling", type: "list of 3 integers",
+      value: [6, 6, 6], source: "ml", description: expect.stringMatching(/^Explicit Monkhorst-Pack mesh/),
+    });
+    expect(byKey.smearing_type.options).toEqual(["cold", "fd", "gaussian", "mp"]);
+    expect(byKey.functional).toMatchObject({ value: "PBEsol", source: "heuristic", options: ["PBEsol", "PBE", "LDA"] });
+    // The fake core answers every draft with the recorded review (168 h).
+    expect(byKey.walltime_h).toMatchObject({ unit: "hours", value: 168, set_by_user: true });
+    expect(byKey.nodes).not.toHaveProperty("set_by_user");
+    expect(byKey.is_metal).toMatchObject({ group: "analysis", options: ["metal", "non_metal"], value: "non_metal" });
+    // Small enough to send on demand.
+    expect(JSON.stringify(outcome.result).length).toBeLessThan(12_000);
+  });
+
+  it("dft_settings narrows to a group, and names the groups there are", async () => {
+    const { workspace } = fakeCore();
+    const job = await dispatch(workspace, coreUp, "dft_settings", { group: "job" }) as { result: any };
+
+    expect(job.result.settings.map((entry: any) => entry.key)).toEqual(["partition", "nodes", "ntasks", "walltime_h", "account"]);
+    // No structure open: no current values yet.
+    expect(job.result.note).toMatch(/No structure is open/);
+    expect(await dispatch(workspace, coreUp, "dft_settings", { group: "jobs" })).toEqual({
+      error: expect.stringMatching(/^No settings group "jobs" for the scf_single_point task\. Groups: .*job/),
+    });
+  });
+
+  it("dft_magnetic_orderings needs a spin-polarized calculation", async () => {
+    const { workspace } = fakeCore();
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+    expect(await dispatch(workspace, coreUp, "dft_magnetic_orderings", {})).toEqual({
+      error: expect.stringContaining("isn't spin-polarized"),
+    });
+  });
+
+  it("dft_magnetic_orderings lists the candidates, and returns a ranking the panel ran, never ranking itself", async () => {
+    const magnetic = { ...explanation.records.magnetic, value: { ...explanation.records.magnetic.value, spin_polarized: true } };
+    const candidate = (label: string, energy: number | null, recommended = false) => ({
+      label, formula: "Si8", natoms: 8, energy_per_atom_ev: energy, status: energy === null ? null : "ok",
+      is_recommended: recommended, overrides: { magnetic_ordering: label },
+    });
+    const { workspace, paths } = fakeCore({
+      "POST /explain": () => json(200, { ...explanation, records: { ...explanation.records, magnetic } }),
+      "POST /magnetic-orderings": () => json(200, {
+        ranked: false, candidates: [candidate("fm", null), candidate("afm1", null)], warnings: [],
+      }),
+      "POST /magnetic-orderings/rank": () => json(200, {
+        job_id: "j1", state: "done",
+        report: { ranked: true, candidates: [candidate("afm1", -5.4, true), candidate("fm", -5.3)], warnings: [] },
+      }),
+    });
+    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
+
+    const listed = await dispatch(workspace, coreUp, "dft_magnetic_orderings", {}) as { result: any };
+    const pathsAfterListing = paths().filter((path) => path.startsWith("POST /magnetic-orderings"));
+    // The user presses the card's Run mMACE button.
+    await workspace.dispatch({ type: "magneticOrderings.rank" });
+    const ranked = await dispatch(workspace, coreUp, "dft_magnetic_orderings", {}) as { result: any };
+
+    expect(listed.result).toEqual({
+      ranked: false,
+      candidates: [
+        { label: "fm", formula: "Si8", natoms: 8, energy_per_atom_ev: null, status: null, is_recommended: false },
+        { label: "afm1", formula: "Si8", natoms: 8, energy_per_atom_ev: null, status: null, is_recommended: false },
+      ],
+      warnings: [],
+    });
+    // The candidates' override values stay with the panel, not the model.
+    expect(JSON.stringify(listed.result)).not.toContain("magnetic_ordering");
+    // Listing never submits a ranking job...
+    expect(pathsAfterListing).toEqual(["POST /magnetic-orderings"]);
+    // ...and the panel's ranking comes back on the next call, without a second request.
+    expect(ranked.result.ranked).toBe(true);
+    expect(ranked.result.candidates[0]).toMatchObject({ label: "afm1", energy_per_atom_ev: -5.4, is_recommended: true });
+    expect(paths().filter((path) => path.startsWith("POST /magnetic-orderings"))).toEqual([
+      "POST /magnetic-orderings", "POST /magnetic-orderings/rank",
+    ]);
+  });
+
   it("dft_review needs an open structure, then returns the records without their provenance", async () => {
     const { workspace, paths } = fakeCore();
     expect(await dispatch(workspace, coreUp, "dft_review", {})).toEqual({

@@ -22,11 +22,12 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from goldilocks_agent.agent_profile import WEB
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.graph import (
     LOCAL_MODEL,
-    SYSTEM_PROMPT,
     _repair_orphaned_tool_calls,
+    add_tool_call_delta,
     build_graph,
     resolve_model,
     system_message,
@@ -636,18 +637,18 @@ def test_dft_download_bundle_tool_call_pauses_for_client_execution() -> None:
 
 def test_system_message_without_an_experience_level_asks_for_brief_answers() -> None:
     for level in (None, "", "nonsense"):
-        assert system_message(level) == {
+        assert system_message(WEB, level) == {
             "role": "system",
-            "content": f"{SYSTEM_PROMPT}\n\nAnswer briefly.",
+            "content": f"{WEB.prompt}\n\nAnswer briefly.",
         }
 
 
 def test_system_message_pitches_answers_at_the_experience_level() -> None:
     contents = {
-        level: system_message(level)["content"] for level in ("new", "advanced")
+        level: system_message(WEB, level)["content"] for level in ("new", "advanced")
     }
     for content in contents.values():
-        assert content.startswith(f"{SYSTEM_PROMPT}\n\n")
+        assert content.startswith(f"{WEB.prompt}\n\n")
         assert "Answer briefly." not in content
         # Design doc 12.2: the level changes how much is explained, never a
         # value -- the guardrail sentence is the mechanism for that.
@@ -726,3 +727,114 @@ def test_cloud_models_keep_their_own_reasoning_defaults(monkeypatch) -> None:
     model, extra = resolve_model("anthropic-claude")
     assert model == "anthropic/claude-sonnet-5"
     assert extra == {"api_key": "k"}
+
+
+def test_dft_set_keeps_the_user_message_it_came_from(monkeypatch) -> None:
+    """Design doc 3.3: a value dft_set stamps `human` traces back to the user
+    message the turn answers. The runtime records that id with the tool
+    message (`artifact`); the model neither supplies it (not a parameter)
+    nor sees it (never sent back in its history)."""
+    from types import SimpleNamespace
+
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from goldilocks_agent.tools.dft_workbench import TOOL_SCHEMA
+
+    sent: list[list[dict]] = []
+
+    def chunk(content=None, tool_calls=None):
+        delta = SimpleNamespace(content=content, tool_calls=tool_calls)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    async def acompletion(*, messages, **_):
+        sent.append(messages)
+        call = SimpleNamespace(
+            index=0,
+            id="call-1",
+            function=SimpleNamespace(
+                name="dft_set", arguments='{"values": {"walltime_h": 24}}'
+            ),
+        )
+        chunks = [chunk(tool_calls=[call])] if len(sent) == 1 else [chunk("Set.")]
+
+        async def stream():
+            for c in chunks:
+                yield c
+
+        return stream()
+
+    monkeypatch.setenv("GOLDILOCKS_AGENT_MODEL", "not-a-real-provider/nope")
+    monkeypatch.setattr("goldilocks_agent.graph.litellm.acompletion", acompletion)
+    monkeypatch.setattr("goldilocks_agent.graph.get_api_key", lambda provider: "k")
+    graph = build_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "dft-set-origin"}}
+    asyncio.run(
+        graph.ainvoke(
+            {"messages": [{"role": "user", "content": "Set walltime to 24 hours."}]},
+            config=config,
+        )
+    )
+    pending = asyncio.run(graph.aget_state(config)).tasks[0].interrupts[0].value
+    assert pending == {
+        "tool": "dft_set",
+        "args": {"values": {"walltime_h": 24}},
+        "client_execute": True,
+    }
+    asyncio.run(
+        graph.ainvoke(Command(resume={"result": {"changed": {}}}), config=config)
+    )
+
+    messages = asyncio.run(graph.aget_state(config)).values["messages"]
+    user = next(m for m in messages if isinstance(m, HumanMessage))
+    tool = next(m for m in messages if isinstance(m, ToolMessage))
+    assert user.id
+    assert tool.artifact == {"origin_message_id": user.id}
+    assert user.id not in json.dumps(sent[-1])
+    dft_set = next(t for t in TOOL_SCHEMA if t["function"]["name"] == "dft_set")
+    assert "origin" not in json.dumps(dft_set)
+
+
+def _delta(index, id=None, name=None, arguments=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        index=index, id=id, function=SimpleNamespace(name=name, arguments=arguments)
+    )
+
+
+@pytest.mark.parametrize(
+    ("deltas", "expected"),
+    [
+        # OpenAI: the id and name first, the arguments in pieces after.
+        (
+            [_delta(0, "a", "dft_set", '{"values": '), _delta(0, None, None, "{}}")],
+            [("a", "dft_set", '{"values": {}}')],
+        ),
+        # litellm's ollama_chat: parallel calls whole, all at index 0.
+        (
+            [
+                _delta(0, "a", "dft_settings", '{"group": "job"}'),
+                _delta(0, "b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+            [
+                ("a", "dft_settings", '{"group": "job"}'),
+                ("b", "dft_settings", '{"group": "k_sampling"}'),
+            ],
+        ),
+        # Parallel calls at their own indexes, interleaved.
+        (
+            [
+                _delta(0, "a", "dft_review", ""),
+                _delta(1, "b", "dft_settings", '{"gr'),
+                _delta(0, None, None, "{}"),
+                _delta(1, None, None, 'oup": "job"}'),
+            ],
+            [("a", "dft_review", "{}"), ("b", "dft_settings", '{"group": "job"}')],
+        ),
+    ],
+)
+def test_streamed_tool_calls_are_split_by_index_and_id(deltas, expected) -> None:
+    calls: list[dict] = []
+    for delta in deltas:
+        add_tool_call_delta(calls, delta)
+    assert [(c["id"], c["name"], c["arguments"]) for c in calls] == expected

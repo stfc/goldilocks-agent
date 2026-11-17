@@ -128,8 +128,8 @@ multi-GB `uv sync` in `mlip-cli/`.
 `TOOLS` in `app/src/App.tsx` marks each Tool. `localOnly` ones (MLIP
 Playground, AiiDAlab-QE) are listed on the website as available in the local
 version; the server also hides MLIP Playground's `run_mlip_*` tools from the
-website's model and refuses its `/api/mlip/*` routes
-(`mlip_playground_offered()` in `src/goldilocks_agent/tools/__init__.py`).
+website's model and refuses its `/api/mlip/*` routes (they're in the local
+profile only, `LOCAL` in `src/goldilocks_agent/agent_profile.py`).
 `comingSoon` parks a Tool everywhere (Beyond DFT); drop the flag to
 re-enable it.
 
