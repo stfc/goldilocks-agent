@@ -366,7 +366,7 @@ const LOCAL_VERSION_URL = "https://github.com/stfc/goldilocks-agent#run-it-on-yo
 // the web · in the local version now" group (Junwen, 2026-11-09; heading
 // reworded 2026-11-11). MLIP
 // Playground runs MACE on the user's own machine (the server side is gated
-// the same way: goldilocks_agent.tools.mlip_playground_offered());
+// the same way: its tools are in goldilocks_agent.agent_profile.LOCAL only);
 // AiiDAlab-QE works against the user's own AiiDA profile.
 const TOOLS = [
   {
@@ -4999,7 +4999,7 @@ export default function App() {
                 Plots a phonon band structure from a phonopy{" "}
                 <code>band.yaml</code>, from this chat or from your own
                 calculation
-                {/* MLIP Playground is the local version's only (mlip_playground_offered()). */}
+                {/* MLIP Playground is the local version's only (agent_profile.LOCAL). */}
                 {SHARED_DEPLOYMENT ? "." : ", in the same viewer MLIP Playground's Phonons calculation opens."}
               </div>
               {phononResultsInChat.length > 0 && (
