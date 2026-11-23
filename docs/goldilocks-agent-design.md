@@ -358,6 +358,20 @@ agent 想清楚"这个体系要提截断能、同时 nscf 加密网格"，那是
 
 ---
 
+#### ★★ 2026-11-12 补：`relay` 先落地为 `dft_set`；`suggest` 仍等 core#258
+
+- **为什么拆开**（#137）：`relay` 填的是 human 档，core 的 `overrides` 现在就收；只有 `suggest`（llm 档）依赖 goldilocks-core#258 的 `llm_overrides`，那个 issue 还没有 PR。用户在聊天里说"walltime 24 小时""用 cold smearing"，正是 relay。stfc/goldilocks-agent#67 的 relay 那一半先做，suggest 留在 #67。
+- **名字改为 `dft_set`**：对模型来说，"set"就是用户口头说的那个动词，比"relay"好选。等 `dft_suggest` 来了，两者仍是"调哪个工具就是哪一档"的那对不对称名字。
+- **形状**：`dft_set({values: {key: value | null}})`。和上面定的批量 B 一致，只是从 `[{field, value, step?}]` 换成了 map：
+  - key 就是 core 自己的 override key，和面板写进 `draft.overrides` 的完全一样；`null` 表示恢复自动。
+  - **没有 `step`**：面板从不写 `steps.<step>.<key>`，聊天写了面板也显示不出来，"同一份草稿"就破了。以后要支持时，core 的 path key 可以直接作为 map 的 key 加进来，形状不用变。
+  - code/task/HPC profile 也走这个 map：它们没有来源档，但同样是"用户说要什么"，同一批里先切 task，再按新 task 校验其余 key。
+- **全或无，分两层**：
+  - 浏览器先按 `capabilities` 校验，一次报出所有问题：未知 key（给最接近的几个）、不适用当前 task 的 key、值的类型或选项不对、没打开结构就设结构相关的值。只要有一项不对，draft 就不动。
+  - 再让 core `/explain` 校验数值范围，被拒（4xx）就回滚。只回滚仍是本次所设值的 key，用户这期间在面板里的改动不受影响。
+- **审计 id 由运行时注入**：`graph.call_tool` 把本轮所回答的最后一条用户消息的 id 写进 ToolMessage 的 `artifact.origin_message_id`。它不是工具参数，不发给模型，靠 checkpointer 持久化。由 `dft_workbench/tool.py` 的 `ORIGIN_AUDITED` 声明哪些工具需要它。
+- **"只设用户给的值"靠 prompt**：用户没说具体值时（"精度高一点"），模型用 `dft_settings` 列出选项并追问，不自己挑（3.1）。
+
 ## 四、agent 怎么调 core
 
 **已定：MCP 归 core**，agent 通过 MCP 调用。
@@ -1335,6 +1349,28 @@ goldilocks 的形状正好是它：
   - qwen：24 个 eval 用例 × 3 遍，72/72。
 - **另外一条更正**：同一天的几次本地浏览器实测（研究 NaCl、算能带、review 卡片）用的是本地默认的 Claude，不是线上的 qwen。要代表线上，得用 `GOLDILOCKS_AGENT_MODEL=ollama_chat/qwen3.8:latest` 固定模型。`tests/eval/tool_choice.py` 直接调用指定模型，结论不受影响。
 
+#### ★★ 2026-11-12 补：聊天能改 DFT Workbench 的每个设置（`dft_settings` / `dft_set` / `dft_magnetic_orderings`），推翻 11-09 "设置由用户在面板里改"
+
+- **起因**：线上一段对话里，SCF review 之后用户打了 "PHONON"。模型回答"请你在 DFT Workbench 里把 Task 切到 phonon"，然后又调了一次 `dft_review`，结果仍是 `scf_single_point`。原因是没有任何工具能改设置，prompt 也写着 "Settings, the task included, are changed by the user in DFT Workbench, not by you"。Junwen 的要求：面板里每个选择框都应该能通过聊天来改。
+- **做法**：见 12.5 同日补记（面板的 action 就是聊天的工具）和 3.3 同日补记（`dft_set` = relay）。同一天先做过一个只切 task/code/HPC 的 `dft_set_calculation`，没合并就被 `dft_set` 取代了：一个工具改所有选择框，同一批里先切 task，再按新 task 校验其余设置。
+- **prompt**：
+  - 工具列表加两行：`dft_settings` 和 `dft_set`（"see and change any DFT Workbench setting, as the user would in its panel… dft_set returns the new review"），以及 `dft_magnetic_orderings`。
+  - 第三段改为 "Never invent parameter values or choose values of your own, walltime and other job resources included: set a value with dft_set only when the user gave it. For a warning about a setting, or if the user wants a setting changed without giving the value, say which setting it is and ask for the value (dft_settings lists the options), never suggesting one, not even as an example. dft_review shows what is set: if its task isn't the calculation the user asked for, switch it with dft_set."。
+  - "Call dft_download_bundle only when the user asks for input files." 保留。
+  - "never suggesting one, not even as an example" 是实测补上的：没有这句时，模型会主动提出"告诉我 walltime，我帮你设上"，这本身没错，但它会顺口加上"比如 12h、24h"。M7 里 10 次出现 3 次，正是 11-11 线上出过的那种自创值。补上后 0/13。
+- **顺带修的 bug**：litellm 的 `ollama_chat` 流式输出里，并行的多个工具调用全都用 index 0，只靠 id 区分（用 qwen3.8 直接验证过）。`call_llm` 原来按 index 累积参数，会拼成一段无效 JSON，这些调用就被静默丢掉。现在由 `graph.add_tool_call_delta` 按 index 加 id 切分，eval 也用同一个函数。
+- **eval**（qwen3.8 关思考，"familiar" 等级）：
+  - G3–G7 改为走 `dft_set`。新增 S 类：S1 k 网格 10×10×10；S2 walltime 24 h；S3 cold smearing；S4 中文截断能 80 Ry；S5 k 网格恢复自动（null）；S6 用 PBE；S7 phonon 加 4×4×4 q 网格一次调用；S7b 先切 task 再设 q 网格；S8 只说"精度高一点"，不能自己定值。
+  - 全量 35 例 × 3 遍：101/105。失败的是 M7 一次复述卡片和 S7 三次（见下）。
+  - 10 遍：G5、G6、S1、S3 都是 10/10。S1–S6 每次都直接调 `dft_set`，key 和值完全正确。
+  - S7 共 16 次，10 次一次调用设好；其余先只切 task。S7b（切完之后）9/10 接着设 q_grid，多数先用 `dft_settings` 查 key；剩下 1 次写成 `q_mesh`，被拒后报错里给出 `q_grid`，可以恢复。
+  - M2 9/13，main 上 5/10；M7 10/13，main 上 9/10。剩下的失败是复述卡片（main 上同样有），以及一次调 `dft_settings` 查 job 组（用户问的就是作业设置）。
+- **已知残余：模糊请求下自己定值**。S8 共 23 次里有 1 次，模型在用户只说"精度高一点"时调了 `dft_set({k_index: 8, pseudo_table_accuracy: "high"})`。这次因为 `pseudo_table_accuracy` 不是合法 key，整批被拒，什么都没设上。但如果挑的都是合法 key，LLM 的值就会被盖成 human 章（3 节的误判二）。prompt 压不到零。**决定（Junwen 2026-11-12）**：不加机械校验，例如不要求 `dft_set` 里的数字必须出现在用户消息里。用户给值的方式不止原样复述数字这一种，这道残余风险由 3.3 已接受的那层兜底：值只是草稿，面板显示 "Your override"，用户生成之前看得到。
+- **e2e**：`app/e2e/chat-dft.e2e.ts` 两例，跑在真实 core 和 qwen 上：
+  - "PHONON" 之后，`/explain` 的 task 变成 phonon 系列，review 卡片和全页 Workbench 的 Task 下拉框也跟着变；
+  - "Set the walltime to 24 hours." 之后，`/explain` 的 `overrides.walltime_h` 是 24，面板 Job 组的 walltime 输入框也显示 24。
+- **2026-11-16 补（Junwen）**：#137 先于 #142 合并，网站上的聊天先能改设置。执行器仍在浏览器里，#142 第 2 阶段再搬到服务器。合并前做了一处改动：`dft_magnetic_orderings` 只列构型，不排序，`rank` 参数去掉。用户在面板卡片里点 Run mMACE 排出的结果，会随下一次列出一起返回；用户选定的构型，用 `dft_set({"magnetic_ordering": <label>})` 设置。原因有三：排序不是改参数；排序会占用共享 GPU 好几分钟；网站上的聊天本来就不该跑长循环。本地版由服务器提交、轮询排序任务，放在 #142 第 3 阶段，作为本地 agent 的第一个闭环（#138）。整体方向见 11-16 的计划：网站是能改参数的聊天机器人，本地版才是带循环的 agent。
+
 ### 12.3 ★★ 已定（2026-09-15）：聊天区与右侧面板怎么分工
 
 ⚠️ 这条填的是 12.2 那张表里"聊天 + 右侧面板双栏"一行留下的空——先前那行写着
@@ -1531,6 +1567,23 @@ Beyond DFT（独立分支，纯建议，不进这条管线）
   手动改一两个自己更懂的字段，再问一句为什么，最后点按钮生成——
   **这条路径能成立，恰恰是因为 chat 和面板从头到尾都是同一份草稿**，
   不需要"同步"这个概念，因为它们本来就没有分开过。
+
+#### ★★ 2026-11-12 补：聊天操作面板的通用做法——面板的 action 就是聊天的工具
+
+Junwen 提出：面板里的每个选择框都应该能通过聊天来改，DFT Workbench 和以后的其他 Tools 都一样。
+
+> **每个 Tool 面板 = 一份状态 + 一套 action。聊天的工具就是这些 action 本身，在浏览器里对面板用的同一个状态对象执行，不另写一份实现。** 按意图分三类：
+> - **看**：读当前设置、可选项、谁设的
+> - **改**：批量设值；按 Tool 自己的 schema 校验；全或无；`null` = 恢复自动
+> - **跑**：触发计算或生成
+>
+> 界面局部状态（手风琴、弹窗、3D 视图、标签页）不暴露。Workspace 里缺某个 action 时，到上游加，不在聊天侧另造。
+
+- **DFT Workbench 的落地**：面板里所有改变状态的控件，最终都归结为 goldilocks-workbench `Workspace` 的几个 action：`source.open`、`draft.patch`（code/task/hpc 加 64 个设置和 3 个可覆盖的 fact）、`magneticOrderings.*`、`review.*`。对应的工具是 `dft_open_structure`、`dft_settings`、`dft_set`、`dft_review`、`dft_download_bundle`、`dft_magnetic_orderings`。不需要逐个控件写工具，core 加了新设置，聊天也自动能设。
+- **镜像的面板规则**：有两条联动规则写在包的组件内部，没有导出——改 functional 时一并清掉 `pseudo_table_id`；赝势表选项按元素覆盖和 functional 过滤。它们先镜像在 `app/src/dftSettings.ts`，并请 core 导出（junwen94/goldilocks-core#297），导出后换成直接调用。
+- **还没做的**：
+  - magnetic 候选的下载或采用（#138）：`downloadSelected` 把"取文件"和"保存"绑在一起，浏览器会拦掉不是用户亲手点击触发的保存；"采用某个候选"面板本身也没有这个 action。要先在上游加。
+  - Find in Databases 和 MLIP Playground 照这个原则补：`tool_result` 不带参数，面板跟不上 LLM 实际做的事；MLIP 工具传的是 CIF 内容而不是文件名（违反 9.1/#73）。见 #139、#140。
 
 ### 12.6 ★★ 已定（2026-09-15）：MODE 是会话上的可变字段，不是创建时钉死的属性
 

@@ -23,6 +23,8 @@ result, produced by `app/src/App.tsx` calling the exact same
 `coreWorkspace.dispatch(...)` the embedded panel's own buttons call. This
 keeps one state object shared between chat and the panel instead of
 reintroducing the second, parallel implementation that was just deleted.
+On 2026-11-12 `dft_settings`/`dft_set`/`dft_magnetic_orderings` joined
+them, so the chat can read and change every setting the panel shows.
 
 This module is the single place `graph.py` reads from -- it never reaches
 into a specific Tool's internals, so adding a new Tool later is "add one
@@ -57,6 +59,7 @@ from goldilocks_agent.tools.dft_workbench.tool import (
     CLIENT_EXECUTED as _DFT_CLIENT_EXECUTED,
     CONFIRMATION_LABELS as _DFT_CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED as _DFT_CONFIRMATION_REQUIRED,
+    ORIGIN_AUDITED as _DFT_ORIGIN_AUDITED,
     TOOL_DISPATCH as _DFT_DISPATCH,
     TOOL_SCHEMA as _DFT_SCHEMA,
 )
@@ -116,3 +119,6 @@ CONFIRMATION_LABELS: dict[str, Callable[[dict], str]] = {
 # Only DFT Workbench's tools are client-executed so far -- MLIP Playground
 # and structure_search both run server-side via plain TOOL_DISPATCH.
 CLIENT_EXECUTED_TOOLS: set[str] = {*_DFT_CLIENT_EXECUTED}
+# Tools whose tool message records the user message the turn answers
+# (design doc 3.3's `origin_message_id`), injected by `call_tool`.
+ORIGIN_AUDITED_TOOLS: set[str] = {*_DFT_ORIGIN_AUDITED}

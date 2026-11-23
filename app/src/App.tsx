@@ -147,13 +147,17 @@ function findModelById(id) {
   return null;
 }
 
+// The DFT Workbench tools whose result is a review, shown as a `dft-review`
+// card (#74): dft_set returns the review of the settings it set.
+const REVIEW_TOOLS = new Set(["dft_review", "dft_set"]);
+
 // Rehydrates one conversation's raw OpenAI-format history (from GET
 // /api/chat/{id}) into the same shape the live SSE path builds `messages`
 // in. Mirrors the live path's own filtering (drop `role: "tool"` entries and
 // content-less assistant turns -- design doc 12.3: chat never shows raw
 // tool args/results) but also recognizes a past `dft_download_bundle` result
-// and re-inserts its `dft-bundle-ready` card (cc5f0dc), a past `dft_review`
-// result as its `dft-review` card (#74), and a past
+// and re-inserts its `dft-bundle-ready` card (cc5f0dc), a past review
+// (`REVIEW_TOOLS`) as its `dft-review` card (#74), and a past
 // `get_structure` result as its `fetched-structure` entry (#73: the chat's
 // structure files must survive a reload, since dft_open_structure names
 // them) -- the checkpointer has no concept of either, only the raw tool
@@ -174,13 +178,13 @@ function rehydrateMessages(rawMessages) {
   for (const m of rawMessages) {
     if (m.role === "tool") {
       const toolName = toolNameByCallId.get(m.tool_call_id);
-      if (toolName === "dft_download_bundle" || toolName === "dft_review" || toolName === "get_structure") {
+      if (toolName === "dft_download_bundle" || REVIEW_TOOLS.has(toolName) || toolName === "get_structure") {
         try {
           const parsed = JSON.parse(m.content);
           if (toolName === "dft_download_bundle" && parsed?.filename) {
             messages.push({ role: "dft-bundle-ready", filename: parsed.filename });
           }
-          if (toolName === "dft_review" && isDftReview(parsed)) {
+          if (REVIEW_TOOLS.has(toolName) && isDftReview(parsed)) {
             messages.push({ role: "dft-review", review: parsed });
           }
           const fetched = toolName === "get_structure" ? fetchedStructureMessage(parsed) : null;
@@ -262,8 +266,11 @@ const TOOL_CALL_TO_UI_TOOL = {
   run_mlip_neb: "ml-analysis",
   run_mlip_phonons: "ml-analysis",
   dft_open_structure: "dft-workbench",
+  dft_settings: "dft-workbench",
+  dft_set: "dft-workbench",
   dft_review: "dft-workbench",
   dft_download_bundle: "dft-workbench",
+  dft_magnetic_orderings: "dft-workbench",
 };
 
 // Only MACE is actually wired up (janus-core supports more, but exposing a
@@ -3757,7 +3764,7 @@ export default function App() {
                   role: "dft-bundle-ready", filename: payload.result.filename, bundleId,
                 }],
               }));
-            } else if (payload.tool === "dft_review" && isDftReview(payload.result)) {
+            } else if (REVIEW_TOOLS.has(payload.tool) && isDftReview(payload.result)) {
               // The review's key values go into the transcript as a card
               // rendered from core's result (#74), so the user reads core's
               // numbers, not the model's retelling of them.
