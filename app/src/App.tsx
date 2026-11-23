@@ -5342,10 +5342,6 @@ export default function App() {
           color: var(--brand-header-text);
         }
 
-        .top-header .brand-slogan {
-          color: var(--brand-header-text-dim);
-        }
-
         .top-header .icon-btn {
           color: var(--brand-header-text-dim);
         }
@@ -5466,17 +5462,6 @@ export default function App() {
 
         .brand-ink {
           color: var(--accent);
-        }
-
-        .brand-slogan {
-          font-size: 10px;
-          color: var(--subtle);
-          font-style: italic;
-          letter-spacing: 0.01em;
-          line-height: 1.2;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
         }
 
         .logo-image {
@@ -9585,7 +9570,6 @@ export default function App() {
             {sbOpen && (
               <div className="brand-copy">
                 <span className="brand-name brand-ink">Goldilocks</span>
-                <span className="brand-slogan">Towards Greener Computation</span>
               </div>
             )}
           </div>
