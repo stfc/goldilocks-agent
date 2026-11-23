@@ -38,9 +38,10 @@ test("open, review and generate from chat, all kept on reload", async ({ page })
   await openGeneratedFiles(page);
   const row = page.locator(".files-list .files-row").first();
   await expect(row).toContainText("Si.cif-scf_single_point.zip");
+  // A link to the bundle the server kept for the chat (#142).
   const [download] = await Promise.all([
     page.waitForEvent("download"),
-    row.getByRole("button", { name: "Download" }).click(),
+    row.getByRole("link", { name: "Download" }).click(),
   ]);
   expect(download.suggestedFilename()).toBe("Si.cif-scf_single_point.zip");
 
@@ -52,7 +53,14 @@ test("open, review and generate from chat, all kept on reload", async ({ page })
   await expect(firstMessage).not.toContainText("_cell_length_a");
   await expect(page.locator(".review-card").first()).toContainText("48 / 192 Ry");
   await openGeneratedFiles(page);
-  await expect(page.locator(".files-list .files-row").first()).toContainText("Si.cif-scf_single_point.zip");
+  const keptRow = page.locator(".files-list .files-row").first();
+  await expect(keptRow).toContainText("Si.cif-scf_single_point.zip");
+  // The server kept the bundle, so it still downloads after the reload.
+  const [again] = await Promise.all([
+    page.waitForEvent("download"),
+    keptRow.getByRole("link", { name: "Download" }).click(),
+  ]);
+  expect(again.suggestedFilename()).toBe("Si.cif-scf_single_point.zip");
 });
 
 // 2026-11-12 on the web: after an SCF review the user typed "PHONON" and the

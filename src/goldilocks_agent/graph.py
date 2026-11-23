@@ -46,7 +46,6 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import litellm
@@ -62,21 +61,20 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
+from goldilocks_agent import store
 from goldilocks_agent.agent_profile import AgentProfile, current_profile
 from goldilocks_agent.config import get_api_key
 from goldilocks_agent.tools import (
-    CLIENT_EXECUTED_TOOLS,
     CONFIRMATION_LABELS,
     CONFIRMATION_REQUIRED_TOOLS,
+    CONTEXT_TOOLS,
     ORIGIN_AUDITED_TOOLS,
     TOOL_DISPATCH,
 )
-
-# design doc 16.5: one .db, shared with the six scientific-artifact tables --
-# never a second file, never split from the checkpointer.
-DB_PATH = Path.home() / ".goldilocks" / "goldilocks.db"
+from goldilocks_agent.tools.context import AgentServices, ToolContext
 
 # Registered under this exact name by `ollama pull qwen3.8` -- Ollama's own
 # official library entry (ollama.com/library/qwen3.8), not a third-party
@@ -245,8 +243,7 @@ def tool_status(name: str) -> dict:
     turns it into an SSE `event: tool_status` frame, and it never enters
     `content`, so never the checkpointer. `tool` is for the frontend to map to
     a UI Tool; `label` is only for display. Sent per call, when it starts
-    (#19): `call_tool` before a server-dispatched call runs (after any
-    confirmation), `server._stream_reply` before a client-executed hand-off.
+    (#19): `call_tool` before each call runs, after any confirmation.
     """
     return {"type": "tool_status", "tool": name, "label": f"Calling {name}..."}
 
@@ -309,8 +306,8 @@ def _repair_orphaned_tool_calls(messages: list[dict]) -> list[dict]:
 
 @asynccontextmanager
 async def open_checkpointer() -> AsyncIterator[AsyncSqliteSaver]:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with AsyncSqliteSaver.from_conn_string(str(DB_PATH)) as saver:
+    store.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    async with AsyncSqliteSaver.from_conn_string(str(store.DB_PATH)) as saver:
         await saver.setup()
         yield saver
 
@@ -444,7 +441,25 @@ def _tool_message(state: MessagesState, call: dict, output: Any) -> dict:
     return message
 
 
-async def call_tool(state: MessagesState) -> dict:
+def _tool_context(
+    state: MessagesState, config: RunnableConfig, runtime: Runtime[AgentServices]
+) -> ToolContext:
+    """The chat a CONTEXT_TOOLS call works on, with the services
+    `server.py` lends the run."""
+    if runtime.context is None:
+        raise RuntimeError("This tool runs only on the agent server.")
+    return ToolContext(
+        thread_id=config["configurable"]["thread_id"],
+        messages=state["messages"],
+        emit=get_stream_writer(),
+        store=runtime.context.store,
+        core=runtime.context.core,
+    )
+
+
+async def call_tool(
+    state: MessagesState, config: RunnableConfig, runtime: Runtime[AgentServices]
+) -> dict:
     """Dispatch exactly one tool call -- the first unanswered one on the
     most recent AIMessage (`_find_next_tool_call`) -- never the whole
     batch in one execution (see the module docstring's c7bfc57 note on why:
@@ -504,24 +519,6 @@ async def call_tool(state: MessagesState) -> dict:
             output: Any = {"error": "User declined to run this calculation."}
             writer({"type": "tool_result", "tool": name, "result": output})
             return {"messages": [_tool_message(state, call, output)]}
-    if name in CLIENT_EXECUTED_TOOLS:
-        # This tool's TOOL_DISPATCH entry (if any -- DFT Workbench's
-        # all just raise) never runs: the real work happens in
-        # the browser, via app/src/dftWorkbench.ts's dispatchDftTool calling
-        # the embedded goldilocks-workbench panel's own
-        # `coreWorkspace.dispatch(...)`. A second interrupt hands
-        # control to it; its resume value *is* the tool's result, not
-        # an approve/decline decision.
-        outcome = interrupt(
-            {"tool": name, "args": call["args"], "client_execute": True}
-        )
-        output = (
-            {"error": outcome["error"]}
-            if "error" in outcome
-            else outcome.get("result", {})
-        )
-        writer({"type": "tool_result", "tool": name, "result": output})
-        return {"messages": [_tool_message(state, call, output)]}
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
         output = {"error": f"Unknown tool: {name!r}"}
@@ -530,7 +527,10 @@ async def call_tool(state: MessagesState) -> dict:
         # though LangGraph replays the node on resume.
         writer(tool_status(name))
         try:
-            output = await fn(**call["args"])
+            if name in CONTEXT_TOOLS:
+                output = await fn(_tool_context(state, config, runtime), **call["args"])
+            else:
+                output = await fn(**call["args"])
         except Exception as exc:  # noqa: BLE001
             # A failed lookup (bad formula, unknown source/entry_id, a
             # source's API erroring) is data the LLM should narrate to
@@ -570,7 +570,7 @@ def route_after_tool(state: MessagesState) -> str:
 
 
 def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
-    graph = StateGraph(MessagesState)
+    graph = StateGraph(MessagesState, context_schema=AgentServices)
     graph.add_node("llm", call_llm)
     graph.add_node("tool", call_tool)
     graph.add_edge(START, "llm")

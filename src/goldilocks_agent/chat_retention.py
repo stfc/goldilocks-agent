@@ -22,6 +22,7 @@ import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from goldilocks_agent import store
+from goldilocks_agent.tools.dft_workbench import bundles
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ async def delete_idle_threads(
     for thread_id in idle:
         await checkpointer.adelete_thread(thread_id)
         await store.delete_dft_draft(db, thread_id)
+        bundles.delete_bundles(thread_id)
         await store.forget_chat_activity(db, thread_id)
     return idle
 

@@ -28,10 +28,13 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 import aiosqlite
 
-from goldilocks_agent.graph import DB_PATH
+# design doc 16.5: one .db, shared by the checkpointer (graph.py) and these
+# tables -- never a second file, never split from the checkpointer.
+DB_PATH = Path.home() / ".goldilocks" / "goldilocks.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (

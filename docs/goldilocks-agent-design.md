@@ -1604,7 +1604,15 @@ Junwen 提出：面板里的每个选择框都应该能通过聊天来改，DFT 
   - 浏览器继续用包里原生的 `createWorkspace`，每个聊天一个（`app/src/dftDraftSync.ts`）。第一次用到时从服务器回放：`source.open`，再 `draft.patch`。之后每次变化（面板改值、打开结构、聊天工具）都防抖保存回服务器，写入要带上它所基于的 revision；冲突时返回 409，以服务器为准重放。
   - 包里那套约 700 行的状态机（outcome 按 revision 打 key、单操作槽、打开新结构时清掉结构相关的 override……）**不在 Python 里重写**，面板组件也不用改。
 - **阶段 1 已完成**：`dft_drafts` 表、`GET/PUT /api/chat/{thread_id}/dft/draft`、每个聊天一个 Workspace，删掉了 localStorage 的恢复和网页版新建聊天时的 `workspace.reset`。聊天工具这时仍在浏览器里执行，但改为作用在自己那个聊天的 Workspace 上。
-- **阶段 2、3**：工具改到服务器端执行，LLM 改 draft 时经 `/api/chat` 的 SSE 推送 `dft_draft` 事件；磁序在服务器端排序，带进度和上限。
+- **阶段 2 已完成（2026-11-16）**：
+  - 六个工具都在服务器上执行，作用在这个聊天的 draft 上，经 `core_api.py` 用 HTTP 调 core。草稿规则读 `/capabilities` 的数据，不抄常量；只有"改泛函清掉赝势表"写死，等 core#297。`dft_set` 的校验从 `dftSettings.ts` 移植到 `tools/dft_workbench/settings.py`。
+  - **先验证、再提交**：改动先交给 core review，通过才按它所基于的 revision 写入。core 拒绝 draft 本身（4xx）时什么都不提交；core 自己出错（网络、5xx、424）时保留改动并说明，与浏览器时期的行为一致。面板同时保存赢得竞争时，在新 draft 上重做一次。
+  - 写入后经 `/api/chat` 的 SSE 发 `dft_draft` 事件，浏览器用 `ChatWorkspaces.applyServerDraft` 回放，并记为已同步，不回存。
+  - bundle 存在 `~/.goldilocks/bundles/<thread>/`（每个聊天最多 5 个），聊天里的 Download 卡片是指向 `/api/chat/{thread}/dft/bundles/{file}` 的链接，刷新后还能下载；聊天被删除或过期时一起清掉。
+  - `client_tool_call`、`dispatchDftTool`、`keepBundle`/`saveBundle`、`dftSettings.ts` 都删掉了。确认卡片现在是唯一的 interrupt。
+  - `dft_magnetic_orderings` 只列构型：服务器看不到用户在面板上排出的结果，要等 core#298。
+  - `DB_PATH` 从 `graph.py` 挪到 `store.py`（否则 graph → tools → store → graph 循环导入）。
+- **阶段 3**：本地版由服务器提交和轮询 core 的排序任务（`POST /magnetic-orderings/rank` → 轮询，120 秒内必须查一次，否则 core 丢弃任务；到 15 分钟上限就 `DELETE`），带进度。
 - **已知代价**：
   - LLM 改完 draft 后，面板会对同一份 draft 再算一次 explain（core 是确定性的，结果一致）；
   - 聊天里排出的磁序要等 goldilocks-core#298 才会出现在面板上；
