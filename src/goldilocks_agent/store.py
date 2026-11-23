@@ -3,7 +3,9 @@
 Design doc 16.5: the checkpointer owns message content and graph state --
 its storage format isn't queryable, so the sidebar (list, group by project,
 search) needs its own tables keyed by the same `thread_id`. This module
-owns two of the six: `projects` and `conversations`. The other four
+owns two of the six: `projects` and `conversations`. It also keeps each chat's
+DFT Workbench draft (`dft_drafts`, see `dft_draft.py`), which the panel
+rewrites on every settings change -- too often for graph state. The other four
 (`structures`, `bundles`, `values`, `llm_calls`) land once a tool actually
 produces something to record -- no point creating empty tables early.
 
@@ -21,6 +23,7 @@ kind of dated, additive amendment as `bundles.sink/aiida_pk/job_status`.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -54,6 +57,16 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS chat_activity (
     thread_id TEXT PRIMARY KEY,
     last_seen TEXT NOT NULL
+);
+
+-- One DFT Workbench draft per chat (dft_draft.py, #142), as JSON. Its own
+-- table rather than graph state: the panel saves it after every settings
+-- change, and a graph-state write copies the chat's whole history.
+CREATE TABLE IF NOT EXISTS dft_drafts (
+    thread_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    draft TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -192,4 +205,41 @@ async def chat_last_seen(db: aiosqlite.Connection) -> dict[str, datetime]:
 
 async def forget_chat_activity(db: aiosqlite.Connection, thread_id: str) -> None:
     await db.execute("DELETE FROM chat_activity WHERE thread_id = ?", (thread_id,))
+    await db.commit()
+
+
+async def get_dft_draft(db: aiosqlite.Connection, thread_id: str) -> dict | None:
+    """`thread_id`'s DFT Workbench draft with its `revision`, or None."""
+    cursor = await db.execute(
+        "SELECT revision, draft FROM dft_drafts WHERE thread_id = ?", (thread_id,)
+    )
+    row = await cursor.fetchone()
+    return None if row is None else {"revision": row[0], **json.loads(row[1])}
+
+
+async def put_dft_draft(
+    db: aiosqlite.Connection, thread_id: str, draft: dict, base_revision: int
+) -> tuple[bool, dict | None]:
+    """Replaces `thread_id`'s draft if its revision is still `base_revision`
+    (0: there is none yet), as revision `base_revision + 1`. Returns whether
+    it did, and the draft now stored. One conditional statement, so two
+    writers from the same revision can't both succeed."""
+    if base_revision == 0:
+        cursor = await db.execute(
+            "INSERT INTO dft_drafts (thread_id, revision, draft, updated_at) "
+            "VALUES (?, 1, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
+            (thread_id, json.dumps(draft), _now()),
+        )
+    else:
+        cursor = await db.execute(
+            "UPDATE dft_drafts SET revision = revision + 1, draft = ?, "
+            "updated_at = ? WHERE thread_id = ? AND revision = ?",
+            (json.dumps(draft), _now(), thread_id, base_revision),
+        )
+    await db.commit()
+    return cursor.rowcount == 1, await get_dft_draft(db, thread_id)
+
+
+async def delete_dft_draft(db: aiosqlite.Connection, thread_id: str) -> None:
+    await db.execute("DELETE FROM dft_drafts WHERE thread_id = ?", (thread_id,))
     await db.commit()

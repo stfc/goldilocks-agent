@@ -1,4 +1,4 @@
-// The DFT Workbench chat tools and reload restore against a real goldilocks-workbench
+// The DFT Workbench chat tools against a real goldilocks-workbench
 // `createWorkspace` + `HttpCoreClient`, with core itself replaced by
 // responses recorded from a real goldilocks-core
 // (scripts/record-core-fixtures.mjs). The vendored client refuses fixtures
@@ -16,8 +16,6 @@ import structure from "./__fixtures__/core/structure.json";
 import {
   dispatchDftTool,
   keepBundle,
-  restorableDraftPatch,
-  restoreDftWorkspace,
   saveBundle,
 } from "./dftWorkbench";
 
@@ -585,117 +583,5 @@ describe("keepBundle and saveBundle", () => {
     expect(saveBundle(undefined, save)).toMatch(/before the page was reloaded/);
     expect(saveBundle("unknown-id", save)).toMatch(/before the page was reloaded/);
     expect(save).not.toHaveBeenCalled();
-  });
-});
-
-describe("restorableDraftPatch", () => {
-  const draft = { code: "quantum_espresso", task: "relax", hpc: "scarf", overrides: { ecutwfc_ry: 60 } };
-
-  it("restores everything core still offers under the same vocabulary", () => {
-    expect(restorableDraftPatch({ vocabulary: capabilities.vocabulary_version, draft }, capabilities)).toEqual({
-      type: "draft.patch", ...draft,
-    });
-  });
-
-  it("drops overrides saved under another vocabulary", () => {
-    const patch = restorableDraftPatch({ vocabulary: "0", draft }, capabilities);
-    expect(patch).toEqual({ type: "draft.patch", code: draft.code, task: draft.task, hpc: draft.hpc });
-  });
-
-  it("counts a state saved before `vocabulary` existed as vocabulary 1", () => {
-    const patch = restorableDraftPatch({ draft }, { ...capabilities, vocabulary_version: "1" });
-    expect(patch).toHaveProperty("overrides", draft.overrides);
-    // ...not as whatever core speaks now, which is what matters at a bump.
-    const bumped = restorableDraftPatch({ draft }, { ...capabilities, vocabulary_version: "2" });
-    expect(bumped).not.toHaveProperty("overrides");
-  });
-
-  it("omits a task or HPC profile core no longer offers rather than sending undefined", () => {
-    // `draft.patch` applies any key that is present, so `task: undefined`
-    // would blank the task instead of keeping core's default.
-    const patch = restorableDraftPatch(
-      { vocabulary: capabilities.vocabulary_version, draft: { ...draft, task: "md", hpc: "archer2" } },
-      capabilities,
-    );
-    expect(patch).not.toHaveProperty("task");
-    expect(patch).not.toHaveProperty("hpc");
-  });
-
-  it("keeps an explicit `hpc: null` (no HPC profile)", () => {
-    const patch = restorableDraftPatch(
-      { vocabulary: capabilities.vocabulary_version, draft: { ...draft, hpc: null } },
-      capabilities,
-    );
-    expect(patch).toHaveProperty("hpc", null);
-  });
-
-  it("restores nothing without a saved draft", () => {
-    expect(restorableDraftPatch({ vocabulary: "1" }, capabilities)).toBeNull();
-  });
-});
-
-describe("restoreDftWorkspace", () => {
-  const draft = { code: "quantum_espresso", task: "relax", hpc: "scarf", overrides: { ecutwfc_ry: 60 } };
-  const savedState = () => ({
-    vocabulary: capabilities.vocabulary_version,
-    structureInput: { ...structure },
-    draft,
-  });
-
-  it("restores the structure, its settings and the bundle once core is up", async () => {
-    const { workspace, requests } = fakeCore();
-    const forget = vi.fn();
-    const saved = savedState();
-
-    expect(await restoreDftWorkspace(workspace, saved, coreUp, forget)).toBe("restored");
-
-    expect(workspace.getSnapshot().structureInput).toBe(saved.structureInput);
-    expect(requests.find((r) => r.path === "/explain")?.body).toMatchObject({
-      task: "relax", hpc: "scarf", overrides: { ecutwfc_ry: 60 },
-    });
-    expect(currentArchive(workspace.getSnapshot())?.filename).toBe("Si.cif-relax.zip");
-    expect(forget).not.toHaveBeenCalled();
-  });
-
-  it("does nothing until core is up", async () => {
-    const { workspace, requests } = fakeCore();
-    const forget = vi.fn();
-    const outcome = await restoreDftWorkspace(workspace, savedState(), async () => "not up", forget);
-    expect(outcome).toBe("skipped");
-    expect(requests).toEqual([]);
-    expect(forget).not.toHaveBeenCalled();
-  });
-
-  it("leaves a structure opened while it waited alone", async () => {
-    const { workspace } = fakeCore();
-    await dispatch(workspace, coreUp, "dft_open_structure", openArgs);
-    const opened = workspace.getSnapshot().structureInput;
-    const forget = vi.fn();
-
-    expect(await restoreDftWorkspace(workspace, savedState(), coreUp, forget)).toBe("skipped");
-
-    expect(workspace.getSnapshot().structureInput).toBe(opened);
-    expect(forget).not.toHaveBeenCalled();
-  });
-
-  it.each(["invalid_structure", "invalid_request"])("forgets a structure core refuses (%s)", async (kind) => {
-    const { workspace } = fakeCore({
-      "POST /inspect": () => refusal(422, kind, "cannot use this input"),
-    });
-    const forget = vi.fn();
-    expect(await restoreDftWorkspace(workspace, savedState(), coreUp, forget)).toBe("forgotten");
-    expect(forget).toHaveBeenCalledOnce();
-  });
-
-  it("keeps the saved state after any other failure, without a Retry banner", async () => {
-    // Retry would reopen the structure with default settings, which the save
-    // listener would write over the saved ones.
-    const { workspace } = fakeCore({
-      "POST /inspect": () => refusal(503, "core_unavailable", "still starting"),
-    });
-    const forget = vi.fn();
-    expect(await restoreDftWorkspace(workspace, savedState(), coreUp, forget)).toBe("kept");
-    expect(forget).not.toHaveBeenCalled();
-    expect(workspace.getSnapshot().inspectFailure).toBeNull();
   });
 });
