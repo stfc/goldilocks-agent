@@ -1,14 +1,63 @@
 # goldilocks-agent 设计文档
 
-> **状态**：⚠️ **部分已实现**——`graph.py`/`server.py`/`store.py`/`config.py` 和 `app/` 前端已经有一条真实跑通的本地+云端模型对话路径（细节见 `goldilocks-agent-implementation-plan.md` 第三节），但没有 tool 节点、没有接 core 的 MCP、六张表只建了两张。这份仍是先于大部分实现写就的设计文档，读的时候把"已定"当"设计决定"而不是"已完成"。
-> **最后更新**：2026-09-17（新增十九节：共享部署）
-> **与其他文档的关系**：[`goldilocks-ecosystem-design.md`](goldilocks-ecosystem-design.md)
+> **状态**：⚠️ **部分已实现**。已建、未建和与本文分歧的地方见紧接的「实现现状」块
+> （2026-11-23 改写；原来这一行写于 2026-09-17，说"没有 tool 节点、没有接 core 的 MCP、六张表只建了两张"，早已过时）。
+> 这份仍是先于大部分实现写就的设计文档，读的时候把"已定"当"设计决定"而不是"已完成"。
+> **最后更新**：2026-11-23（两份副本合并成这一份，见下面「唯一副本」）。上一次是 2026-11-16（17.11：一张图，两种 profile）；
+> 更早的改动都在正文里按日期标注。
+> **唯一副本（2026-11-23，Junwen 定）**：这份是 agent 设计文档**唯一**的副本。2026-09-14 前后，它和 ecosystem 文档里的
+> `0-goldilocks-ecosystem/1-docs/v2/goldilocks-agent-design.md` 分了叉：这份后来加了 12.3–12.6、14.4、15.1–15.5、17.10、
+> 17.11、十九节和 11 月的补注；那份加了 10.3、11.5（2026-09-22）和几轮"实现现状"注。合并时把那份独有的内容并了进来：
+> 10.3、11.5 两整节，11.4 和 16.5 表里各一行，十八节里对应的条目，以及仍然有用的现状注，各处都标了"2026-11-23 从 ecosystem 副本并入"。
+> 那份之后只留一个指向这里的指针。两份互相矛盾的地方，按 Junwen 已经做过的决定改写，旧说法划掉保留：
+> - 线上版对公网开放（10.3、19.4）；
+> - 线上版用浏览器标签页的 sessionStorage 区分访客，不用 cookie（10.3、19.1）；
+> - 线上用 Ollama，不用 vLLM（11.4、11.5、19.7）；
+> - GPU 由 Qwen 和 mMACE 共用（11.5）；
+> - agent 调 core 走 HTTP，不走 MCP（14.3）；
+> - 限流按 IP，不按会话 token（10.3，2026-11-23 定）；
+> - 官方 Qwen 的 `model_identity_pinned` 记 `false`（11.5、16.5，2026-11-23 定）。
+> **与其他文档的关系**：生态文档 [`goldilocks-ecosystem-design.md`](goldilocks-ecosystem-design.md)
 > 定义四个包之间的事；这份定义 **agent 包自己**。
-> core 侧的四档解析机制在 [`goldilocks-core-design.md`](goldilocks-core-design.md) 第二节，
+> core 侧的四档解析机制在 `goldilocks-core-design.md` 第二节，
 > **这里不重复，只写 agent 要怎么配合它**。
+> 这两份由 ecosystem 维护，在 `0-goldilocks-ecosystem/1-docs/v2/` 下；core 那份不在这个仓库里，
+> 本仓库的 `goldilocks-ecosystem-design.md` 是 2026-09-28 之后没再更新的副本（2026-11-23 注）。
 > **结构**：**零～七是科学职责**（这个包干什么、怎么和 core 配合）；
 > **八～十六是交付层**（本地应用怎么落地）。
 > ⚠️ 照 core 文档的先例——`六、交付层` 也是写在 core 自己那份里的，**不另立一篇**。
+
+> **实现现状（2026-11-23，按 stfc/goldilocks-agent main `14a5a9a` 核）**：只记事实。正文的设计决定不在这里改，
+> 正文相关处有带日期的注。
+> - **对话与编排**：LangGraph 扁平图，`llm` + `tool` 两个节点（17.4）；`AsyncSqliteSaver` 和自己的表同在
+>   `~/.goldilocks/goldilocks.db`；provider 走 `litellm`。一张图两种 profile（17.11，#148 第 1 阶段）：网页版每轮最多 6 次工具调用、
+>   `recursion_limit` 20；本地版 30 次、80。#148 第 2 阶段（本地版的 agent 循环：`update_plan`、步骤卡片、能停下当前轮的 Stop）没做。
+> - **调 core**：独立子进程 `goldilocks serve http`，走 HTTP（14.3 的 2026-11-12 修订）。版本钉在 `core_pin.json`：
+>   goldilocks-core **v0.3.3**，Workbench tarball `goldilocks-workbench-0.3.3.tgz`。core 永远不是 agent 的 Python 依赖
+>   （ruff 的 banned-api 规则、`tests/test_core_pin.py`）。`pyproject.toml` 里的 `mcp` 依赖没有代码用到，Junwen 2026-11-17 定保留。
+> - **六张 Tool 卡**：
+>   - Find in Databases ✅；
+>   - DFT Workbench ✅：内嵌 core 的 Workbench；聊天有六个**在服务端执行**的工具：`dft_open_structure`、`dft_settings`、`dft_set`、
+>     `dft_review`、`dft_download_bundle`、`dft_magnetic_orderings`（只列出，不排序），见 12.5 的 2026-11-12 补注；
+>   - MLIP Playground 和 AiiDAlab-QE（原名 AiiDA）**只在本地版提供**（十二节的 2026-11-09 补注），AiiDAlab-QE 还没有后端（#84）；
+>   - Post Analysis 只做了声子可视化；Beyond DFT 哪里都没开放。
+> - **DFT 草稿**：每个聊天一份，存在服务端的 `dft_drafts` 表（12.5、17.8 的修订，#142 第 1、2 阶段，2026-11-23 合并）。
+>   改动先交给 core 的 `/explain` 检查，通过了才提交。生成的 bundle 存在数据库旁边的 `bundles/<thread>/`，每个聊天最多留 5 个，
+>   聊天里给下载链接。#142 第 3 阶段（本地版从聊天里提交磁序排序任务并轮询）没做。
+> - **职责 1（往 core 填值）**：`relay` 已落地为 `dft_set`，值只能来自用户的话（3.3 的 2026-11-12 补注）；
+>   `suggest` 等 goldilocks-core#258（#67）。
+> - **表**：建了 `projects`、`conversations`、`chat_activity`（网页版闲置清理用）、`dft_drafts`；16.5 的 `structures`、`bundles`、
+>   `values`、`llm_calls` 没建。
+> - **线上共享部署**（十九节）：workbench.goldilocks.ac.uk，2026-11-11 起对公网开放；Ollama 跑 `qwen3.8:27b`，关闭思考，
+>   4 个并行槽；mMACE 在 A100 上；nginx 按 IP 限流；网页版聊天闲置 24 小时删除。细节和来龙去脉在 19.8。
+> - **开着、影响线上部署的 issue**：#144（`/api/chat` 从浏览器取消息的 role）、#145（大消息在每个 checkpoint 里重存一遍，
+>   可能写满磁盘）、#146（上下文快满时提醒）。
+> - **V3**：ecosystem 的 V3 设计里，Gap #2 原定"五个操作对应 core 的五条路由、结构按值传"；2026-11-23 Junwen 定以这里建成的形状为准
+>   （按任务划分的工具 + 服务端草稿 + 按文件名找结构），V3 文档已改写。
+> - **没建**：10.1 的一次性 token 和 `Origin` 检查（只做了绑 `127.0.0.1`）；10.2 的工作目录和"传路径"（见 9.1 的注）；
+>   运行时 skills；PSDI 发布的 fine-tuned 对话引擎。
+> - ecosystem 副本 2026-11-06、11-16、11-23 的几轮"实现现状"记录没有搬过来，它们说的事都在上面或正文的注里；
+>   原文留在 ecosystem 那边的归档里。
 
 ## 零、这个包的一句话
 
@@ -338,6 +387,11 @@ agent 想清楚"这个体系要提截断能、同时 nscf 加密网格"，那是
 当前 code=qe · task=scf 下可填：ecutwfc · ecutrho · k_index · smearing · …
 ```
 
+> ⚠️ 2026-11-16 注（按 stfc/goldilocks-core main 核；2026-11-23 从 ecosystem 副本并入）：本节两个示例里的字段名早于 core 定下的词汇，
+> 照抄会被 core 拒绝。现在的名字是 `ecutwfc_ry`、`ecutrho_ry`、`smearing_type`；完整列表以
+> `goldilocks settings` / `/capabilities` 为准，逐步字段在 core 侧写成 `steps.<step>.KEY`。
+> 本节讨论里的 `pseudo_accuracy` 是设计讨论，不改；core 里没有这个 key，赝势精度固定为 efficiency。
+
 > ★ **一个会教人的报错，效果几乎等于枚举，成本接近零** ——
 > 而且它**对人和对 LLM 一样有用**。
 
@@ -392,6 +446,11 @@ agent 想清楚"这个体系要提截断能、同时 nscf 加密网格"，那是
 让自家 agent 走同一条路，它才会一直是对的。** core 的 pipeline 是毫秒级，
 多一层序列化不构成问题。
 
+> ⚠️ **2026-11-06 注（2026-11-23 从 ecosystem 副本并入并更新）**：「也直接 `import`」这一半被代码排除了：ruff 的 banned-api 规则禁止
+> `import goldilocks_core`，`tests/test_core_pin.py` 检查 core 永远不是 agent 的 Python 依赖。"走 MCP"这一半没有照做：
+> agent 把 core 当独立子进程跑 `goldilocks serve http`，走 **HTTP**。2026-11-12 Junwen 在 #142 里定了就走 HTTP，见十四之三末的修订。
+> 内嵌 Workbench 和聊天的 DFT 工具都走这条路。`pyproject.toml` 的 `mcp>=1.0` 没有代码 import，Junwen 2026-11-17 定保留。
+
 ### 4.1 agent 需要 core 的哪些入口
 
 | 用途 | core 入口 |
@@ -404,6 +463,12 @@ agent 想清楚"这个体系要提截断能、同时 nscf 加密网格"，那是
 
 ⚠️ **已定：以全套为主，同时给 agent 留明确的小入口。**
 **不恢复任意 `RecordSelection`**——只是把少数几个本来就是纯函数的领域能力公开出来。
+
+> ⚠️ **现状（2026-11-06 注，2026-11-16 更正，2026-11-23 从 ecosystem 副本并入并按 core v0.3.3 更新）**：core 实际对外的入口是
+> `capabilities` · `inspect` · `explain`（全套诊断，不生成不打包）· `magnetic-orderings` · `run`，
+> 外加 0.3.1 起的磁序排序任务接口：`POST /magnetic-orderings/rank` 提交，`GET` / `DELETE /magnetic-orderings/rank/{job_id}`
+> 轮询和取消。MCP 是 `capabilities` / `inspect_structure` / `magnetic_orderings` / `explain` / `run` 五个工具（2026-11-16 按 core main 核）。
+> **没有 `advise_k_sampling` / `advise_all` 这两个名字**，"只要 k 网格"的小入口也没有单独开。agent 用到的入口见 `core_api.py`。
 
 ---
 
@@ -656,6 +721,10 @@ goldilocks-agent  上面两套它都要用
 > **★ 已定（2026-09-10）：不做线上版，做本地版。**
 > 那 1,120 行架构文档里**关于部署、认证、CI 的部分整体作废**；
 > **产品与交互设计（`goldilocks-web/design.md`）继续沿用**。
+>
+> ⚠️ **2026-11-06 注（2026-11-23 从 ecosystem 副本并入并更新）**："不做线上版"现在只对本地版这条线成立。2026-09-17 的十九节和 2026-09-22 的 10.3、11.5
+> 另定了一个线上共享版，它已经在 `workbench.goldilocks.ac.uk` 上线（Docker，`deploy/stfc-cloud/`）。
+> 2026-11-05 门户声明 agent 暂停公网访问到 11-30；2026-11-11 提前重新对公网开放（#111），见 19.8。
 
 ---
 
@@ -758,13 +827,19 @@ agent  ──▶ core（MCP）        传【内容】：经边界检查、由 ag
 - 名字找不到时，工具返回本 chat 里现有结构文件的名单，让模型换个名字重试，或者请用户附上文件。
 - 用户直接把结构文本粘贴进对话（没有走附件流程）的情况不支持，同样会提示用户改用附件上传。
 
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并按 #142 更新）**：浏览器 → agent 这一段没有按"传路径"做：没有目录浏览端点，
+> 也没有工作目录。用户在浏览器里附加结构文件，内容随消息发给服务端，存在聊天的 checkpoint 里。
+> #142 第 2 阶段（2026-11-23 合并）起，服务端按文件名在本聊天的消息里找结构（附件和 `get_structure` 的结果），再把内容传给 core；
+> 上面 11-09 补注里浏览器按名字取原文件那一步随之移到了服务端（规则照搬 `app/src/utils/structureFiles.ts`）。
+> 生成的 bundle 存在服务端数据库旁的 `bundles/<thread>/`，聊天里给下载链接，刷新后还能下载。本地版和线上版用的是同一套前端。
+
 ### 9.2 本地版的进程图
 
 ```mermaid
 flowchart TB
     BR["浏览器<br/>React 前端 · 只是渲染器"]
     SRV["本地 server（goldilocks-agent）<br/>127.0.0.1 · 持有 API key · 持有文件系统"]
-    CORE["goldilocks-core<br/>MCP 还是直接 import —— 待决"]
+    CORE["goldilocks-core<br/>走 HTTP（十四之三 2026-11-12 修订）"]
     DISK[("用户磁盘<br/>工作目录")]
     LLM[("LLM API<br/>用户自己的 key")]
     JANUS[("janus-api<br/>外部服务 · MLIP")]
@@ -780,6 +855,14 @@ flowchart TB
 ```
 
 ⚠️ **注意 `SRV` 是唯一出网的地方**，也是唯一碰磁盘的地方。**浏览器什么都不持有。**
+
+> ⚠️ **与这张图的分歧（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新；图保留为设计）**：
+> ① 图里 core 那个框原来写"MCP 还是直接 import —— 待决"（ecosystem 副本改成过"全部走 MCP"），2026-11-23 改成现在的决定。
+> `SRV → CORE` 是 HTTP 到 `goldilocks serve http` 子进程（`127.0.0.1:8000`）。内嵌 Workbench 的请求由浏览器发出，
+> 经 `server.py` 原样转发给 core（`CORE_PROXIED_PATHS`）；聊天的 DFT 工具在 SRV 里执行（#142）。
+> ② 没有 `janus-api`：MLIP 在隔离的 `mlip-cli/` 环境里调 `janus` CLI（2026-09-15 改），MLIP Playground 只在本地版提供。
+> ③ 浏览器与 SRV 之间没有 token（10.1 第 2、3 条没做）。
+> ④ SRV 不碰用户磁盘上的工作目录（见 9.1 的注）。
 
 ---
 
@@ -934,6 +1017,99 @@ A 要求结构文件拷进工作目录才能用，所以工作目录里**必然�
 → ★ **在这个设计里，core 的保证 1 是兜底，不是主机制。**
    主机制是"名字通常就唯一"。⚠️ **两者都要在** —— 时间戳会撞（同一秒、重试），
    **不能因为有了时间戳就把 core 的 `mkdir` 那条去掉**。
+
+### 10.3 ★★ 已定（2026-09-22）：STFC cloud 版是共享多租户，10.1 那套本机防线不适用
+
+> **2026-11-23 从 ecosystem 副本并入**（这一节原来只在那边）。下面几处已被后来的决定替换，在原处划掉并注明：会话标识、共享后端、限流单位。
+> 十九节是同一个部署后来的详细记录，有冲突时以十九节和这里的 2026-11-23 注为准。
+> ecosystem 副本原文里说的"仓库副本"，指的就是本文。
+
+> 这一节谈的是**为什么**要这么设计；具体部署到哪台机器、systemd 还是 Docker、
+> 安全组怎么配，见新增的
+> `goldilocks-agent-stfc-cloud-deployment.md`（ecosystem 的 `1-docs/ops/`；2026-11-23 注：部署细节以本仓库
+> `deploy/stfc-cloud/README.md` 为准）
+> （从 v1 实际部署经验里学到的、以及明确不能照搬的部分都在那份文档的「二」节）。
+
+10.1 的三条防线（只听 `127.0.0.1`、启动时发一次性 token、检查 `Origin` 拒绝非本机来源）
+全部假设 **server 只服务坐在这台机器前的那一个人**。STFC cloud 版一开始就是共享服务——
+一个 agent 进程服务所有 STFC 用户，~~vLLM+Qwen~~ Qwen 是共享后端（见 11.5；2026-11-23 注：实际跑在 Ollama 上）——这个前提不成立。
+
+**已定，不做账号系统**：区分用户靠**匿名 session token**——~~首次访问发一个随机 cookie，
+之后所有请求带着它，按 token 分配独立的工作目录（复用 10.2 "一个会话一个工作目录"的
+概念，只是"会话"从"本地一个人"换成"一次浏览器访问"）~~。
+（2026-11-23 注：不做账号系统照做了。token 实际是每个浏览器标签页在 sessionStorage 里自己生成的 UUID，
+当作 `thread_id`，没有 cookie，见 19.1。按 token 分的工作目录没建；#142 起每个聊天在服务端有自己的 bundle 目录 `bundles/<thread>/`。）
+
+⚠️ **诚实写清楚这买到的是什么，不是什么**：
+
+| 买到的 | 买不到的 |
+|---|---|
+| 不同浏览器的工作目录、对话历史不会串 | **不是身份验证**——拿到 token 就能访问对应工作目录 |
+| 零登录摩擦，不用维护账号/密码 | 没有审计能力——出问题说不清是哪个人做的 |
+
+⚠️⚠️ **前提更正（2026-09-22 当天二次修正）：STFC cloud 版其实是公网开放的服务，
+不是 VPN-only 内网**——上面那句"挡住的是陌生人"没有 VPN 可挡，**这推翻了本节
+最初照抄 v1 "VPN-only 内网 beta"边界的假设**。公网 + 匿名 token + 不做账号系统，
+意味着**任何拿到 URL 的人都能进来**，不再是"内部同事之间理论上冒充"这种可接受的
+风险，而是陌生人能白嫖共享的 vLLM+Qwen 推理资源，也可能把「并发方案 A」的单 core
+子进程直接打垮。
+（2026-11-23 注：之后又变过两次。2026-09-17 的十九节把 agent 收窄成只对内网/VPN（19.4）；
+2026-10-09 短暂公开约一小时就出了事，之后只对 STFC 网段开放；2026-11-11 Junwen 定重新对公网开放，见 19.8。）
+
+**已定（2026-09-22）：不设访问门槛（不加共享访问码/邀请链接），改用限流/配额**——
+~~按 session token~~ 限并发数、限调用频率，保护共享的 ~~vLLM+Qwen~~ 模型后端与单 core 子进程。
+（**2026-11-23 Junwen 定：按 IP 限**，用 nginx 的 `limit_req`（#110）：聊天 10 次/分钟，计算（`/run`、提交排序任务）6 次/分钟，
+core 的分析路由 30 次/分钟，草稿同步 60 次/分钟（#142），超了返回 429，阈值见 `deploy/stfc-cloud/nginx-workbench.conf`。
+按 session token 限不住人：新开一个标签页就是一个新 token，所以不做。）
+★ **这是刻意选择"谁都能进，但进来后被限速"，不是"筛掉陌生人"**——与"不做账号
+系统"这条约束保持一致，代价从"谁能访问"转移成"访问以后能占多少资源"。
+⚠️ **具体阈值（每 token 并发数、每分钟调用次数）留到部署环节再定（2026-09-22，
+用户明确拍板：现在不定）**——这是**有意延后**，不是遗漏：要跟并发压测（见下方
+"并发方案"）一起定，不要各定各的——限流阈值定低了会先于并发瓶颈把用户挡下来，
+定高了限流形同虚设。**部署前必须回来把这条填上**，别让"留到以后"变成"永远没定"。
+（2026-11-23 注：阈值已定，见上。压测做的是聊天模型那一侧（19.7、19.8 的 Ollama 实测）；
+core 一侧在这份文档里没有专门的并发压测记录。）
+
+#### ★★ 已定（2026-09-22）：并发方案选 A——单 core 子进程 + 进程内异步处理
+
+14.3 "一个 agent server 一个 core 子进程，不是一个会话一个"是在单机单用户场景下定的；
+STFC cloud 版把它字面套用，意味着**全 STFC 所有用户的请求挤过同一个 core 子进程**。
+三条路里选了最不新增基础设施的一条：
+
+| 方案 | 做法 | 结论 |
+|---|---|---|
+| **A ✅** | 还是一个 core 子进程，**进程内部异步处理并发请求**（MCP 走 JSON-RPC，天然支持
+多个请求同时在途；CPU 密集部分丢线程池，不卡事件循环） | **选定** |
+| B | 固定数量 core 子进程池，轮询分请求 | ❌ 直接复刻 core 自己否决过的
+"N worker × 模型内存"问题（core-design.md 六：`serve http` 默认单 worker 就是同一条理由）；
+这台机器的 GPU 显存还被 vLLM+Qwen 占着，更贵 |
+| C | 按活跃会话动态起停子进程池 | 未选——STFC beta 规模没有证据支撑这份复杂度，
+若 A 压测不过关再升级到这条 |
+
+**选 A 的理由与 core 的单 worker 决定同源**：省内存优先于预先建并发弹性。
+（2026-11-23 注：形状照做了，一个 agent 进程一个懒启动的单例 core 子进程；但传输是 HTTP，不是表里写的 MCP JSON-RPC，
+见十四之三的 2026-11-12 修订。mMACE 排序走 core 自己的任务队列（core#261），在 GPU 上跑，见 11.5 的注。）
+
+⚠️ **诚实写清楚这不是"证明过没问题"，是"选了成本最低的默认项"**：一次
+`advise`/`generate` 往返在本地是毫秒级，但从没在真实多用户负载下测过。
+**上线前必须做一次并发压测**（模拟 STFC 预期规模的并发请求），压不过关就升级到 C，
+不是回头怀疑 core 无状态这条前提。
+
+> ⚠️ **2026-11-06 实现与 10.3 的分歧（ecosystem 副本的注，原样保留；结论已写进上面的 2026-11-23 注）**，依据 stfc/goldilocks-agent ae03851：
+> - **会话标识**：不是服务端发的 cookie，而是浏览器 `sessionStorage` 里生成的 UUID 当 `thread_id`
+>   （一个标签页一个会话）；**没有按 token 分配的工作目录**（工作目录整体未建）。共享模式
+>   `GOLDILOCKS_AGENT_SHARED_DEPLOYMENT=1` 下 `projects` / `conversations` / credentials 路由直接 404，
+>   侧边栏历史隐藏（`server.py` `_reject_in_shared_deployment`；设计记在仓库副本 §19.1–19.2）。
+> - **共享后端**：不是 vLLM，是 Ollama `qwen3.8:27b`（同一台 VM 的 GPU），见 11.5 的注。
+> - **限流**：agent 侧只有一个**全局**的 `GOLDILOCKS_AGENT_CHAT_CONCURRENCY_LIMIT`（超了返回 429，不排队），
+>   `deploy/stfc-cloud/docker-compose.yml` 里是注释掉的 = 不限；**按 session token 的并发 / 频率限流没有实现**。
+>   nginx 按 IP 限流写在 1-docs runbook 里，VM 上配没配 ⚠️ 待核实。"部署前必须回来填上"的阈值**仍未填**。
+>   （2026-11-23：nginx 按 IP 限流已经写进仓库并部署，见文首「实现现状」的 2026-11-23 块，stfc/goldilocks-agent#110；按 session token 的限流仍没有。）
+> - **并发方案 A**：形状照做了（每个 agent 进程一个懒启动的单例 core 子进程），但传输是 HTTP，
+>   不是表里说的 MCP JSON-RPC；并发压测 repo 里没有记录，⚠️ 未核实做过。
+> - **公网**：已上线时是公网（1-docs runbook，2026-10-07 实测），与本节一致、与仓库副本 §19.4 的"仅内网"相反；
+>   ~~2026-11-05 至 11-30 门户声明暂停公网访问（见八的注）~~。2026-11-23 更正：**11-11 起已经重新对公网开放**（stfc/goldilocks-agent#111），
+>   门户上的暂停声明也撤了。
 
 ---
 
@@ -1100,7 +1276,7 @@ agent 这边是**决定加载哪个引擎**——后者本来就该看模型是�
 | 运行时 | 结构化输出 | 门槛 | 判断 |
 |---|---|---|---|
 | **Ollama** | JSON schema（够契约模型用）| 一个二进制；Mac 走 Metal，**不需要 GPU** | ✅ **第一阶段** |
-| vLLM | `guided_json` | **要真 GPU + Linux** | 服务器路线，以后 |
+| vLLM | `guided_json` | **要真 GPU + Linux** | 服务器路线，以后。⚠️ 2026-09-22 定为 STFC cloud 版专用（11.5）；2026-11-09 定线上不换 vLLM，继续用 Ollama（19.7 的 11-09 补注）。2026-11-23 从 ecosystem 副本并入这段历史 |
 | llama.cpp | **GBNF grammar，最精确** | 要自己装/编译 | **逃生口**，grammar 精度不够时走它 |
 
 #### ⚠️ 坑：Ollama 自带 registry 会**切断与 PSDI 发布物的对应关系**
@@ -1172,6 +1348,85 @@ goldilocks 的形状正好是它：
 ⚠️ 这条同时是"**为什么值得 fine-tune 一个本地模型**"的最好论证 ——
 因为草稿的错误有地方兜，模型不必完美。
 
+### 11.5 ★★ 已定（2026-09-22）：两个交付形态锁死各自的运行时，不是同一个 build 里的选项
+
+> **2026-11-23 从 ecosystem 副本并入**（这一节原来只在那边）。已被替换的：线上的运行时（vLLM → Ollama）、官方 Qwen 的
+> `model_identity_pinned`（`true` → `false`）、"GPU 只留给 Qwen"，都在原处划掉并注明。
+> ecosystem 副本原文里说的"仓库副本"，指的就是本文。
+
+> vLLM 具体怎么起（systemd unit 模板、flag、GPU 显存预算）见
+> `goldilocks-agent-stfc-cloud-deployment.md`「三之一」（ecosystem 的 `1-docs/ops/`；2026-11-23 注：线上没用 vLLM，见下）——
+> 那份文档里还留了一条真实待决：**具体是 Qwen 的哪个版本/参数量，这里没有钉死**。
+
+最终交付把 agent 拆成两个不同的产物，**运行时的选择权不在用户手上，在"你装的是哪个
+版本"上**：
+
+| 交付物 | 对话引擎运行时 | 云端 provider（经 `litellm`）| 形态 |
+|---|---|---|---|
+| **agent 本地版** | Ollama（11.4 第一阶段） | 可选：LiteLLM + API key 连 OpenAI / Claude / Gemini | 本地起 server + 浏览器开 `127.0.0.1`（九），外加 Docker 镜像（2026-09-22） |
+| **agent STFC cloud 版** | ~~**vLLM**~~ **Ollama**（2026-11-23 注：见下面的 11-06 注和 19.7），**只连 Qwen** | ❌ 不提供——没有理由给这个部署多开一个云端出口 | 共享多租户（十、10.3） |
+
+✅ **已定（2026-09-22 确认）：agent 本地版就是「九」已经定的"本地 server + 浏览器开
+127.0.0.1"，不是另一个新形态**——最终交付产品清单里的"本地版"没有引入新的产品
+形态，只是把已经定好的架构正式列进交付物清单。桌面应用（Tauri/Electron）仍然是
+最终形态，不是这次要做的第一版。
+
+★ ~~**vLLM 因此从 11.4 表格里的"服务器路线，以后"转正**——但只转正给 STFC cloud 版，
+**不是本地版新增的第三个选项**，本地版的运行时表格（11.4）不变。~~
+（2026-11-23 注：线上 2026-09-25 先接了 vLLM，09-29 改回 Ollama（19.8）；2026-11-09 为并发重新考虑过，
+Junwen 定不换，改开 Ollama 的 4 个并行槽（19.7）。compose 里的 vllm 服务留着，放在 profile 后面不启动。）
+
+> ⚠️ **2026-11-06 实现分歧（ecosystem 副本的注，原样保留；2026-11-23 已按此改写上表）**：STFC cloud 版实际跑的是 **Ollama + `qwen3.8:27b`**，
+> 不是 vLLM——`deploy/stfc-cloud/docker-compose.yml` 为 `agent` + `ollama` + 一次性 `ollama-pull`，
+> `GOLDILOCKS_AGENT_MODEL=ollama_chat/qwen3.8:27b`。仓库副本 §19.8 记 2026-09-25 先接了 vLLM，
+> 2026-09-29 改回 Ollama（vLLM tool-call parser 未验证，叠加当时的聊天可靠性 bug 不好排查）。
+> "只连 Qwen、不提供云端 provider"这一半照做了：共享模式下 credentials 路由 404、前端只留默认模型。
+
+#### ★ 已定（2026-09-22）：Qwen 目前是官方原版权重，不训练、不走 PSDI
+
+STFC cloud 版的 Qwen**目前**就是阿里官方发布的权重，goldilocks-ml **不参与**、
+不微调——**不是** 11.1 说的那个"本地 fine-tuned LLM"，只是换了个 serving 引擎的
+通用大模型。因此：
+
+- **不走 PSDI 的 sha256 链**——11.2/11.4 那套"下载归 agent 自己的 `assets/`、
+  必须能对上 PSDI 声明"的机制对它不适用，它就是普通的 Hugging Face / ModelScope
+  权重下载，不经过 goldilocks-ml
+- **没有 11.3 说的"域声明"（`trained_on`）**——它没有针对 DFT/材料场景做过任何
+  适配，是通用模型，不是"在 QE 上训过"的那种可信来源判断
+- ⚠️ **但"不走 PSDI"不等于"没有 provenance"**——权重是自己部署的，不是调第三方
+  API，具体是哪个版本、哪个 revision 完全在我们掌控之下，`model_identity_pinned`
+  ~~仍然应该是 `true`（见下方 provenance 表新增一行），不能因为不走 PSDI 就降级成
+  云端 API 那种"说不清具体是哪个快照"~~
+  （**2026-11-23 Junwen 定：记 `false`**。理由就是下面 11-06 那条注：线上从 Ollama registry 拉可变 tag `qwen3.8:27b`，
+  compose 里没钉 digest，"版本完全在我们掌控之下"并不成立。哪天按 digest 钉住，或换成走 PSDI 链的微调版，再改成 `true`。
+  16.5 的表已按此改。）
+
+★ **"目前"两个字不是随口写的**——这条留了口子：以后如果 goldilocks-ml 真的在
+Qwen 上微调出一个 STFC 专用版本，STFC cloud 版就升级成表格里的"B：ml 微调"，
+走同一套 PSDI 链，11.3 的域声明也补上。**不要把"目前用官方权重"焊死成永久架构**。
+
+> ⚠️ **2026-11-06 与实现的张力（待 owner 定）**：上面"版本完全在我们掌控之下 → `model_identity_pinned=true`"
+> 的前提，在现部署里不成立——VM 是从 Ollama registry `ollama pull qwen3.8:27b`（可变 tag，compose 里没钉 digest）。
+> 代码注释与仓库副本 11.4（2026-09-15 补）的说法相反：官方 Qwen 不走 PSDI，**记 `false`**
+> （`graph.py` `LOCAL_MODEL` 注释）。`llm_calls` 表尚未建，所以目前两种说法都还没落到数据上。
+> （2026-11-23：已定 `false`，见上。）
+
+✅ ~~**GPU 只留给 vLLM+Qwen，不用跟 ml 抢**~~（2026-09-22，用户定：goldilocks-ml 的模型
+尽量只用 CPU）——STFC cloud 那台机器上，core 的 ml 契约模型（`is_metal`/`k_index` 等）
+不占显存，vLLM 是唯一的 GPU 消费者，资源规划因此简单很多。
+（⚠️ 2026-11-23 补：**这条在共享部署上已被推翻**。Junwen 2026-11-10 定把 mMACE 磁序排序从 CPU 搬到 VM 的 A100（stfc/goldilocks-agent#109、#116，11-11 部署；core 侧是 `GOLDILOCKS_MMACE_DEVICE`，goldilocks-core 0.3.2）。依据是当时的实测：bcc Fe 8 个候选 GPU 66.6 s、CPU 107 s，结果和 CPU 一致，多占 1 GB 显存；排序时聊天解码从 52.4 降到 42.8 tok/s。200 个原子上限时估计约 8 GB，加上 Ollama 的 37.8 GB，约占 80 GB 中的 46 GB。所以 GPU 现在由 Qwen 和 mMACE 共用；`is_metal`、`k_index` 这类小模型仍在 CPU 上。出处：goldilocks-agent 会话的记录和上面两个 PR。）
+
+⚠️ **本地版的 Docker 镜像里，Ollama 跑在哪~~还没定~~**（2026-09-22，用户定"agent 本地版
+也出 Docker 镜像"之后浮出的细节）：Ollama 本体通常装在宿主机（Mac 上这样才有 Metal
+加速），若 agent 整个跑在容器里，需要决定是**容器连宿主机的 Ollama**
+（`host.docker.internal`），还是**把 Ollama 也塞进容器**（丢掉 Metal，退化成 CPU 推理，
+对本地版的响应速度可能是个明显的体验回退）。写 Dockerfile / `docker-compose.yml` 之前
+要定下来，不属于"以后再说"的范畴。
+（⚠️ 2026-11-06 更新：**已落地为"容器连宿主机的 Ollama"**——仓库根目录 `docker-compose.yml` 设
+`OLLAMA_API_BASE=http://host.docker.internal:11434` + `extra_hosts: host.docker.internal:host-gateway`；
+README 写明 Ollama 装在宿主机、不进容器（2026-09-25 实测 Docker Desktop 不给容器 GPU/Metal，
+容器内 `qwen3.8` 一条回复约 3 分钟 vs 原生约 20 秒）。依据 stfc/goldilocks-agent ae03851）
+
 ---
 
 ## 十二、四个 MODE 与分期
@@ -1234,6 +1489,11 @@ goldilocks 的形状正好是它：
 
 → **UI 上六个 tool 都摆出来（2026-09-15 起是六个，不是四个），但第一阶段只接一个后端。**
 这正好对上外部 review 提的里程碑：**"实现一条 QE SCF 端到端路径"**。
+
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新）**：UI 上叫 "Tool"，有六张卡；"DFT Workspace" 在 UI 上叫 **DFT Workbench**。
+> **"只做 scf"已不是现状**：core 的任务有 `scf_single_point` · `dos` · `band` · `relax` · `vc-relax` · `phonon` ·
+> `relax-phonon` · `vc-relax-phonon`（`/capabilities`）。线上的后端有两个（Find in Databases 和 DFT Workbench），不是一个。
+> 各卡状态见文首「实现现状」。
 
 ### 12.2 从旧 webapp 沿用什么
 
@@ -1677,6 +1937,14 @@ mode，才保留用户已经在看的面板视图。
 > 疑惑一下是不是打错成了 `core/web`。下文所有 `agent/web` 均改为
 > `agent/app`。
 
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新）**：
+> ① 两个前端都在，但 **agent 的 DFT 表单不是自己写的**：它把 core 的 Workbench（core `web/`，npm 包 `goldilocks-workbench`）
+> 打成 tarball **vendor** 进来内嵌（`app/vendor/goldilocks-workbench-0.3.3.tgz`，sha256 记在 `core_pin.json`）。
+> 所以在 DFT 这块，"一个表单、一个对话"其实是**同一个表单出现在两个产品里**，这条跨仓库的接缝还在。
+> ② 下面那条可机械检查的不变量**大体成立，有一处例外**：聊天里的 review 卡片（`app/src/dftReview.ts`，#88，2026-11-09）
+> 有一张赝势库显示名的表 `PROVIDER_NAMES`（`pseudodojo` → "PseudoDojo"，`sssp` → "SSSP"）。泛函名和 smearing 名 grep 不到
+> （2026-11-23 核，不算测试和录制的 core fixture）。
+
 ### ⚠️ 但这会制造第三个漂移源
 
 旧 webapp 的 `App.jsx` 第 142–400 行有**八组硬编码的科学选项**：
@@ -1963,6 +2231,11 @@ agent 必须**接住子进程的 stderr 并落盘**，否则 core 崩溃时用�
 - HTTP 和 MCP 在 core 里调的是同一套 `_handlers.py`。
 
 本节理由③（"走 MCP 才能发现外部 agent 会撞上的能力缺口"）改由一个对等测试来保住：agent 的工具流程也经 core 的 MCP 跑一遍，结果必须一致。MCP 继续作为 core 面向外部 agent 的接口。
+
+**子进程的形状**（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并按 `core_server.py` 核过）：一个 agent 进程一个 core 子进程（懒启动、单例），
+`atexit` 收尾（`kill -9` 时会留下孤儿）；8000 端口已经有服务在答时报错，不会连到别人的服务上去。
+core 的 stdout/stderr 转到 agent 自己的 stderr，前缀 `[goldilocks-core]`，没有单独落盘；启动失败的最后一行传回 UI；
+词汇版本对不上是有名字的报错；首次启动上限 1 小时。
 
 ### 14.4 ⚠️ 已定（2026-09-15 修正）：旧代码 `import goldilocks_core.X` 不等于"这是 core 的领域决策"——查了才算数
 
@@ -2378,6 +2651,12 @@ values          bundle_id · field · step · value · source · status · block
 llm_calls       id · conversation_id · provider · model_ref · model_identity_pinned · started_at
 ```
 
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新）**：建了 `projects`（多了 `description`）、`conversations`（多了 `last_viewed_at`）、
+> `chat_activity`（网页版闲置清理，#112）和 `dft_drafts`（每个聊天的 DFT 草稿，#142），与 checkpointer 同在
+> `~/.goldilocks/goldilocks.db`。`structures` / `bundles` / `values` / `llm_calls` 没建。
+> 所以 16.3"第一天起记每个值的档位与出处"目前**没有落点**：`dft_set` 的 `origin_message_id` 记在 tool 消息的 `artifact` 里
+> （在 checkpoint 中），值本身由 core 写进 bundle 的 `goldilocks.json`。
+
 ⚠️ **不叫 `runs`**：`run` 在 DFT 语境里就是"跑一次计算"，
 而本项目第一件事就是说清楚 **core 从不跑计算**。
 叫 `runs` 会让人以为这张表记的是 DFT 执行记录 —— **正好是最该撇清的那件事**。
@@ -2454,10 +2733,16 @@ core 文档写过：*前端"改参数实时预览" = **只重跑 `advise`***。
 | 来源 | `model_ref` | `model_identity_pinned` |
 |---|---|---|
 | 本地 fine-tuned | `k_advisor.qwen7b.v3` + sha256 | **`true`** |
+| 官方 Qwen，自己部署（线上 Ollama `qwen3.8:27b`，本地默认 `qwen3.8:latest`）| Qwen 官方名字 + tag（不经 PSDI，见 11.5）| **`false`**（2026-11-23 Junwen 定；ecosystem 副本 2026-09-22 记的是 ~~`true`~~）|
 | OpenAI / Claude / Gemini | `openai:gpt-4o` + 时间戳 | **`false`** |
 
 ⚠️ 云端那行的理由：**`gpt-4o` 这个名字会指向不同的快照，换了你不知道**。
 记 provider + model + 时间是最低限度，但它**不能唯一确定当时那个模型**。
+
+⚠️ **官方 Qwen 那行（2026-11-23 定；记 `true` 的说法从 ecosystem 副本并入）**：ecosystem 副本 2026-09-22 记 `true`，理由是"权重自己部署、版本在我们手里，
+区分点是谁控制版本，不是经不经过 PSDI"；本仓库 11.4（2026-09-15 补）记 `false`，理由是没走 PSDI 链。
+Junwen 定 `false`：线上从 Ollama registry 拉可变 tag `qwen3.8:27b`，compose 没钉 digest，版本其实不在我们手里。
+按 digest 钉住，或换成 PSDI 发布的微调版之后，再改 `true`。这张表还没建，所以目前不影响任何数据。
 
 一个布尔列，让「这条建议可不可追溯」变成**可查询的**，
 而不是靠人看 provider 名字去猜 —— 这正是「十一之一」那条
@@ -2544,6 +2829,11 @@ flowchart LR
 落地时这张图要画成两个入口共享同一个 LLM 节点，而不是把事件轮次硬塞成
 "用户消息"的一种特例（它既不是用户说的，也不是按钮生成的定型文字，
 起因是外部世界，三种入口性质都不同）。
+
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新）**：这张图已实现（`graph.py`：`StateGraph(MessagesState)`，`llm` + `tool` 两个节点，
+> `interrupt()` 用在要确认的工具上，目前是 MLIP Playground）。tool 节点不走 MCP 调 core：Find in Databases 在服务端直接查外部数据库；
+> DFT 的工具从 #142（2026-11-23 合并）起在服务端执行，经 HTTP 调 core。在那之前它们由浏览器执行：tool 节点用 `interrupt()`
+> 把调用交给浏览器，浏览器经 core 的 HTTP API 跑完，再把结果当 resume 值送回。每轮的工具调用上限和 `recursion_limit` 由 profile 定（17.11）。
 
 ### 17.5 ⚠️⚠️ 状态的"真相"只能有一处
 
@@ -2931,6 +3221,9 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 ★ 本节开头"暂不拆子图，留循环节点即可"的结论**不变**——上面这些还没定的
 细节，落地时会长在 17.4 图里的一个节点上，不构成需要新增 subagent 的理由。
 
+> ⚠️ **现状（2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新）**：还没有 supervisor 或路由层，也没有 search/knowledge-digest 子图，
+> `build_graph()` 只有 `llm`、`tool` 两个节点（扁平图）。AiiDA 没建；janus 走 CLI，MLIP Playground 只在本地版提供。
+
 ### 17.10 ★★ 已定（2026-09-15）：interrupt 在 UI 上的形状
 
 17.3 定了 interrupt 对应哪些确认时刻（blocking 诊断 · 多步覆盖 warning ·
@@ -3020,6 +3313,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       自然语言解释推荐 · `.agents/skills/` 的 DFT 领域知识
 - ✅ **判据是"中间要不要看上一步结果再决定"**——要看归 agent，开头能全定归 core
 - ✅ **agent 通过 MCP 调 core**；MCP 归 core，strict schema 是 LLM 与 core 之间的闸
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：实现走 core 的 HTTP API，不走 MCP；2026-11-12 定下，见十四之三末的修订）
 - ✅ ★ **盖章规则做成两个有名字的方法**：`gl.relay()` = human · `gl.suggest()` = llm。
       **不用容易忘传的 `source=` 参数**
 - ✅ **agent 不自己调 ml 模型**——让 core 调，才有干净的 `source="ml"` 与完整溯源
@@ -3031,6 +3325,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       这条先前写成"归属 agent 包，迁移时别丢"，是把两套 skills 混成了一套）
 - ✅ **以全套入口为主，同时给 agent 留明确的小入口**（`inspect` / `advise_k_sampling` /
       `advise_all`），**不恢复任意阶段组合**
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：core 没有这两个小入口，对外是 `capabilities` / `inspect` / `explain` / `magnetic-orderings` / `run` 和排序任务接口，见 4.1 的注）
 - ✅ **工程约定直接继承现有三个仓库那一套**
 
 ### ⚠️⚠️ 2026-09-10 外部 review 后的六处修正（新增 · 单列一节便于查）
@@ -3062,6 +3357,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       ⚠️ 先把问题拆准：agent 有**四类**调用，其中**实时预览与渲染 picker 根本不是 LLM 工具调用**。
       ★ **主要理由不是 dogfooding，是暴露契约缺口** ——
       **UI 通过 MCP 做不到的事，外部 agent 也一样撞得上**；走 import 则没人会发现
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：没有照做。应用逻辑和聊天工具都走 core 的 HTTP API，import 被 ruff 禁掉，MCP 没用；2026-11-12 定下，见十四之三末的修订）
 - ✅ ⚠️ **毒药对象过不了 MCP，而这本来就该这样**：毒药是 **core 的内部机制**，
       agent 需要的是三态的**数据表示**（`status` + `blocked_by`）。
       ★ MCP 逼你想清楚"跨进程之后三态长什么样"
@@ -3123,6 +3419,35 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       "任何本地模型"——**当前默认基座模型（Qwen3.8-27B，不是我们微调的）不走这条校验链**，
       `llm_calls.model_identity_pinned` 要记 **`false`**，跟云端模型同一等级，
       不能因为"是本地跑的"就默认记 `true`（`true` 专属走过 PSDI 校验链的版本）
+- ✅ ★★ **两个交付形态锁死各自的运行时**（11.5，2026-09-22，最终交付产品清单拍板；2026-11-23 从 ecosystem 副本并入）——
+      **agent 本地版**：Ollama，或 LiteLLM + API key 连 OpenAI/Claude/Gemini；
+      **agent STFC cloud 版**：**只接 ~~vLLM~~ Ollama 连 Qwen**，不提供云端 provider。
+      ~~**vLLM 因此从"服务器路线，以后"转正，但只转正给 STFC cloud 版**，不是本地版新选项。~~
+      （2026-11-23 注：线上用 Ollama，2026-11-09 定不换 vLLM，见 19.7。）
+      ✅ **已定（2026-09-22）：Qwen 目前是官方原版权重，不训练、不走 PSDI**——
+      不是 11.1 的"本地 fine-tuned LLM"，没有 11.3 的域声明；~~但**仍然自己控制部署版本**，
+      `llm_calls.model_identity_pinned` 照样是 `true`（区分点是"谁控制版本"，不是
+      "经不经过 PSDI"）~~。"目前"两个字留了口子——以后真微调了再升级
+      （**2026-11-23 Junwen 定 `model_identity_pinned` 记 `false`**：线上拉的是可变 tag `qwen3.8:27b`，没钉 digest，见 11.5、16.5）
+- ✅ **agent 本地版也出 Docker 镜像，与 core 同类**（2026-09-22；2026-11-23 从 ecosystem 副本并入）。
+      （2026-11-23 现状：CI 发布两个镜像，`ghcr.io/stfc/goldilocks-agent-local`（本地版）和 `ghcr.io/stfc/goldilocks-agent-web`
+      （线上版），旧名 `ghcr.io/stfc/goldilocks-agent` 不再更新（#115，见 19.8）；本地 `docker-compose.yml` 绑 `127.0.0.1:8080`。）
+      ~~**未落地的细节**~~：Ollama 本体一般装在宿主机（Mac 走 Metal 加速），agent 若跑在容器里，是容器连宿主机的
+      Ollama（`host.docker.internal`），还是把 Ollama 也塞进容器（失去 Metal，退化成 CPU 推理）
+      （⚠️ 2026-11-06 更新：已落地为"容器连宿主机的 Ollama"，见 11.5 末的注）
+- ✅ ~~**goldilocks-ml 的模型尽量只用 CPU**（2026-09-22，用户定）——STFC cloud 那台机器的
+      GPU 因此**只留给 vLLM+Qwen**~~，core 的 ml 契约模型（`is_metal`/`k_index` 等）不跟它抢显存
+      （2026-11-23 从 ecosystem 副本并入。⚠️ 2026-11-10 Junwen 定 mMACE 排序改到 A100 上跑，GPU 现在由 Qwen 和 mMACE 共用；
+      `is_metal`、`k_index` 这类小模型仍在 CPU 上。见 11.5 那条的注和 19.8）
+- ✅ ★★ **STFC cloud 版是共享多租户，10.1 的本机安全模型不适用**（10.3，2026-09-22；2026-11-23 从 ecosystem 副本并入）——
+      不做账号系统，**用匿名 session token 区分用户**。⚠️ 诚实代价：**这是隔离不是身份验证**
+      （2026-11-23 注：token 实际是浏览器标签页 sessionStorage 里的 UUID，没有 cookie，没有按 token 的工作目录，见 19.1）
+- ✅⚠️ **STFC cloud 版对公网开放，不设访问门槛，改用限流**（10.3，2026-09-22；2026-11-23 从 ecosystem 副本并入）——
+      代价从"谁能进"移到"进来后能占多少资源"。~~按 session token 限并发、限调用频率~~
+      （**2026-11-23 Junwen 定：按 IP 限**，nginx `limit_req`，#110；2026-11-11 起重新对公网开放，见 19.8）
+- ✅ ★★ **并发方案选 A：单 core 子进程 + 进程内异步处理**（10.3，2026-09-22；2026-11-23 从 ecosystem 副本并入）——
+      与 core 自己"`serve http` 默认单 worker 省内存"同源理由；否决了固定进程池（B）与动态池（C）。
+      ⚠️ 诚实代价：这是成本最低的默认项，不是压测验证过（2026-11-23 注：形状照做了，传输是 HTTP，见十四之三）
 - ✅ ★★ **provider 层：默认 `litellm`，直连是逃生口**（十七之六①）——**对话引擎走 `litellm`**，
       ⚠️ **2026-09-10 收窄**：先前说"litellm 会掐掉结构化输出"**是错的**（它支持
       `json_schema`，**含 Ollama**）。仍成立的窄理由：**llama.cpp 的 GBNF 不是 JSON Schema 能表达的**。
@@ -3139,6 +3464,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 - ✅ ★★ **MCP server = agent 拉的子进程（stdio）**（十四之三）——无孤儿进程 · 不占端口 ·
       与 Claude Desktop 接 MCP 同一条路径。★ **一个 agent server 一个 core 子进程**
       （core 无状态，依据是签名不变量）。⚠️ **必须接住 stderr 落盘**
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：实际是 `goldilocks serve http` 子进程，占 `127.0.0.1:8000`，不是 stdio MCP；一个 agent 进程一个 core 子进程照做；stderr 转到 agent 的 stderr，带 `[goldilocks-core]` 前缀，没有单独落盘。见十四之三末）
 - ✅ ★★ **旧前端的移植不是"拆分计划"，是四类清单**（13.x）：直接拿 / 抽成文件 / 改数据源 / 删掉。
       ⚠️⚠️ **实读代码推翻了两条旧判断**：① 那 7,421 行里 **3,405 行是塞在组件渲染树里的 CSS**，
       **第一刀是"CSS 搬家"不是"八组选项"**；② **token 已成体系**（14 个 × 2 主题，498 处引用），
@@ -3163,15 +3489,20 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 
 - ✅ ★★ **形态：本地起 server + 浏览器开 `127.0.0.1`**；
       ★ **2026-09-10 确认 desktop app 是最终形态**（Tauri / Electron 是终点不是备选）。
+      ✅ **2026-09-22 确认：最终交付产品清单里的"agent 本地版"就是这个形态**，
+      没有引入新形态，只是正式列进交付物（见 11.5；2026-11-23 从 ecosystem 副本并入）。
       旧 webapp 前端**大部分**可沿用，不是 100%（十三之 x 已定的四类清单：直接拿/抽成
       文件/改数据源/删掉——八组硬编码科学选项、`buildMockReply`、手搓 tool loop 都属于
       "删掉"那一类）；**API key 与文件系统因此天然留在服务端**
 - ✅ ★★ **接口传路径，不传文件内容**（`structure_path` 而非 `structure_content`）——
       **现在改比以后改便宜得多**，它决定 bundle 往哪写、`goldilocks.json` 记什么路径
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：浏览器 → agent 实际传的是内容，见 9.1 的注）
 - ✅ ⚠️ **安全三条**：只听 `127.0.0.1` · 启动生成一次性 token（照抄 Jupyter）·
       检查 `Origin`。**本地 server 能读磁盘 + 能调 LLM，这个组合是有攻击面的**
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：只做了第 1 条，`poe serve` 与本地 `docker-compose.yml` 都绑 `127.0.0.1`；token 与 `Origin` 检查没做）
 - ✅ ★ **引入「工作目录」概念** —— 既是可读范围的安全边界，也是 core 产物的落点。
       ⚠️ 与发布保证「已有结果不覆盖」接上
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：工作目录没建）
 - ✅ **API key 只存本地、用户自提供、永不进浏览器**；
       `~/.config/goldilocks/config.toml`（`0600`，不进 git），环境变量覆盖。
       ⚠️ **用了哪个 LLM（provider + model + 时间）要进 provenance**
@@ -3180,6 +3511,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       只管 UI 文案，本文档正文沿用已久的"MODE"说法不追溯改写）；**第一阶段只做
       DFT Workspace，且只做 scf** —— 因为**只有它能检验 v2 core 的契约**
       （字段优先级 · 三态 · 契约白名单 · 打包保证）
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新：线上的是 Find in Databases 与 DFT Workbench，后者不限 scf；MLIP Playground 和 AiiDAlab-QE 只在本地版。见 12.1 的注）
 - ✅ **沿用旧 webapp 的 onboarding**：只问身份、两个选项、**只影响回答方式不分叉 UI**。
       ⚠️ **反过来也成立：它绝不能影响推荐的参数**
 - ✅ ⚠️ **`workspace_state` 不塞进 system prompt** —— 用户在表单里设的值
@@ -3193,6 +3525,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 - ✅ ★★ **MLIP 归 `janus-core`**；janus 是生态图上的**外部服务**（与 PSDI / SCARF 同类），
       **不是第五个包**。~~agent 仍可调 `janus-api`~~ → 2026-09-15 晚间：`janus-api`
       拆掉了，agent 直接拉 `janus-core` 自己的 CLI 子进程，见十五节开头补记
+      （2026-11-23 现状：MLIP 在 `mlip-cli/` 里调 `janus` CLI，MLIP Playground 只在本地版提供）
 - ✅ ⚠️ **结构的来历由 agent 记**：原始来源 + 中间经过了什么（janus + 模型 + 参数）。
       **core 只记一个源哈希，MLIP 弛豫后那条链会断得很隐蔽**
 - ✅ ★★★ **agent 从"顾问"扩展为可执行者——AiiDA 同样是外部服务，机制是「一份参数、
@@ -3252,6 +3585,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 - ✅ ★★ **生态里有两个前端**：`goldilocks-core/web/`（无 LLM 的直接工具）与
       `goldilocks-agent/app/`（对话式，沿用旧 webapp）。**两个并存是对的 —— 两个不同的产品**。
       ⚠️ 2026-09-15 目录改名 `agent/web` → `agent/app`——同名会暗示两者是同一种东西，见十三
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：agent 的 DFT 面板是 vendor 进来的 core Workbench tarball，见十三的注）
 - ✅ ★★ ⚠️ **但两个前端的控件都必须从 `capabilities` 渲染，不硬编码**。
       旧 `App.jsx` 142–400 行有**八组硬编码的科学选项**（约 260 行），
       两个前端各存一份就是**第三个漂移源**。
@@ -3259,6 +3593,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       ⚠️ **这条目前还不成立**——`DFT_FUNCTIONAL_GROUPS`/`DFT_PSEUDO_TYPE_GROUPS`/
       `DFT_SMEARING_METHOD_GROUPS` 等硬编码数组仍在 `App.jsx` 里，删掉硬编码数组排在
       实施计划**第 2 步**，还没开始——这条是**目标不变量**，不是当前状态
+      （2026-11-23 注：硬编码数组随旧的 DFT 面板一起删了，DFT 面板现在是内嵌的 core Workbench；这条不变量大体成立，剩一处例外：`app/src/dftReview.ts` 的赝势库显示名，见十三的注）
 - ✅ **共享 `capabilities` 的 TS 类型与科学词汇；不共享视觉身份、布局与组件**
 - ✅ **旧 `docs/architecture.zh.md` 中部署 / 认证 / CI 部分整体作废**；
       产品与交互设计（`goldilocks-web/design.md`）继续沿用
@@ -3332,6 +3667,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       见「十四之三」（2026-09-10）
 - [x] ~~MCP server 怎么起~~ → **已定：agent 拉的子进程（stdio）**，见「十四之三」（2026-09-10）
       —— ⚠️ 此条与「待决 · 交付层」重复，以那一条为准
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：上面两条实现时都没照做——不 import 照做了，但走 HTTP 不走 MCP；2026-11-12 定下，见十四之三末的修订）
 - [x] ~~`relay` 与 `suggest` 怎么判归属~~ → **已定**（3.1，2026-09-10）：只有**明确的术语对应**
       或**事先定义好的映射**才算 `relay`；**模糊意图被解释成具体科学设置，一律 `suggest`**——
       反直觉案例："高精度" → `pseudo_accuracy=precision` 是 `suggest`（生态里有两个 accuracy，
@@ -3429,6 +3765,12 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       而 `llm_calls.model_identity_pinned=true` 的全部底气就是那几个字节。
       必须：**PSDI 下载校验 → 本地 GGUF → `Modelfile` 的 `FROM ./model.gguf` 注册**。
       ★ 不写死的话，实现的人**一定会顺手 `ollama pull`**，而且从外面看不出哪里错了
+      ⚠️⚠️ **2026-09-22 补**（2026-11-23 从 ecosystem 副本并入）：~~**vLLM 不再是"以后"**——最终交付产品清单把它定为
+      **STFC cloud 版唯一的运行时（连 Qwen）**，见 11.5。~~ 这是**按交付形态分流**，不是给本地版加选项。
+      （2026-11-23 注：线上实际是 Ollama，2026-11-09 定不换 vLLM，见 19.7。）
+      ✅ **已定（2026-09-22）：Qwen 目前是官方原版权重，不训练、不走 PSDI 校验链**——不是 11.1 的"本地 fine-tuned LLM"；
+      ~~但因为是自托管、版本自己可控，`model_identity_pinned` 仍然是 `true`~~
+      （**2026-11-23 Junwen 定 `false`**，见 11.5 与 16.5）。"目前"留了口子，以后真做微调再升级
 
 
 - [x] ~~走 MCP 还是直接 `import goldilocks_core`~~ → **已定：全部走 MCP，应用逻辑也走**，
@@ -3438,7 +3780,9 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       无孤儿进程 · 不占端口 · 与外部 agent 同一条路径。
       ★ **一个 agent server 一个 core 子进程**（core 无状态，依据是签名不变量）。
       ⚠️ 连带：**必须接住子进程 stderr 并落盘**，否则 core 崩溃时用户只看到"没反应"
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入：上面两条的实现分歧见十四之三末——HTTP 子进程、无 MCP）
 - [x] ~~持久化 schema 的具体表~~ → **已定：六张表**，见「十六之五」（2026-09-10）
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新：建了 `projects`、`conversations`、`chat_activity`、`dft_drafts`，见 16.5 的注）
 - [x] ~~工作目录是一个还是多个~~ → **已定：A，一个会话一个**，见「10.2.1」（2026-09-10）
       ⚠️ 理由是"第一版少一个概念"，**不是安全** —— 别让后人误以为改不得
 - [x] ~~产物落在工作目录下的哪个名字~~ → **已定**：`<workdir>/goldilocks/<结构>_<code>_<task>_<时间戳>/`，
@@ -3466,6 +3810,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       ⚠️⚠️ **2026-09-15 待重新评估**：这条"不重写成 MCP"的前提是"janus 只有
       FastAPI，没有 MCP"——用户指出 `janus-core` 实际也有自己的 MCP 接口
       （见十五节首），如果属实，这条决定可能要重新考虑，还没有定论
+      （⚠️ 2026-11-06 注，2026-11-23 从 ecosystem 副本并入并更新：被实现推翻。2026-09-15 起不再有 `janus-api`，MLIP 每次调用在 `mlip-cli/` 里跑 `janus` CLI，没有常驻服务和端口；"用户配置了才开"仍成立（`GOLDILOCKS_AGENT_MLIP_ENABLED`）；MLIP Playground 只在本地版提供。core 一侧也没走 stdio，同样占端口，见十四之三）
 - [x] ~~janus 的结果进不进 core 的 provenance~~ → **形状已定，但 ⚠️ 第一阶段不做**
       （2026-09-10，用户定：**janus 暂缓，以后还是要做**）。
       记在 **agent 的 DB**，不进 `goldilocks.json` —— 答案已经在 `structures` 表里：
@@ -3544,6 +3889,9 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
     - 上线前已经积累的 thread 没有活动记录，启动时按各自最新 checkpoint 的时间补上记录，所以第一次扫描就会删掉闲置超过 24 小时的；
     - 本地版不跑这个任务：本地的聊天属于用户自己，留在侧边栏里，直到用户自己删除。
 
+> 2026-11-23 注：10.3（2026-09-22，原来只在 ecosystem 副本里）另定过"服务端发 cookie"，实际按本节做了 sessionStorage，
+> 见 10.3 的注。
+
 ### 19.2 ⚠️⚠️ 真正的坑：`projects`/`conversations` 表现在零隔离
 
 `store.py` 的 `list_projects()`/`list_conversations()` 现在把 `~/.goldilocks/goldilocks.db`
@@ -3583,6 +3931,10 @@ IT 那边的 DNS 申请是"一个 floating IP 对应一个 CNAME"（不区分路
 - nginx 把 `/agent/*` **原样透传**给后端，不做前缀剥离，跟 `base` 设置保持一致
 
 ### 19.4 ★★ 访问控制：为什么只能在应用层做，不是网络层
+
+> ⚠️ **2026-11-23 注**：这节"agent 只对单位内网/VPN"后来改了两次。2026-10-09 起访问控制放在 OpenStack 安全组，不在 nginx；
+> 2026-11-11 Junwen 定重新对公网开放。两次都见 19.8 末尾的「线上实际拓扑」。为什么可以公开、公开后靠什么挡滥用，
+> 见 10.3（2026-11-23 从 ecosystem 副本并入）。
 
 - 首页 + Workbench：完全公开。
 - Agent：**仅限单位内网/VPN**——这条不是"内网原生场景"，是"整个项目定位就是公开给全世界"
