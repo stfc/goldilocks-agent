@@ -308,6 +308,25 @@ async def open_checkpointer() -> AsyncIterator[AsyncSqliteSaver]:
         yield saver
 
 
+def add_tool_call_delta(calls: list[dict[str, Any]], delta: Any) -> None:
+    """Folds one streamed tool-call delta into `calls`, the turn's tool calls
+    so far, in order. A call's `arguments` arrive split across deltas that
+    share its `index`, to be concatenated; a delta with another id starts a
+    new call even at the same index -- litellm's `ollama_chat` streams
+    parallel calls whole, each with its own id, all at index 0, which keyed
+    by index alone ran together into one call with invalid JSON arguments."""
+    call = next((c for c in reversed(calls) if c["index"] == delta.index), None)
+    if call is None or (delta.id and call["id"] and delta.id != call["id"]):
+        call = {"index": delta.index, "id": None, "name": None, "arguments": ""}
+        calls.append(call)
+    if delta.id:
+        call["id"] = delta.id
+    if delta.function and delta.function.name:
+        call["name"] = delta.function.name
+    if delta.function and delta.function.arguments:
+        call["arguments"] += delta.function.arguments
+
+
 async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     # litellm wants plain OpenAI-style dicts, not LangChain message objects --
     # passing BaseMessage instances through silently mangles the role (observed:
@@ -326,10 +345,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
     model, extra = resolve_model(model_id)
     writer = get_stream_writer()
     content = ""
-    # Keyed by the provider's own per-call-in-progress index -- a streamed
-    # tool call's `arguments` arrives split across many chunks and must be
-    # concatenated in order before it's valid JSON.
-    tool_calls_acc: dict[int, dict[str, Any]] = {}
+    tool_calls_acc: list[dict[str, Any]] = []
     response = await litellm.acompletion(
         model=model,
         messages=messages,
@@ -343,15 +359,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
             content += delta.content
             writer(delta.content)
         for tool_call in delta.tool_calls or []:
-            slot = tool_calls_acc.setdefault(
-                tool_call.index, {"id": None, "name": None, "arguments": ""}
-            )
-            if tool_call.id:
-                slot["id"] = tool_call.id
-            if tool_call.function and tool_call.function.name:
-                slot["name"] = tool_call.function.name
-            if tool_call.function and tool_call.function.arguments:
-                slot["arguments"] += tool_call.function.arguments
+            add_tool_call_delta(tool_calls_acc, tool_call)
 
     if not tool_calls_acc:
         return {"messages": [{"role": "assistant", "content": content}]}
@@ -362,7 +370,7 @@ async def call_llm(state: MessagesState, config: RunnableConfig) -> dict:
             "type": "function",
             "function": {"name": slot["name"], "arguments": slot["arguments"]},
         }
-        for slot in tool_calls_acc.values()
+        for slot in tool_calls_acc
     ]
     return {
         "messages": [
