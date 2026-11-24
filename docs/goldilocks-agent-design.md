@@ -3,7 +3,8 @@
 > **状态**：⚠️ **部分已实现**。已建、未建和与本文分歧的地方见紧接的「实现现状」块
 > （2026-11-23 改写；原来这一行写于 2026-09-17，说"没有 tool 节点、没有接 core 的 MCP、六张表只建了两张"，早已过时）。
 > 这份仍是先于大部分实现写就的设计文档，读的时候把"已定"当"设计决定"而不是"已完成"。
-> **最后更新**：2026-11-23（两份副本合并成这一份，见下面「唯一副本」）。上一次是 2026-11-16（17.11：一张图，两种 profile）；
+> **最后更新**：2026-11-24（新增二十节：ADA 版，直接经 SSH 和 Slurm 用 SCARF；11.5、15.1、17.11、十八节加了指过去的注）。
+> 上一次是 2026-11-23（两份副本合并成这一份，见下面「唯一副本」）；再上一次是 2026-11-16（17.11：一张图，两种 profile）；
 > 更早的改动都在正文里按日期标注。
 > **唯一副本（2026-11-23，Junwen 定）**：这份是 agent 设计文档**唯一**的副本。2026-09-14 前后，它和 ecosystem 文档里的
 > `0-goldilocks-ecosystem/1-docs/v2/goldilocks-agent-design.md` 分了叉：这份后来加了 12.3–12.6、14.4、15.1–15.5、17.10、
@@ -52,6 +53,8 @@
 >   4 个并行槽；mMACE 在 A100 上；nginx 按 IP 限流；网页版聊天闲置 24 小时删除。细节和来龙去脉在 19.8。
 > - **开着、影响线上部署的 issue**：#144（`/api/chat` 从浏览器取消息的 role）、#145（大消息在每个 checkpoint 里重存一遍，
 >   可能写满磁盘）、#146（上下文快满时提醒）。
+> - **ADA 版**（二十节，2026-11-24 Junwen 定要做）：跑在用户自己的 ADA Workspace 里，直接经 SSH 和 Slurm 用 SCARF，不用 AiiDA。
+>   只定了方向，没有代码。
 > - **V3**：ecosystem 的 V3 设计里，Gap #2 原定"五个操作对应 core 的五条路由、结构按值传"；2026-11-23 Junwen 定以这里建成的形状为准
 >   （按任务划分的工具 + 服务端草稿 + 按文件名找结构），V3 文档已改写。
 > - **没建**：10.1 的一次性 token 和 `Origin` 检查（只做了绑 `127.0.0.1`）；10.2 的工作目录和"传路径"（见 9.1 的注）；
@@ -1366,6 +1369,9 @@ goldilocks 的形状正好是它：
 | **agent 本地版** | Ollama（11.4 第一阶段） | 可选：LiteLLM + API key 连 OpenAI / Claude / Gemini | 本地起 server + 浏览器开 `127.0.0.1`（九），外加 Docker 镜像（2026-09-22） |
 | **agent STFC cloud 版** | ~~**vLLM**~~ **Ollama**（2026-11-23 注：见下面的 11-06 注和 19.7），**只连 Qwen** | ❌ 不提供——没有理由给这个部署多开一个云端出口 | 共享多租户（十、10.3） |
 
+（2026-11-24 补：多了第三个交付物 **agent ADA 版**，形态和本地版一样，装在用户自己的 ADA Workspace 里，能直接连 SCARF，见二十节。
+它的对话模型用哪个还没定，见 20.4。）
+
 ✅ **已定（2026-09-22 确认）：agent 本地版就是「九」已经定的"本地 server + 浏览器开
 127.0.0.1"，不是另一个新形态**——最终交付产品清单里的"本地版"没有引入新的产品
 形态，只是把已经定好的架构正式列进交付物清单。桌面应用（Tauri/Electron）仍然是
@@ -2378,6 +2384,8 @@ protocol（如 `moderate`/`balanced`）去重新算一遍参数**。
 不进浏览器、不进 git。⚠️ 具体存哪个文件、什么权限位，留到实现阶段照抄
 十一节已经定好的模式（`~/.config/goldilocks/config.toml`，`0600`），
 **这里先记下这条新的凭证类别，不在今天展开**。
+（2026-11-24 补：这条只管经 AiiDA 执行的本地版。ADA 版直接经 SSH 用 SCARF，agent 不持有凭证，
+用的是 Workspace 里用户自己的 key 和 ssh-agent，见 20.2。）
 
 ### 15.2 ★★ 已定（2026-09-15）：AiiDA 覆盖率只影响 sink B，不影响 sink A——三层，不是二选一
 
@@ -3301,6 +3309,8 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
 
 完整计划在 Junwen 本机的 plan 文件里；和 core 的约定见 fork #299（`fetch_missing`、`error.kind`、`magnetic_ordering`、排序任务 120 秒内必须轮询一次）。
 
+（2026-11-24 补：计划加第三种 profile `ada`，给 ADA 版用，见 20.3。）
+
 ---
 
 ## 十八、已定 / 待决
@@ -3744,6 +3754,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       收窄：**顶层架构已定**（十五之一：外部服务 · 一份参数两个 sink · sink 只翻译不重算），
       **还没定的是** submit/poll/retrieve 的具体 schema、AiiDA 凭证存哪、轮询节点怎么接图
       （见 17.9 补记），janus-core 那半边不变，待它工具接口先被单独设计清楚，不在这里抢跑
+      （2026-11-24 补：这条只管本地版。ADA 版不走 AiiDA，它的提交、轮询、取回见 20.3。）
 - [x] ~~本地 LLM 的权重谁下载~~ → **已定：归 agent 自己的 `assets/`**（11.2）。
       ★ **措辞改成「下载归_消费方_；ml 只声明文件与 digest」** —— ml `AGENTS.md` 那句
       *"Runtime downloading belongs in Core"* 要读作"**不在 ml**"，不是"永远在 core"。
@@ -3855,6 +3866,7 @@ sink · sink 只做格式翻译不重新决策）。这条待决因此**没有�
       ⚠️ 明确记为**复杂、暂缓**（用户 2026-09-15 原话："这个很复杂，先记录下来，以后解决"）——
       不是没价值，是需要专门设计一次教学时机（第一次触发面板动作时？
       新手模式下常驻一条提示？），不该在这次 UI 审查里顺手做掉。
+- [ ] **ADA 版**（二十节，2026-11-24）：怎么装到 ADA 上、对话模型用哪个、提供哪些 Tool、milestone，四条见 20.4。
 
 ---
 
@@ -4183,3 +4195,108 @@ port 443 本身对全公网开放（因为首页/Workbench 要公开），`/agen
   - 和 core 0.3.3 一起部署。Junwen 已经定了用 GPU，部署前不再单独实测，部署后的 smoke 测试和 `nvidia-smi` 用来确认 GPU 确实在用。CUDA 版 torch 不能在 CPU 上跑（慢约 9 倍），所以退回 CPU 时三项设置要一起改回去，README "mMACE on the GPU" 写了怎么切。
   - **第一次部署失败，已回滚**（2026-11-11）：用 `cu130` 时，mace 在 GPU 上加载 sphericart-torch 的 CUDA 扩展失败（`libsphericart_torch_cuda_stream.so: libnvrtc.so.12: cannot open shared object file`）。这个扩展是按 CUDA 12 编译的，而 `cu130` 只带 CUDA 13 的库。结果线上 `/explain` 返回 500，几分钟后回滚到 CPU 上的 0.3.2。预装阶段的 smoke 测试没发现这个问题，因为它跑在 CPU 上，不加载 GPU 路径；
   - **改用 `cu129`**（CUDA 12 版 torch，驱动 595 同时支持 CUDA 12 和 13）。上线前先在 VM 上用一次性 GPU 容器验证：is_magnetic 和排序都在 GPU 上跑通，bcc Fe 排序 18 s、推荐 fm，两个 mMACE 进程共占约 1.4 GB 显存。小结构上 GPU 不比 CPU 快，好处是不占 CPU、大结构快。README 记下了：换 torch 版本前要先在 GPU 上实测一次。
+
+---
+
+## 二十、ADA 版：跑在用户自己的 ADA Workspace 里，直接经 SSH 和 Slurm 用 SCARF（2026-11-24）
+
+**起因（Junwen，2026-11-24）**：要专门为 ADA（https://ada.stfc.ac.uk/ ）做一个 Goldilocks 版本，用户在里面能连 SCARF、
+提交任务、下载任务结果，而且不用 AiiDA。同时说明了三个版本现在的分工：
+
+- 网页版不用 AiiDA，也不连 HPC；
+- 本地版用 AiiDA 连 HPC（十五节；AiiDAlab-QE 还没有后端，#84）；
+- ADA 版直接连 SCARF，不用 AiiDA。
+
+**状态**：只定了方向，什么都没建。20.2、20.3 是 agent 会话 2026-11-24 提出、Junwen 要求记入文档的方案；20.4 的待决定了以后再开工。
+
+### 20.1 ADA 和 SCARF 的事实（2026-11-24 看原文核对）
+
+**ADA**，出处是 ada.stfc.ac.uk 前端代码里的帮助页（这个站是单页应用，正文都在 JS 包里）：
+
+- ADA 是 STFC 的 Workspace 平台，原名 IDAaaS（页面标题还是 "IDAaaS Workspace"），面向 ISIS、Diamond、CLF 的用户，另有 training 和 dev 两类。
+  用户用 Federal ID 或 IRIS IAM 登录，领一台自己的 Workspace（虚拟机），在浏览器里通过远程桌面使用，也有 Jupyter。
+- 闲置几天的 Workspace 会被自动删除，但 home 目录保留。
+- 帮助页有一篇 "Accessing SCARF through your workspace"，步骤是：
+  1. 在 Workspace 的终端里运行 `ssh-keygen`（默认存到 `~/.ssh/id_rsa`，建议设密码）；
+  2. 把 `.pub` 公钥填进 SCARF 的账号申请表；
+  3. 开通后 `ssh -i ~/.ssh/id_rsa <用户名>@ui1.scarf.rl.ac.uk`，写 sbatch 脚本，用 `sbatch`、`squeue`、`scancel` 管理作业；
+  4. 把输出打包，用 `scp` 取回 Workspace。
+
+  **也就是说，"在 Workspace 里用自己的 key 连 SCARF"是 ADA 官方教的用法。**
+
+**SCARF**，出处是 www.scarf.rl.ac.uk 的 access、ssh_key、access-ondemand、terms 几页：
+
+- 登录走 SSH（另有一个只对 IRIS 用户开放的网页门户，见下），两台登录节点 `ui1.scarf.rl.ac.uk`、`ui2.scarf.rl.ac.uk`。调度器是 Slurm（core 的 `inputs/profiles/scarf.toml` 2026-09-14 按实机核过）。
+- STFC 和 Diamond 员工可以用 Federal ID 和密码登录；其他人要有 STFC 或 Diamond 的合作者担保，申请时交 SSH 公钥。
+  Junwen 确认：我们这个用法要用 SSH key。
+- 使用条款把"用别人的身份访问"按 Computer Misuse Act 处理。**所以不能用一个共享服务账号替所有用户提交**，每个作业都要用用户自己的账号。
+- 有一个 Open OnDemand 网页门户（portal.scarf.rl.ac.uk），只对 IRIS 用户开放（IRIS IAM 的 "scarf-trial" 组），没有给第三方程序用的接口。
+  2026-11-24 访问时它的 HTTPS 证书已过期。
+
+### 20.2 做法：agent 以用户的身份跑在用户自己的 Workspace 里
+
+ADA 版的形态和本地版一样（九节：本地 server + 浏览器开 `127.0.0.1`），只是装在 ADA Workspace 里；区别在执行：
+
+| | 网页版 | 本地版 | ADA 版 |
+|---|---|---|---|
+| 跑在哪 | 我们的 VM，多人共用（十九节）| 用户自己的电脑 | 用户自己的 ADA Workspace |
+| 用户身份 | 匿名，每个浏览器标签页一个 UUID（19.1）| 只有一个用户 | ADA 登录；Workspace 里只有这一个用户 |
+| 连 HPC | 不连 | 经 AiiDA（十五节）| 直接 SSH + Slurm，不经 AiiDA |
+| SCARF 凭证 | — | 在 AiiDA 的配置里 | Workspace 的 `~/.ssh/`，和 ADA 教程一样 |
+
+这样做的理由：
+
+- **服务器上不存任何 SCARF 凭证。** agent 只调用 Workspace 里的 `ssh`、`scp`，用的是用户自己的 key 和 ssh-agent，不读也不存 key 的密码。
+  15.1 末尾"agent 需要持有计算资源凭证"那一类秘密，在 ADA 版里不归 agent 管。
+- **不需要账号系统。** ADA 已经做了登录，Workspace 里只有一个用户，19.1 的匿名标签页会话在这里不适用。
+- **数据不随 Workspace 一起丢。** 数据库在 `~/.goldilocks/goldilocks.db`，bundle 在它旁边的 `bundles/`，设置在 `~/.config/goldilocks/config.toml`，都在 home 里。
+- **provenance 不分叉。** 提交的就是 core 生成的 bundle 原样，`submit.sh` 也是 core 按 `scarf.toml` 写的。
+  没有 15.1 sink B 那一步"翻译成 AiiDA builder"，所以不会出现"聊天里解释的值"和"实际跑的值"不一致。
+  按十五节的说法，这是 sink A 的文件由 agent 原样送上集群，不是新的 sink。
+- **core 不用改，也仍然不上 SCARF。** SSH、提交、取回都是 agent 的事（AGENTS.md：agent 是执行层）。
+
+### 20.3 要建的（agent 侧）
+
+- **第三个 profile `ada`**（17.11）：工具和每轮上限先照搬本地版，再加下面的作业工具。部署怎么选中它（新的环境变量，还是和
+  `GOLDILOCKS_AGENT_SHARED_DEPLOYMENT` 合成一个"部署类型"）实现时定。
+- **一个经 SSH 调 Slurm 的执行模块**，四个动作：
+  - 提交：把 bundle 传到 SCARF 上的 `~/goldilocks-runs/<thread>/<run>/`，运行 `sbatch --parsable submit.sh`，记下 job id；
+  - 查状态：用 `squeue -j`，作业离开队列后用 `sacct -j`（状态、退出码、用时）；
+  - 取消：`scancel`；
+  - 取结果：拉回 `bundles/<thread>/` 下，Post Analysis 可以直接读。默认只取小文件（`pw.out`、XML 输出、`goldilocks.json` 等），
+    不取 `*.save/` 里的波函数和电荷密度，否则一个作业就要传几个 GB。
+- **一张作业表**：thread、run、job id、远端目录、状态、时间。照十六节"表存路径，不存 blob"。
+- **界面和工具**：DFT Workbench 里加一张作业卡片；给模型四个工具，例如 `hpc_submit`、`hpc_status`、`hpc_fetch`、`hpc_cancel`。
+  提交要用户明确要求，和 `dft_download_bundle` 一样。
+- **设置里两项**：SCARF 用户名（`scarfNNNN` 这类，和 ADA 用户名不同），key 的路径（默认 `~/.ssh/id_rsa`）。
+  SCARF 的 `account` 照 core 的做法，仍然是用户自己 `--set account=`，不进 profile。
+- **key 有密码时**：ssh-agent 里没有加载这把 key，就给一条明确的提示，让用户在终端里运行 `ssh-add`。agent 不弹框要密码。
+- **SCARF 的主机密钥**：第一次连接不静默接受。要么把主机密钥写进代码，要么第一次连接时让用户确认。
+
+### 20.4 待决
+
+- [ ] **怎么装到 ADA 上**：请 ADA 团队做一种 Goldilocks Workspace 并预装好，还是用户自己用 uv 装进 home。
+      另外，Workspace 的远程桌面里能不能开浏览器访问 `127.0.0.1`，没验证。两件事都要问 ADA 团队。
+- [ ] **对话模型用哪个**：Workspace 大概率没有 GPU。可选的有：
+      - 照本地版，用户自己填 API key；
+      - 连我们 VM 上的 Qwen，但要给 Ollama 开一个带认证的对外入口（现在线上的 Ollama 只在 VM 的 compose 网络里给网页版用，不映射端口，nginx 也不转发它，2026-11-24 按 `deploy/stfc-cloud/` 核）；
+      - 问 ADA 有没有 GPU Workspace。
+
+      ADA 用户多数是设施用户，不一定有 API key，这一条影响很大。
+- [ ] **ADA 版提供哪些 Tool**：本地版的 MLIP Playground 第一次计算要装几 GB 的环境；AiiDAlab-QE 在不用 AiiDA 的 ADA 版里放不放。
+- [ ] **milestone**：现有的没有合适的。新建一个 "ADA" milestone 要 Junwen 同意。
+
+### 20.5 网页版连 HPC 时考虑过的办法（2026-11-24，没有采用）
+
+网页版目前不连 HPC（Junwen，2026-11-24）。讨论 ADA 之前，先按"网页版连 SCARF"想过四条路，记在这里供以后参考：
+
+- **用户在自己电脑上跑一个小连接程序**，主动连到网站，用自己的 SSH 配置提交和取回：私钥不离开用户电脑，但要多装一个程序，
+  提交和取结果时它得开着。
+- **服务器替用户 SSH，每人一把专用密钥**，公钥前加 `restrict,from="<VM 的 IP>",command="<固定脚本>"`，这把钥匙只能从 VM 用，
+  也只能跑固定脚本：用户不用装东西，但私钥存在一台公网开放、匿名、没有登录的服务器上，而且跟标签页绑定（19.1），
+  要做好得先有账号系统；还要 SCARF 管理员同意。
+- **SCARF 的 Open OnDemand**：只对 IRIS 用户开放，没有第三方接口，只能"下载 bundle、自己传上去提交"。
+- **请 SCARF 开 Slurm REST API（slurmrestd 或 FirecREST），配 IRIS IAM 登录**：用 token，不碰密钥，长期最干净，
+  但取决于 SCD 的 SCARF 团队。
+
+ADA 版不需要其中任何一条，因为 agent 本来就以用户的身份跑在用户自己的 Workspace 里。
